@@ -1,0 +1,4 @@
+ACCESS_AUD=development-audience
+ACCESS_TEAM_DOMAIN=example.cloudflareaccess.com
+DEV_ADMIN_EMAIL=developer@example.com
+ENVIRONMENT=development

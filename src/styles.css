@@ -1,0 +1,26 @@
+@import "tailwindcss";
+
+:root {
+  color: #e2e8f0;
+  background: #0f172a;
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background: #0f172a;
+}
+
+button, input, select, textarea { font: inherit; }
+
+input, select, textarea {
+  border: 1px solid #334155;
+  border-radius: 0.375rem;
+  background: #0f172a;
+  color: #e2e8f0;
+  padding: 0.5rem 0.625rem;
+}
+
+input:focus, select:focus, textarea:focus { outline: 2px solid #22d3ee; outline-offset: 1px; }
