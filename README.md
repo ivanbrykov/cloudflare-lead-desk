@@ -46,6 +46,15 @@ curl https://crm.example.com/v1/intakes \
 
 The interactive OpenAPI documentation is available at `/openapi`.
 
+## Custom fields
+
+Custom fields are configured per contact and opportunity (Settings → Fields) and validated against the active definitions:
+
+- Creation (`POST /v1/contacts`, `POST /v1/opportunities`, `POST /v1/intakes`) must provide every required field. `null` is rejected for required fields, and blank optional fields are simply omitted.
+- `PUT /v1/contacts/:id` treats `customFields` as a patch: omit the object or a key to keep the stored value, and send an explicit `null` to clear an optional field. Required fields cannot be cleared, and a custom-fields update still fails for a contact that has no stored value for a required field. Unknown or archived keys are always rejected.
+- Reads expose active definitions only. Archived definitions keep their stored values for historical export but are excluded from payloads, so an archived value never blocks editing a contact.
+- Core fields and custom-field values are written in a single D1 transaction, so a failed field write rolls back the whole request.
+
 ## Development
 
 ```sh
