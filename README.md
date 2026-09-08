@@ -34,12 +34,12 @@ curl https://crm.example.com/v1/intakes \
   -H 'Content-Type: application/json' \
   -H 'Idempotency-Key: a-stable-submission-id' \
   --data '{
-    "source": "ileo",
-    "contact": { "email": "sam@example.com", "firstName": "Sam" },
+    "source": "website_form",
+    "contact": { "email": "alex@example.com", "firstName": "Sam" },
     "opportunity": {
-      "name": "Rivera family — Fall",
+      "name": "New service inquiry",
       "source": "calculator",
-      "customFields": { "cohort": "Fall" }
+      "customFields": { "segment": "Enterprise" }
     }
   }'
 ```

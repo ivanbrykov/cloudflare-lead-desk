@@ -1,5 +1,6 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
+  "account_id": "c601a905054c7c65651b49472c3a69e2",
   "name": "cloudflare-lead-desk",
   "main": "./src/worker-global.ts",
   "compatibility_date": "2026-08-23",
@@ -12,13 +13,13 @@
     {
       "binding": "DB",
       "database_name": "cloudflare-lead-desk",
-      "database_id": "REPLACE_WITH_YOUR_D1_DATABASE_ID",
+      "database_id": "9731d183-325a-4bb2-bb47-e2effa289b59",
       "migrations_dir": "drizzle"
     }
   ],
   "vars": {
-    "ACCESS_AUD": "REPLACE_WITH_YOUR_CLOUDFLARE_ACCESS_AUDIENCE",
-    "ACCESS_TEAM_DOMAIN": "REPLACE_WITH_YOUR_TEAM.cloudflareaccess.com",
+    "ACCESS_AUD": "fcf0832bcec6343c1135f795a6dcffb4bfafe5b17d7b675db7801734c7c128af",
+    "ACCESS_TEAM_DOMAIN": "brykov.cloudflareaccess.com",
     "ENVIRONMENT": "production"
   }
 }

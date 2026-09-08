@@ -9,9 +9,12 @@ export const EmailSchema = NonEmptyString.pipe(
   Schema.pattern(/^[^\s@]+@[^\s@]+\.[^\s@]+$/),
 ).annotations({ description: 'A valid email address.' });
 
-export const RecordIdSchema = Schema.UUID.annotations({
-  description: 'A UUID record identifier.',
-});
+export const RecordIdSchema = Schema.String.pipe(
+  Schema.pattern(/[0-7][0-9A-HJKMNPQRSTVWXYZ]{25}/),
+  Schema.filter((value) => value.length === 26, {
+    message: () => "must be a 26-character ULID",
+  }),
+).annotations({ description: 'A ULID record identifier.' });
 
 export const FieldEntitySchema = Schema.Literal('contact', 'opportunity');
 export type FieldEntity = Schema.Schema.Type<typeof FieldEntitySchema>;
@@ -53,6 +56,22 @@ export const OpportunityInputSchema = Schema.Struct({
 });
 export type OpportunityInput = Schema.Schema.Type<
   typeof OpportunityInputSchema
+>;
+
+export const CreateOpportunitySchema = Schema.Struct({
+  contact: Schema.optional(ContactInputSchema),
+  contactId: Schema.optional(RecordIdSchema),
+  estimatedValue: Schema.optional(
+    Schema.Number.pipe(Schema.finite(), Schema.nonNegative()),
+  ),
+  name: NonEmptyString,
+  pipelineId: Schema.optional(RecordIdSchema),
+  source: Schema.optional(NonEmptyString),
+  stageId: Schema.optional(RecordIdSchema),
+  customFields: Schema.optional(CustomFieldValuesSchema),
+});
+export type CreateOpportunityInput = Schema.Schema.Type<
+  typeof CreateOpportunitySchema
 >;
 
 export const IntakeInputSchema = Schema.Struct({

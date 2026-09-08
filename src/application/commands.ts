@@ -3,18 +3,22 @@ import { DomainError, PersistenceError } from './errors';
 import {
   createActivity,
   createContact,
+  deleteContact,
+  createManualOpportunity,
   createFieldDefinition,
   createIntakeAtomically,
   createPipeline,
   createStage,
   getFieldDefinitions,
   moveOpportunity,
+  updateContact,
   type Env,
 } from '@/db/repository';
 import { validateCustomFields } from '@/domain/custom-fields';
 import type {
   ContactInput,
   CreateCustomField,
+  CreateOpportunityInput,
   IntakeInput,
 } from '@/domain/schemas';
 
@@ -23,6 +27,14 @@ const persist = <A>(operation: () => Promise<A>) =>
     catch: (cause) => new PersistenceError({ cause }),
     try: operation,
   });
+
+const validateContactIdentity = (input: ContactInput): void => {
+  if (input.email || input.firstName || input.lastName) return;
+  throw new DomainError({
+    code: 'contact_identity_required',
+    message: 'Enter a first name, last name, or email address.',
+  });
+};
 
 const validate = <A>(operation: () => A) =>
   Effect.try({
@@ -41,11 +53,63 @@ export const createContactCommand = (
   input: ContactInput,
 ) =>
   Effect.gen(function* () {
+    yield* validate(() => validateContactIdentity(input));
     const definitions = yield* persist(() => getFieldDefinitions(env, 'contact'));
     const fields = yield* validate(() =>
       validateCustomFields('contact', definitions, input.customFields),
     );
     return yield* persist(() => createContact(env, input, fields));
+  });
+
+export const updateContactCommand = (
+  env: Env,
+  contactId: string,
+  input: ContactInput,
+) =>
+  Effect.gen(function* () {
+    yield* validate(() => validateContactIdentity(input));
+    const definitions = input.customFields === undefined
+      ? undefined
+      : yield* persist(() => getFieldDefinitions(env, 'contact'));
+    const fields = definitions === undefined
+      ? []
+      : yield* validate(() =>
+          validateCustomFields('contact', definitions, input.customFields),
+        );
+    return yield* persist(() => updateContact(env, contactId, input, fields));
+  });
+
+export const deleteContactCommand = (env: Env, contactId: string) =>
+  persist(() => deleteContact(env, contactId));
+
+export const createManualOpportunityCommand = (
+  env: Env,
+  input: CreateOpportunityInput,
+  actorEmail: string,
+) =>
+  Effect.gen(function* () {
+    if (Boolean(input.contact) === Boolean(input.contactId)) {
+      return yield* Effect.fail(new DomainError({
+        code: 'contact_required',
+        message: 'Select an existing contact or provide a new contact.',
+      }));
+    }
+    if (input.contact) yield* validate(() => validateContactIdentity(input.contact!));
+    const contactDefinitions = input.contact
+      ? yield* persist(() => getFieldDefinitions(env, 'contact'))
+      : [];
+    const opportunityDefinitions = yield* persist(() => getFieldDefinitions(env, 'opportunity'));
+    const contactFields = input.contact
+      ? yield* validate(() =>
+          validateCustomFields('contact', contactDefinitions, input.contact?.customFields),
+        )
+      : [];
+    const opportunityFields = yield* validate(() =>
+      validateCustomFields('opportunity', opportunityDefinitions, input.customFields),
+    );
+    return yield* persist(() =>
+      createManualOpportunity(env, input, contactFields, opportunityFields, actorEmail),
+    );
   });
 
 export const createIntakeCommand = (

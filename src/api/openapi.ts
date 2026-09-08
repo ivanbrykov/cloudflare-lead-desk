@@ -12,6 +12,11 @@ export const openApiSpecification = {
       get: { responses: { 200: { description: 'Contact list' }, 401: { description: 'Access required' } }, summary: 'List contacts' },
       post: { responses: { 201: { description: 'Contact created' }, 401: { description: 'Access required' }, 422: { description: 'Invalid contact' } }, summary: 'Create contact' },
     },
+    '/v1/contacts/{id}': {
+      delete: { responses: { 204: { description: 'Contact deleted' }, 404: { description: 'Contact not found' }, 409: { description: 'Contact has opportunities' } }, summary: 'Delete contact' },
+      get: { responses: { 200: { description: 'Contact' }, 401: { description: 'Access required' }, 404: { description: 'Contact not found' } }, summary: 'Get contact' },
+      put: { responses: { 200: { description: 'Contact updated' }, 401: { description: 'Access required' }, 404: { description: 'Contact not found' }, 422: { description: 'Invalid contact' } }, summary: 'Update contact' },
+    },
     '/v1/intakes': {
       post: {
         parameters: [{ in: 'header', name: 'Idempotency-Key', required: true, schema: { type: 'string' } }],
@@ -38,6 +43,7 @@ export const openApiSpecification = {
     },
     '/v1/opportunities': {
       get: { responses: { 200: { description: 'Opportunity list' }, 401: { description: 'Access required' } }, summary: 'List opportunities' },
+      post: { responses: { 201: { description: 'Opportunity created' }, 401: { description: 'Access required' }, 404: { description: 'Contact not found' }, 422: { description: 'Invalid opportunity' } }, summary: 'Create opportunity' },
     },
     '/v1/pipelines': {
       get: { responses: { 200: { description: 'Pipelines and stages' }, 401: { description: 'Access required' } }, summary: 'List pipelines' },
