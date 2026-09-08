@@ -5,11 +5,14 @@ import { openApiSpecification } from './openapi';
 import {
   createActivityCommand,
   createContactCommand,
+  createManualOpportunityCommand,
+  deleteContactCommand,
   createCustomFieldCommand,
   createIntakeCommand,
   createPipelineCommand,
   createStageCommand,
   moveOpportunityCommand,
+  updateContactCommand,
 } from '@/application/commands';
 import { DomainError, PersistenceError } from '@/application/errors';
 import { UnauthorizedError, bearerToken, requireAccessIdentity } from '@/auth/access';
@@ -33,6 +36,7 @@ import {
   ContactInputSchema,
   CreateActivitySchema,
   CreateCustomFieldSchema,
+  CreateOpportunitySchema,
   CreatePipelineSchema,
   CreateStageSchema,
   CreateTokenSchema,
@@ -129,6 +133,49 @@ export const createApp = (env: Env) =>
         ? { data: contact }
         : errorResponse(404, 'not_found', 'Contact not found.');
     })
+    .put(
+      '/v1/contacts/:id',
+      async ({ body, params, request }) => {
+        const admin = await requireAdmin(request, env);
+        if ('error' in admin) return admin.error;
+        const parsed = await parse(ContactInputSchema, body);
+        if ('error' in parsed) return parsed.error;
+        const result = await run(updateContactCommand(env, params.id, parsed.data));
+        if ('error' in result) return result.error;
+        return result.data
+          ? { data: result.data }
+          : errorResponse(404, 'not_found', 'Contact not found.');
+      },
+    )
+    .delete('/v1/contacts/:id', async ({ params, request }) => {
+      const admin = await requireAdmin(request, env);
+      if ('error' in admin) return admin.error;
+      const result = await run(deleteContactCommand(env, params.id));
+      if ('error' in result) return result.error;
+      if (result.data === 'deleted') return new Response(null, { status: 204 });
+      if (result.data === 'has_opportunities') {
+        return errorResponse(409, 'contact_has_opportunities', 'Contacts with opportunities cannot be deleted.');
+      }
+      return errorResponse(404, 'not_found', 'Contact not found.');
+    })
+    .post(
+      '/v1/opportunities',
+      async ({ body, request }) => {
+        const admin = await requireAdmin(request, env);
+        if ('error' in admin) return admin.error;
+        const parsed = await parse(CreateOpportunitySchema, body);
+        if ('error' in parsed) return parsed.error;
+        const result = await run(createManualOpportunityCommand(env, parsed.data, admin.email));
+        if ('error' in result) return result.error;
+        if (result.data === 'contact_not_found') {
+          return errorResponse(404, 'not_found', 'Contact not found.');
+        }
+        if (result.data === 'invalid_stage') {
+          return errorResponse(422, 'invalid_stage', 'The selected stage does not belong to this pipeline.');
+        }
+        return Response.json({ data: result.data }, { status: 201 });
+      },
+    )
     .get('/v1/opportunities', async ({ request }) => {
       const admin = await requireAdmin(request, env);
       if ('error' in admin) return admin.error;

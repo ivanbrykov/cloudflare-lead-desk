@@ -6,6 +6,7 @@ import type {
   CreateCustomField,
   FieldEntity,
   IntakeInput,
+  CreateOpportunityInput,
   OpportunityInput,
 } from '@/domain/schemas';
 import { normalizeEmail } from '@/domain/schemas';
@@ -31,12 +32,23 @@ export interface Env {
   ENVIRONMENT: 'development' | 'production' | 'test';
 }
 
-export const DEFAULT_WORKSPACE_ID = '00000000-0000-4000-8000-000000000001';
-export const DEFAULT_PIPELINE_ID = '00000000-0000-4000-8000-000000000002';
-export const DEFAULT_STAGE_ID = '00000000-0000-4000-8000-000000000003';
+export const DEFAULT_WORKSPACE_ID = '01ARZ3NDEKTSV4RRFFQ69G5FAV';
+export const DEFAULT_PIPELINE_ID = '01ARZ3NDEKTSV4RRFFQ69G5FAW';
+export const DEFAULT_STAGE_ID = '01ARZ3NDEKTSV4RRFFQ69G5FAX';
+
+const ULID_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 
 const now = (): string => new Date().toISOString();
-const id = (): string => crypto.randomUUID();
+const id = (): string => {
+  let timestamp = Date.now();
+  let result = '';
+  for (let index = 0; index < 10; index += 1) {
+    result = ULID_ALPHABET[timestamp % 32] + result;
+    timestamp = Math.floor(timestamp / 32);
+  }
+  const random = crypto.getRandomValues(new Uint8Array(16));
+  return result + Array.from(random, (value) => ULID_ALPHABET[value % 32]).join('');
+};
 
 export interface ContactRecord {
   createdAt: string;
@@ -301,6 +313,124 @@ export const createContact = async (
     lastName: input.lastName ?? null,
     updatedAt: timestamp,
   };
+};
+
+export const updateContact = async (
+  env: Env,
+  contactId: string,
+  input: ContactInput,
+  customFields: NormalizedFieldValue[],
+): Promise<(ContactRecord & { customFields: Record<string, unknown> }) | null> => {
+  const existing = await getContact(env, contactId);
+  if (!existing) return null;
+  const timestamp = now();
+  const email = input.email ? normalizeEmail(input.email) : null;
+  await getDb(env)
+    .update(contacts)
+    .set({
+      email,
+      firstName: input.firstName ?? null,
+      lastName: input.lastName ?? null,
+      normalizedEmail: email,
+      updatedAt: timestamp,
+    })
+    .where(
+      and(
+        eq(contacts.id, contactId),
+        eq(contacts.workspaceId, DEFAULT_WORKSPACE_ID),
+      ),
+    )
+    .run();
+  if (input.customFields !== undefined) {
+    await saveCustomFieldValues(env, 'contact', contactId, customFields);
+  }
+  return getContact(env, contactId);
+};
+
+export const deleteContact = async (
+  env: Env,
+  contactId: string,
+): Promise<'deleted' | 'has_opportunities' | 'not_found'> => {
+  const db = getDb(env);
+  const existing = await getContact(env, contactId);
+  if (!existing) return 'not_found';
+  const linkedOpportunity = await db
+    .select({ id: opportunities.id })
+    .from(opportunities)
+    .where(
+      and(
+        eq(opportunities.primaryContactId, contactId),
+        eq(opportunities.workspaceId, DEFAULT_WORKSPACE_ID),
+      ),
+    )
+    .get();
+  if (linkedOpportunity) return 'has_opportunities';
+  await db
+    .delete(customFieldValues)
+    .where(
+      and(
+        eq(customFieldValues.entityType, 'contact'),
+        eq(customFieldValues.entityId, contactId),
+        eq(customFieldValues.workspaceId, DEFAULT_WORKSPACE_ID),
+      ),
+    )
+    .run();
+  await db
+    .delete(contacts)
+    .where(
+      and(
+        eq(contacts.id, contactId),
+        eq(contacts.workspaceId, DEFAULT_WORKSPACE_ID),
+      ),
+    )
+    .run();
+  return 'deleted';
+};
+
+export const createManualOpportunity = async (
+  env: Env,
+  input: CreateOpportunityInput,
+  contactValues: NormalizedFieldValue[],
+  opportunityValues: NormalizedFieldValue[],
+  actorEmail: string,
+): Promise<(OpportunityRecord & { customFields: Record<string, unknown> }) | 'contact_not_found' | 'invalid_stage'> => {
+  const db = getDb(env);
+  if (input.contactId && !(await getContact(env, input.contactId))) return 'contact_not_found';
+  const pipelineId = input.pipelineId ?? DEFAULT_PIPELINE_ID;
+  const stageId = input.stageId ?? DEFAULT_STAGE_ID;
+  const stage = await db
+    .select({ id: stages.id })
+    .from(stages)
+    .where(and(eq(stages.id, stageId), eq(stages.pipelineId, pipelineId), eq(stages.workspaceId, DEFAULT_WORKSPACE_ID)))
+    .get();
+  if (!stage) return 'invalid_stage';
+  const timestamp = now();
+  const contactId = input.contactId ?? id();
+  const opportunityId = id();
+  const statements: D1PreparedStatement[] = [];
+  if (input.contact) {
+    const email = input.contact.email ? normalizeEmail(input.contact.email) : null;
+    statements.push(
+      env.DB.prepare('INSERT INTO contacts (id, workspace_id, email, normalized_email, first_name, last_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+        .bind(contactId, DEFAULT_WORKSPACE_ID, email, email, input.contact.firstName ?? null, input.contact.lastName ?? null, timestamp, timestamp),
+    );
+  }
+  statements.push(
+    env.DB.prepare('INSERT INTO opportunities (id, workspace_id, primary_contact_id, pipeline_id, stage_id, name, source, estimated_value, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .bind(opportunityId, DEFAULT_WORKSPACE_ID, contactId, pipelineId, stageId, input.name, input.source ?? 'manual', input.estimatedValue ?? null, timestamp, timestamp),
+    env.DB.prepare('INSERT INTO activities (id, workspace_id, contact_id, opportunity_id, kind, body, actor_email, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .bind(id(), DEFAULT_WORKSPACE_ID, contactId, opportunityId, 'manual_entry', 'Created manually', actorEmail, JSON.stringify({ source: input.source ?? 'manual' }), timestamp),
+  );
+  for (const value of [...contactValues, ...opportunityValues]) {
+    const entityType = contactValues.includes(value) ? 'contact' : 'opportunity';
+    const entityId = entityType === 'contact' ? contactId : opportunityId;
+    statements.push(
+      env.DB.prepare('INSERT INTO custom_field_values (id, workspace_id, entity_type, entity_id, field_definition_id, value_text, value_number, value_boolean, value_date, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+        .bind(id(), DEFAULT_WORKSPACE_ID, entityType, entityId, value.fieldId, value.valueText, value.valueNumber, value.valueBoolean, value.valueDate, timestamp, timestamp),
+    );
+  }
+  await env.DB.batch(statements);
+  return (await getOpportunity(env, opportunityId))!;
 };
 
 export const listOpportunities = async (
