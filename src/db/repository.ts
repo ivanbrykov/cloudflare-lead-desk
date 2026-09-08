@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, isNull, like, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
-import type { NormalizedFieldValue } from '@/domain/custom-fields';
+import type { CustomFieldWrite, NormalizedFieldValue } from '@/domain/custom-fields';
 import type {
   ContactInput,
   CreateCustomField,
@@ -155,6 +155,11 @@ export const getFieldDefinitions = async (
   }));
 };
 
+/**
+ * Reads expose active field definitions only. Values stored under archived
+ * definitions remain in `custom_field_values` for historical export but are
+ * excluded from editable payloads, so an archived value never blocks edits.
+ */
 const valuesForEntity = async (
   env: Env,
   entityType: FieldEntity,
@@ -164,6 +169,7 @@ const valuesForEntity = async (
   const rows = await db
     .select({
       key: customFieldDefinitions.key,
+      type: customFieldDefinitions.type,
       valueBoolean: customFieldValues.valueBoolean,
       valueDate: customFieldValues.valueDate,
       valueNumber: customFieldValues.valueNumber,
@@ -178,56 +184,84 @@ const valuesForEntity = async (
       and(
         eq(customFieldValues.entityType, entityType),
         eq(customFieldValues.entityId, entityId),
+        isNull(customFieldDefinitions.archivedAt),
       ),
     );
 
   return Object.fromEntries(
     rows.map((row) => [
       row.key,
-      row.valueText ?? row.valueNumber ?? row.valueBoolean ?? row.valueDate,
+      // Boolean fields are stored as 0/1 in SQLite; decode by definition type
+      // so false round-trips as a real JSON boolean.
+      row.type === 'boolean'
+        ? Boolean(row.valueBoolean)
+        : row.type === 'number'
+          ? row.valueNumber
+          : row.type === 'date'
+            ? row.valueDate
+            : row.valueText,
     ]),
   );
 };
 
-const saveCustomFieldValues = async (
+const upsertFieldValue = (
   env: Env,
   entityType: FieldEntity,
   entityId: string,
-  values: NormalizedFieldValue[],
-): Promise<void> => {
-  if (values.length === 0) return;
-  const timestamp = now();
-  await env.DB.batch(
-    values.map((value) =>
-      env.DB
-        .prepare(
-          `INSERT INTO custom_field_values (
-            id, workspace_id, entity_type, entity_id, field_definition_id,
-            value_text, value_number, value_boolean, value_date, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          ON CONFLICT(entity_type, entity_id, field_definition_id) DO UPDATE SET
-            value_text = excluded.value_text,
-            value_number = excluded.value_number,
-            value_boolean = excluded.value_boolean,
-            value_date = excluded.value_date,
-            updated_at = excluded.updated_at`,
-        )
-        .bind(
-          id(),
-          DEFAULT_WORKSPACE_ID,
-          entityType,
-          entityId,
-          value.fieldId,
-          value.valueText,
-          value.valueNumber,
-          value.valueBoolean,
-          value.valueDate,
-          timestamp,
-          timestamp,
-        ),
-    ),
+  value: NormalizedFieldValue,
+  timestamp: string,
+): D1PreparedStatement =>
+  env.DB
+    .prepare(
+      `INSERT INTO custom_field_values (
+        id, workspace_id, entity_type, entity_id, field_definition_id,
+        value_text, value_number, value_boolean, value_date, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(entity_type, entity_id, field_definition_id) DO UPDATE SET
+        value_text = excluded.value_text,
+        value_number = excluded.value_number,
+        value_boolean = excluded.value_boolean,
+        value_date = excluded.value_date,
+        updated_at = excluded.updated_at`,
+    )
+    .bind(
+      id(),
+      DEFAULT_WORKSPACE_ID,
+      entityType,
+      entityId,
+      value.fieldId,
+      value.valueText,
+      value.valueNumber,
+      value.valueBoolean,
+      value.valueDate,
+      timestamp,
+      timestamp,
+    );
+
+const deleteFieldValue = (
+  env: Env,
+  entityType: FieldEntity,
+  entityId: string,
+  fieldId: string,
+): D1PreparedStatement =>
+  env.DB
+    .prepare(
+      'DELETE FROM custom_field_values WHERE entity_type = ? AND entity_id = ? AND field_definition_id = ? AND workspace_id = ?',
+    )
+    .bind(entityType, entityId, fieldId, DEFAULT_WORKSPACE_ID);
+
+const fieldWriteStatements = (
+  env: Env,
+  entityType: FieldEntity,
+  entityId: string,
+  writes: CustomFieldWrite[],
+  timestamp: string,
+): D1PreparedStatement[] =>
+  writes.flatMap((write) =>
+    write.kind === 'set'
+      ? [upsertFieldValue(env, entityType, entityId, write, timestamp)]
+      : [deleteFieldValue(env, entityType, entityId, write.fieldId)],
   );
-};
 
 export const listContacts = async (
   env: Env,
@@ -287,23 +321,31 @@ export const getContact = async (
 export const createContact = async (
   env: Env,
   input: ContactInput,
-  customFields: NormalizedFieldValue[],
+  customFields: CustomFieldWrite[],
 ): Promise<ContactRecord & { customFields: Record<string, unknown> }> => {
   const timestamp = now();
   const contactId = id();
   const email = input.email ? normalizeEmail(input.email) : null;
-  const db = getDb(env);
-  await db.insert(contacts).values({
-    createdAt: timestamp,
-    email,
-    firstName: input.firstName ?? null,
-    id: contactId,
-    lastName: input.lastName ?? null,
-    normalizedEmail: email,
-    updatedAt: timestamp,
-    workspaceId: DEFAULT_WORKSPACE_ID,
-  });
-  await saveCustomFieldValues(env, 'contact', contactId, customFields);
+  // Core contact and custom-field values commit as one D1 batch, so a failed
+  // field write rolls back the whole create instead of orphaning a contact.
+  const statements: D1PreparedStatement[] = [
+    env.DB
+      .prepare(
+        'INSERT INTO contacts (id, workspace_id, email, normalized_email, first_name, last_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      )
+      .bind(
+        contactId,
+        DEFAULT_WORKSPACE_ID,
+        email,
+        email,
+        input.firstName ?? null,
+        input.lastName ?? null,
+        timestamp,
+        timestamp,
+      ),
+    ...fieldWriteStatements(env, 'contact', contactId, customFields, timestamp),
+  ];
+  await env.DB.batch(statements);
   return {
     createdAt: timestamp,
     customFields: await valuesForEntity(env, 'contact', contactId),
@@ -319,31 +361,31 @@ export const updateContact = async (
   env: Env,
   contactId: string,
   input: ContactInput,
-  customFields: NormalizedFieldValue[],
+  customFields: CustomFieldWrite[],
 ): Promise<(ContactRecord & { customFields: Record<string, unknown> }) | null> => {
   const existing = await getContact(env, contactId);
   if (!existing) return null;
   const timestamp = now();
   const email = input.email ? normalizeEmail(input.email) : null;
-  await getDb(env)
-    .update(contacts)
-    .set({
-      email,
-      firstName: input.firstName ?? null,
-      lastName: input.lastName ?? null,
-      normalizedEmail: email,
-      updatedAt: timestamp,
-    })
-    .where(
-      and(
-        eq(contacts.id, contactId),
-        eq(contacts.workspaceId, DEFAULT_WORKSPACE_ID),
+  // The core update and every field set/clear share one D1 batch, so a
+  // failed field write leaves the contact (including updatedAt) unchanged.
+  const statements: D1PreparedStatement[] = [
+    env.DB
+      .prepare(
+        'UPDATE contacts SET email = ?, first_name = ?, last_name = ?, normalized_email = ?, updated_at = ? WHERE id = ? AND workspace_id = ?',
+      )
+      .bind(
+        email,
+        input.firstName ?? null,
+        input.lastName ?? null,
+        email,
+        timestamp,
+        contactId,
+        DEFAULT_WORKSPACE_ID,
       ),
-    )
-    .run();
-  if (input.customFields !== undefined) {
-    await saveCustomFieldValues(env, 'contact', contactId, customFields);
-  }
+    ...fieldWriteStatements(env, 'contact', contactId, customFields, timestamp),
+  ];
+  await env.DB.batch(statements);
   return getContact(env, contactId);
 };
 
@@ -390,8 +432,8 @@ export const deleteContact = async (
 export const createManualOpportunity = async (
   env: Env,
   input: CreateOpportunityInput,
-  contactValues: NormalizedFieldValue[],
-  opportunityValues: NormalizedFieldValue[],
+  contactValues: CustomFieldWrite[],
+  opportunityValues: CustomFieldWrite[],
   actorEmail: string,
 ): Promise<(OpportunityRecord & { customFields: Record<string, unknown> }) | 'contact_not_found' | 'invalid_stage'> => {
   const db = getDb(env);
@@ -421,14 +463,12 @@ export const createManualOpportunity = async (
     env.DB.prepare('INSERT INTO activities (id, workspace_id, contact_id, opportunity_id, kind, body, actor_email, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
       .bind(id(), DEFAULT_WORKSPACE_ID, contactId, opportunityId, 'manual_entry', 'Created manually', actorEmail, JSON.stringify({ source: input.source ?? 'manual' }), timestamp),
   );
-  for (const value of [...contactValues, ...opportunityValues]) {
-    const entityType = contactValues.includes(value) ? 'contact' : 'opportunity';
-    const entityId = entityType === 'contact' ? contactId : opportunityId;
-    statements.push(
-      env.DB.prepare('INSERT INTO custom_field_values (id, workspace_id, entity_type, entity_id, field_definition_id, value_text, value_number, value_boolean, value_date, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-        .bind(id(), DEFAULT_WORKSPACE_ID, entityType, entityId, value.fieldId, value.valueText, value.valueNumber, value.valueBoolean, value.valueDate, timestamp, timestamp),
-    );
-  }
+  // A manual opportunity is a creation: clear writes are impossible, and the
+  // field statements commit in the same batch as the new records.
+  statements.push(
+    ...fieldWriteStatements(env, 'contact', contactId, contactValues, timestamp),
+    ...fieldWriteStatements(env, 'opportunity', opportunityId, opportunityValues, timestamp),
+  );
   await env.DB.batch(statements);
   return (await getOpportunity(env, opportunityId))!;
 };
@@ -729,8 +769,8 @@ export const isIntakeToken = async (env: Env, token: string): Promise<boolean> =
 export const createIntakeAtomically = async (
   env: Env,
   input: IntakeInput,
-  contactValues: NormalizedFieldValue[],
-  opportunityValues: NormalizedFieldValue[],
+  contactValues: CustomFieldWrite[],
+  opportunityValues: CustomFieldWrite[],
   idempotencyKey: string,
 ): Promise<{ created: boolean; opportunityId: string }> => {
   const existing = await getDb(env)
@@ -813,7 +853,10 @@ export const createIntakeAtomically = async (
       ),
   ];
 
+  // Intake is a creation: explicit nulls for optional fields are omitted by
+  // validation, so only `set` writes reach persistence here.
   for (const value of contactValues) {
+    if (value.kind !== 'set') continue;
     statements.push(
       env.DB
         .prepare(
@@ -843,6 +886,7 @@ export const createIntakeAtomically = async (
     );
   }
   for (const value of opportunityValues) {
+    if (value.kind !== 'set') continue;
     statements.push(
       env.DB
         .prepare(

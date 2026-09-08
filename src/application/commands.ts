@@ -9,6 +9,7 @@ import {
   createIntakeAtomically,
   createPipeline,
   createStage,
+  getContact,
   getFieldDefinitions,
   moveOpportunity,
   updateContact,
@@ -68,14 +69,27 @@ export const updateContactCommand = (
 ) =>
   Effect.gen(function* () {
     yield* validate(() => validateContactIdentity(input));
-    const definitions = input.customFields === undefined
-      ? undefined
-      : yield* persist(() => getFieldDefinitions(env, 'contact'));
-    const fields = definitions === undefined
-      ? []
-      : yield* validate(() =>
-          validateCustomFields('contact', definitions, input.customFields),
-        );
+    const editingCustomFields = input.customFields !== undefined;
+    // Custom fields on update are PATCH-like: omitted keys keep their stored
+    // values. A required field therefore only fails when the contact has no
+    // stored value to fall back on, so validation needs the existing values.
+    const existing = editingCustomFields
+      ? yield* persist(() => getContact(env, contactId))
+      : null;
+    const definitions = editingCustomFields && existing
+      ? yield* persist(() => getFieldDefinitions(env, 'contact'))
+      : [];
+    const fields = editingCustomFields && existing
+      ? yield* validate(() =>
+          validateCustomFields(
+            'contact',
+            definitions,
+            input.customFields,
+            'update',
+            new Set(Object.keys(existing.customFields)),
+          ),
+        )
+      : [];
     return yield* persist(() => updateContact(env, contactId, input, fields));
   });
 

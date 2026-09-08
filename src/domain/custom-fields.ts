@@ -18,6 +18,25 @@ export interface NormalizedFieldValue {
   valueText: string | null;
 }
 
+/**
+ * A custom-field write produced by validation.
+ * - `set`: store (or replace) a typed value for an active field.
+ * - `clear`: remove the stored value of an optional active field. Clears are
+ *   only produced in update mode; on creation they are impossible because a
+ *   blank optional field is simply omitted from the payload.
+ */
+export type CustomFieldWrite =
+  | ({ kind: 'set' } & NormalizedFieldValue)
+  | { kind: 'clear'; fieldId: string };
+
+/**
+ * `create` enforces required fields on every write.
+ * `update` is PATCH-like: an omitted key keeps the stored value, an explicit
+ * `null` clears an optional field, and a required field is only reported
+ * missing when the entity has no stored value to fall back on.
+ */
+export type CustomFieldWriteMode = 'create' | 'update';
+
 const schemaFor = (definition: FieldDefinition): Schema.Schema.Any => {
   switch (definition.type) {
     case 'boolean':
@@ -42,7 +61,7 @@ const schemaFor = (definition: FieldDefinition): Schema.Schema.Any => {
 const normalize = (
   definition: FieldDefinition,
   value: unknown,
-): NormalizedFieldValue => {
+): CustomFieldWrite => {
   const decoded = Schema.decodeUnknownEither(schemaFor(definition) as Schema.Schema<unknown, unknown, never>)(value);
   if (Either.isLeft(decoded)) {
     throw new DomainError({
@@ -58,6 +77,7 @@ const normalize = (
   const normalized = decoded.right;
   return {
     fieldId: definition.id,
+    kind: 'set',
     valueBoolean: definition.type === 'boolean' ? Number(normalized) : null,
     valueDate: definition.type === 'date' ? String(normalized) : null,
     valueNumber: definition.type === 'number' ? Number(normalized) : null,
@@ -72,7 +92,9 @@ export const validateCustomFields = (
   entityType: FieldEntity,
   definitions: FieldDefinition[],
   values: CustomFieldValues | undefined,
-): NormalizedFieldValue[] => {
+  mode: CustomFieldWriteMode = 'create',
+  existingValueKeys: ReadonlySet<string> = new Set<string>(),
+): CustomFieldWrite[] => {
   const provided = values ?? {};
   const definitionByKey = new Map(definitions.map((field) => [field.key, field]));
 
@@ -86,10 +108,14 @@ export const validateCustomFields = (
     }
   }
 
-  return definitions.flatMap((definition) => {
+  return definitions.flatMap((definition): CustomFieldWrite[] => {
     const value = provided[definition.key];
+
     if (value === undefined) {
-      if (definition.required) {
+      // Omitted: on create a required field is missing; on update the stored
+      // value is preserved, but a required field with no stored value cannot
+      // be bypassed by a custom-fields edit.
+      if (definition.required && !existingValueKeys.has(definition.key)) {
         throw new DomainError({
           code: 'missing_custom_field',
           details: { entityType, field: definition.key },
@@ -98,6 +124,22 @@ export const validateCustomFields = (
       }
       return [];
     }
+
+    if (value === null) {
+      if (definition.required) {
+        throw new DomainError({
+          code: 'required_custom_field',
+          details: { entityType, field: definition.key },
+          message: `“${definition.key}” is required and cannot be cleared.`,
+        });
+      }
+      // On create there is nothing to clear, so a blank optional field is
+      // simply omitted instead of being sent as null.
+      return mode === 'update'
+        ? [{ fieldId: definition.id, kind: 'clear' }]
+        : [];
+    }
+
     return [normalize(definition, value)];
   });
 };

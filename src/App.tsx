@@ -24,6 +24,11 @@ import {
 } from './domain/schemas';
 import { request } from './lib/http';
 import { cn } from './lib/styles';
+import {
+  customFieldsForCreate,
+  customFieldsForUpdate,
+  isBlankCustomFieldValue,
+} from './lib/custom-field-form';
 
 type Contact = {
   createdAt: string;
@@ -90,7 +95,7 @@ const validateRequiredCustomFields = (
 ): Record<string, string> =>
   Object.fromEntries(
     definitions
-      .filter((field) => field.required && (values[field.key] === undefined || values[field.key] === ''))
+      .filter((field) => field.required && isBlankCustomFieldValue(values[field.key]))
       .map((field) => [field.key, field.label + ' is required.']),
   );
 
@@ -116,9 +121,9 @@ const CustomFieldInputs = ({
           return <label key={field.id} className="grid gap-1 text-sm text-slate-300">{label}<span className="flex gap-2"><input checked={Boolean(values[field.key])} onChange={(event) => onChange(field.key, event.target.checked)} type="checkbox" /> Yes</span>{error && <p className="text-sm text-rose-300">{error}</p>}</label>;
         }
         if (field.type === 'select') {
-          return <label key={field.id} className="grid gap-1 text-sm text-slate-300">{label}<select onChange={(event) => onChange(field.key, event.target.value || undefined)} value={String(values[field.key] ?? '')}><option value="">Choose an option…</option>{field.options.map((option) => <option key={option} value={option}>{option}</option>)}</select>{error && <p className="text-sm text-rose-300">{error}</p>}</label>;
+          return <label key={field.id} className="grid gap-1 text-sm text-slate-300">{label}<select onChange={(event) => onChange(field.key, event.target.value === '' ? null : event.target.value)} value={String(values[field.key] ?? '')}><option value="">Choose an option…</option>{field.options.map((option) => <option key={option} value={option}>{option}</option>)}</select>{error && <p className="text-sm text-rose-300">{error}</p>}</label>;
         }
-        return <label key={field.id} className="grid gap-1 text-sm text-slate-300">{label}<input onChange={(event) => onChange(field.key, field.type === 'number' ? (event.target.value === '' ? undefined : Number(event.target.value)) : (event.target.value || undefined))} type={field.type === 'date' ? 'date' : field.type === 'number' ? 'number' : 'text'} value={String(values[field.key] ?? '')} />{error && <p className="text-sm text-rose-300">{error}</p>}</label>;
+        return <label key={field.id} className="grid gap-1 text-sm text-slate-300">{label}<input onChange={(event) => onChange(field.key, field.type === 'number' ? (event.target.value === '' ? null : Number(event.target.value)) : (event.target.value === '' ? null : event.target.value))} type={field.type === 'date' ? 'date' : field.type === 'number' ? 'number' : 'text'} value={String(values[field.key] ?? '')} />{error && <p className="text-sm text-rose-300">{error}</p>}</label>;
       })}
     </fieldset>
   );
@@ -239,7 +244,9 @@ const ContactDialog = ({
     }
     mutation.mutate({
       ...input,
-      customFields: Object.keys(customFields).length > 0 ? customFields : undefined,
+      customFields: editing
+        ? customFieldsForUpdate(customFields)
+        : customFieldsForCreate(customFields),
     });
   };
   return (
@@ -300,8 +307,8 @@ const OpportunityDialog = ({ open, onOpenChange }: { onOpenChange: (value: boole
       const body = {
         ...(values.contactMode === 'existing'
           ? { contactId: values.contactId }
-          : { contact: { ...normalizeContactInput({ email: values.email, firstName: values.firstName, lastName: values.lastName }), customFields: Object.keys(contactCustomFields).length > 0 ? contactCustomFields : undefined } }),
-        customFields: Object.keys(opportunityCustomFields).length > 0 ? opportunityCustomFields : undefined,
+          : { contact: { ...normalizeContactInput({ email: values.email, firstName: values.firstName, lastName: values.lastName }), customFields: customFieldsForCreate(contactCustomFields) } }),
+        customFields: customFieldsForCreate(opportunityCustomFields),
         estimatedValue: values.estimatedValue ? Number(values.estimatedValue) : undefined,
         name: values.name.trim(),
         pipelineId: values.pipelineId,

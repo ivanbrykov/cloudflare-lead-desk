@@ -15,7 +15,11 @@ export const openApiSpecification = {
     '/v1/contacts/{id}': {
       delete: { responses: { 204: { description: 'Contact deleted' }, 404: { description: 'Contact not found' }, 409: { description: 'Contact has opportunities' } }, summary: 'Delete contact' },
       get: { responses: { 200: { description: 'Contact' }, 401: { description: 'Access required' }, 404: { description: 'Contact not found' } }, summary: 'Get contact' },
-      put: { responses: { 200: { description: 'Contact updated' }, 401: { description: 'Access required' }, 404: { description: 'Contact not found' }, 422: { description: 'Invalid contact' } }, summary: 'Update contact' },
+      put: {
+        description: 'Update a contact. `customFields` is a patch: omit the object or a key to keep its stored value, or send an explicit `null` to clear an optional field. Required fields cannot be cleared or left without a value, unknown or archived keys are rejected, and the core fields plus all field writes commit in a single transaction.',
+        responses: { 200: { description: 'Contact updated' }, 401: { description: 'Access required' }, 404: { description: 'Contact not found' }, 422: { description: 'Invalid contact' } },
+        summary: 'Update contact',
+      },
     },
     '/v1/intakes': {
       post: {
