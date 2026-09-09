@@ -8,6 +8,13 @@
       "when": 1787472290426,
       "tag": "0000_reflective_whiplash",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1788926738544,
+      "tag": "0001_last_vulcan",
+      "breakpoints": true
     }
   ]
 }

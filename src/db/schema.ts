@@ -229,6 +229,7 @@ export const idempotencyKeys = sqliteTable(
   {
     createdAt: text('created_at').notNull(),
     key: text('key').notNull(),
+    requestHash: text('request_hash'),
     responseJson: text('response_json', { mode: 'json' })
       .$type<Record<string, unknown>>()
       .notNull(),

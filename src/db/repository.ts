@@ -1,6 +1,7 @@
 import { and, asc, desc, eq, isNull, like, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
 import type { CustomFieldWrite, NormalizedFieldValue } from '@/domain/custom-fields';
+import type { IntakeResponse } from '@/domain/intake';
 import type {
   ContactInput,
   CreateCustomField,
@@ -429,6 +430,42 @@ export const deleteContact = async (
   return 'deleted';
 };
 
+// Intake preserves the current workspace defaults rather than inventing new
+// routing: a submission without explicit pipeline/stage uses the seeded
+// default pipeline and stage.
+export const intakePipelineId = (input: IntakeInput): string =>
+  input.opportunity.pipelineId ?? DEFAULT_PIPELINE_ID;
+export const intakeStageId = (input: IntakeInput): string =>
+  input.opportunity.stageId ?? DEFAULT_STAGE_ID;
+
+/**
+ * A routing pair is valid when the stage exists in the selected pipeline and
+ * both belong to the current workspace, and the pipeline is not archived.
+ * Defaults are resolved by callers, so this check also covers default
+ * routing: archiving the default pipeline rejects default intake.
+ */
+export const isStageInActiveWorkspacePipeline = async (
+  env: Env,
+  pipelineId: string,
+  stageId: string,
+): Promise<boolean> => {
+  const row = await getDb(env)
+    .select({ ok: sql<number>`1` })
+    .from(stages)
+    .innerJoin(pipelines, eq(pipelines.id, stages.pipelineId))
+    .where(
+      and(
+        eq(stages.id, stageId),
+        eq(stages.pipelineId, pipelineId),
+        eq(stages.workspaceId, DEFAULT_WORKSPACE_ID),
+        eq(pipelines.workspaceId, DEFAULT_WORKSPACE_ID),
+        isNull(pipelines.archivedAt),
+      ),
+    )
+    .get();
+  return row !== undefined;
+};
+
 export const createManualOpportunity = async (
   env: Env,
   input: CreateOpportunityInput,
@@ -436,16 +473,10 @@ export const createManualOpportunity = async (
   opportunityValues: CustomFieldWrite[],
   actorEmail: string,
 ): Promise<(OpportunityRecord & { customFields: Record<string, unknown> }) | 'contact_not_found' | 'invalid_stage'> => {
-  const db = getDb(env);
   if (input.contactId && !(await getContact(env, input.contactId))) return 'contact_not_found';
   const pipelineId = input.pipelineId ?? DEFAULT_PIPELINE_ID;
   const stageId = input.stageId ?? DEFAULT_STAGE_ID;
-  const stage = await db
-    .select({ id: stages.id })
-    .from(stages)
-    .where(and(eq(stages.id, stageId), eq(stages.pipelineId, pipelineId), eq(stages.workspaceId, DEFAULT_WORKSPACE_ID)))
-    .get();
-  if (!stage) return 'invalid_stage';
+  if (!(await isStageInActiveWorkspacePipeline(env, pipelineId, stageId))) return 'invalid_stage';
   const timestamp = now();
   const contactId = input.contactId ?? id();
   const opportunityId = id();
@@ -766,14 +797,16 @@ export const isIntakeToken = async (env: Env, token: string): Promise<boolean> =
   return true;
 };
 
-export const createIntakeAtomically = async (
+export interface StoredIntakeKey {
+  requestHash: string | null;
+  responseJson: Record<string, unknown>;
+}
+
+export const getIntakeKey = async (
   env: Env,
-  input: IntakeInput,
-  contactValues: CustomFieldWrite[],
-  opportunityValues: CustomFieldWrite[],
   idempotencyKey: string,
-): Promise<{ created: boolean; opportunityId: string }> => {
-  const existing = await getDb(env)
+): Promise<StoredIntakeKey | null> => {
+  const row = await getDb(env)
     .select()
     .from(idempotencyKeys)
     .where(
@@ -783,14 +816,69 @@ export const createIntakeAtomically = async (
       ),
     )
     .get();
-  if (existing) return existing.responseJson as { created: boolean; opportunityId: string };
+  return row
+    ? {
+        requestHash: row.requestHash,
+        responseJson: row.responseJson as Record<string, unknown>,
+      }
+    : null;
+};
 
+const checkStoredIntakeKey = (
+  stored: StoredIntakeKey | null,
+  requestHash: string,
+): 'none' | 'conflict' | 'legacy_unverifiable' | 'replay' => {
+  if (!stored) return 'none';
+  if (stored.requestHash === null) return 'legacy_unverifiable';
+  if (stored.requestHash === requestHash) return 'replay';
+  return 'conflict';
+};
+
+export type IntakePersistenceOutcome =
+  | { kind: 'created'; response: IntakeResponse }
+  | { kind: 'replayed'; response: IntakeResponse }
+  | { kind: 'conflict' }
+  | { kind: 'legacy_unverifiable'; storedResponse: Record<string, unknown> };
+
+/**
+ * Interprets an already stored key for this request. Returns undefined when
+ * no accepted row exists (i.e. this is a new submission). Used both before
+ * the first write and after a batch collision, so concurrent callers apply
+ * the exact same replay/conflict/legacy rules.
+ */
+export const outcomeForStoredIntakeKey = (
+  stored: StoredIntakeKey | null,
+  requestHash: string,
+): IntakePersistenceOutcome | undefined => {
+  switch (checkStoredIntakeKey(stored, requestHash)) {
+    case 'replay':
+      return {
+        kind: 'replayed',
+        response: stored!.responseJson as unknown as IntakeResponse,
+      };
+    case 'legacy_unverifiable':
+      return { kind: 'legacy_unverifiable', storedResponse: stored!.responseJson };
+    case 'conflict':
+      return { kind: 'conflict' };
+    default:
+      return undefined;
+  }
+};
+
+export const createIntakeAtomically = async (
+  env: Env,
+  input: IntakeInput,
+  contactValues: CustomFieldWrite[],
+  opportunityValues: CustomFieldWrite[],
+  idempotencyKey: string,
+  requestHash: string,
+): Promise<IntakePersistenceOutcome> => {
   const timestamp = now();
   const opportunityId = id();
   const activityId = id();
   const email = normalizeEmail(input.contact.email);
-  const pipelineId = input.opportunity.pipelineId ?? DEFAULT_PIPELINE_ID;
-  const stageId = input.opportunity.stageId ?? DEFAULT_STAGE_ID;
+  const pipelineId = intakePipelineId(input);
+  const stageId = intakeStageId(input);
   const response = { created: true, opportunityId };
   const statements: D1PreparedStatement[] = [
     env.DB
@@ -913,29 +1001,29 @@ export const createIntakeAtomically = async (
         ),
     );
   }
+  // The accepted key (with its fingerprint) commits in the same atomic batch
+  // as the domain writes: a failed batch rolls the key back as well, so a
+  // transient failure never reserves the key and the retry can still succeed.
   statements.push(
     env.DB
       .prepare(
-        'INSERT INTO idempotency_keys (workspace_id, key, response_json, created_at) VALUES (?, ?, ?, ?)',
+        'INSERT INTO idempotency_keys (workspace_id, key, request_hash, response_json, created_at) VALUES (?, ?, ?, ?, ?)',
       )
-      .bind(DEFAULT_WORKSPACE_ID, idempotencyKey, JSON.stringify(response), timestamp),
+      .bind(DEFAULT_WORKSPACE_ID, idempotencyKey, requestHash, JSON.stringify(response), timestamp),
   );
 
   try {
     await env.DB.batch(statements);
-    return response;
+    return { kind: 'created', response };
   } catch (error) {
-    const replay = await getDb(env)
-      .select()
-      .from(idempotencyKeys)
-      .where(
-        and(
-          eq(idempotencyKeys.workspaceId, DEFAULT_WORKSPACE_ID),
-          eq(idempotencyKeys.key, idempotencyKey),
-        ),
-      )
-      .get();
-    if (replay) return replay.responseJson as { created: boolean; opportunityId: string };
+    // A unique-key collision means a concurrent request already committed
+    // this key; any other failure committed nothing. Re-read and apply the
+    // SAME fingerprint/legacy rules as the fast path — never an
+    // unconditional replay — then surface the original error if no accepted
+    // row exists.
+    const stored = await getIntakeKey(env, idempotencyKey);
+    const outcome = outcomeForStoredIntakeKey(stored, requestHash);
+    if (outcome) return outcome;
     throw error;
   }
 };

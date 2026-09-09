@@ -23,7 +23,34 @@ export const openApiSpecification = {
     },
     '/v1/intakes': {
       post: {
-        parameters: [{ in: 'header', name: 'Idempotency-Key', required: true, schema: { type: 'string' } }],
+        description: [
+          'Atomically captures a contact, opportunity, intake activity, custom-field values, and the idempotency key in one D1 transaction.',
+          '',
+          'Idempotency contract:',
+          '- The Idempotency-Key header is required: 1-128 printable ASCII characters (0x21-0x7E, no spaces). Missing or invalid keys are rejected with 400 before any intake data is written.',
+          '- Keys are workspace-scoped and persist across token rotation: a rotated token replays the stored response instead of duplicating the submission.',
+          '- A deterministic SHA-256 fingerprint of the decoded request (object keys sorted, array order preserved, email normalized) is stored with the accepted key. Re-sending the same logical payload - any JSON whitespace or property order, any email case - returns the original 201 response and IDs without updating contacts or inserting history.',
+          '- A different payload under the same key returns 409 idempotency_conflict without exposing the stored payload or hash.',
+          '- Keys accepted before fingerprints existed (null request_hash) return 409 idempotency_legacy_unverifiable. Reconcile them against the already stored opportunity (returned in details) before submitting again; the row is never overwritten, backfilled, or deleted.',
+          '- Replays skip current custom-field and pipeline validation, so an accepted submission keeps replaying after fields are archived or newly required and after pipelines are archived.',
+          '',
+          'Routing: the selected (or default) stage must belong to the selected (or default) pipeline, both must belong to the current workspace, and archived pipelines are rejected with 422 invalid_stage. No intake data is written for rejected routing.',
+          '',
+          'Size: the raw request body is limited to 65,536 actual bytes (streamed or declared) before JSON parsing; larger bodies return 413 payload_too_large. Other routes are not size-limited here.',
+        ].join('\n'),
+        parameters: [
+          {
+            in: 'header',
+            name: 'Idempotency-Key',
+            required: true,
+            schema: {
+              maxLength: 128,
+              minLength: 1,
+              pattern: '^[\\u0021-\\u007e]{1,128}$',
+              type: 'string',
+            },
+          },
+        ],
         requestBody: {
           content: {
             'application/json': {
@@ -40,7 +67,20 @@ export const openApiSpecification = {
           },
           required: true,
         },
-        responses: { 201: { description: 'Intake captured' }, 401: { description: 'Intake token required' }, 422: { description: 'Invalid intake' } },
+        responses: {
+          201: { description: 'Intake captured, or the stored response replayed for a matching retry' },
+          400: {
+            description: 'Idempotency-Key missing (idempotency_key_required) or not 1-128 printable ASCII (invalid_idempotency_key)',
+          },
+          401: { description: 'Missing, invalid, or revoked intake token' },
+          409: {
+            description: 'idempotency_conflict (same key, different payload) or idempotency_legacy_unverifiable (pre-fingerprint key; reconcile against the stored opportunity first)',
+          },
+          413: { description: 'payload_too_large (raw body over 65,536 bytes)' },
+          422: {
+            description: 'Invalid intake payload, custom-field value, or invalid_stage (stage/pipeline/workspace mismatch or archived pipeline)',
+          },
+        },
         security: [{ bearerAuth: [] }],
         summary: 'Atomically capture a contact and opportunity',
       },
