@@ -233,8 +233,12 @@ const ContactDialog = ({
     },
   });
   const editing = Boolean(contact);
-  const submit = (values: ContactInput) => {
-    const errors = validateRequiredCustomFields(fieldDefinitions.data ?? [], customFields);
+  const submit = async (values: ContactInput) => {
+    // A field may have been archived in another tab since this contact loaded.
+    // Fetch current definitions before shaping the edit payload.
+    const definitions = await fieldDefinitions.refetch();
+    if (definitions.isError || !definitions.data) return;
+    const errors = validateRequiredCustomFields(definitions.data, customFields);
     setCustomFieldErrors(errors);
     if (Object.keys(errors).length > 0) return;
     const input = normalizeContactInput(values);
@@ -245,7 +249,7 @@ const ContactDialog = ({
     mutation.mutate({
       ...input,
       customFields: editing
-        ? customFieldsForUpdate(customFields)
+        ? customFieldsForUpdate(customFields, definitions.data)
         : customFieldsForCreate(customFields),
     });
   };
@@ -258,7 +262,7 @@ const ContactDialog = ({
         {fieldDefinitions.isPending ? <p className="text-sm text-slate-400">Loading custom fields…</p> : <CustomFieldInputs definitions={fieldDefinitions.data ?? []} errors={customFieldErrors} onChange={(key, value) => setCustomFields((current) => ({ ...current, [key]: value }))} values={customFields} />}
         {fieldDefinitions.error && <ErrorState error={fieldDefinitions.error} />}
         {mutation.error && <ErrorState error={mutation.error} />}
-        <div className="flex justify-end gap-2"><Button tone="secondary" onClick={() => onOpenChange(false)}>Cancel</Button><Button disabled={mutation.isPending || fieldDefinitions.isPending} type="submit">{editing ? 'Save changes' : 'Create contact'}</Button></div>
+        <div className="flex justify-end gap-2"><Button tone="secondary" onClick={() => onOpenChange(false)}>Cancel</Button><Button disabled={mutation.isPending || form.formState.isSubmitting || fieldDefinitions.isPending} type="submit">{editing ? 'Save changes' : 'Create contact'}</Button></div>
       </form>
     </Dialog>
   );
@@ -524,12 +528,20 @@ const FieldDialog = ({
 };
 
 const FieldsPage = () => {
+  const queryClient = useQueryClient();
   const [entityType, setEntityType] = useState<'contact' | 'opportunity'>('opportunity');
   const [showFieldDialog, setShowFieldDialog] = useState(false);
   const fields = useQuery({ queryFn: () => request<FieldDefinition[]>('/v1/custom-fields?entityType=' + entityType), queryKey: ['fields', entityType] });
   const archive = useMutation({
     mutationFn: (id: string) => request('/v1/custom-fields/' + id, { method: 'DELETE' }),
-    onSuccess: () => fields.refetch(),
+    onSuccess: async () => {
+      await Promise.all([
+        fields.refetch(),
+        queryClient.invalidateQueries({ queryKey: ['contacts'] }),
+        queryClient.invalidateQueries({ queryKey: ['opportunities'] }),
+        queryClient.invalidateQueries({ queryKey: ['opportunity'] }),
+      ]);
+    },
   });
   const recordLabel = entityType === 'contact' ? 'Contact' : 'Opportunity';
   return (
