@@ -23,5 +23,9 @@ export const customFieldsForCreate = (
  */
 export const customFieldsForUpdate = (
   values: Record<string, unknown>,
-): Record<string, unknown> | undefined =>
-  Object.keys(values).length > 0 ? values : undefined;
+  activeDefinitions: ReadonlyArray<{ key: string }>,
+): Record<string, unknown> | undefined => {
+  const activeKeys = new Set(activeDefinitions.map((field) => field.key));
+  const entries = Object.entries(values).filter(([key]) => activeKeys.has(key));
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+};

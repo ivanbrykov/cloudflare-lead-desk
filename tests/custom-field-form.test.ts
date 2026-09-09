@@ -15,11 +15,20 @@ describe('custom field form payloads', () => {
   });
 
   test('update keeps cleared optional fields as explicit nulls', () => {
-    expect(customFieldsForUpdate({ cleared: null, consent: false })).toEqual({
+    expect(customFieldsForUpdate({ cleared: null, consent: false }, [{ key: 'cleared' }, { key: 'consent' }])).toEqual({
       cleared: null,
       consent: false,
     });
-    expect(customFieldsForUpdate({})).toBeUndefined();
+    expect(customFieldsForUpdate({}, [])).toBeUndefined();
+  });
+
+  test('editing a cached contact drops archived keys using current definitions', () => {
+    const cached = { archived: 'old value', consent: false, cleared: null, count: 0 };
+    expect(customFieldsForUpdate(cached, [
+      { key: 'consent' }, { key: 'cleared' }, { key: 'count' },
+    ])).toEqual({ consent: false, cleared: null, count: 0 });
+    expect(customFieldsForUpdate(cached, [])).toBeUndefined();
+    expect(cached.archived).toBe('old value');
   });
 
   test('blank detection treats null and empty string as missing, false and 0 as values', () => {

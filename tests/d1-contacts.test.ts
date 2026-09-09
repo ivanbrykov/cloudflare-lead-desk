@@ -2,7 +2,7 @@ import { build } from 'esbuild';
 import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
 import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import { afterAll, beforeAll, expect, test } from 'vitest';
+import { afterEach, beforeAll, beforeEach, expect, test } from 'vitest';
 
 /**
  * D1-backed regression tests for contact and custom-field correctness.
@@ -49,6 +49,7 @@ interface Opportunity {
   name: string;
 }
 
+let workerScript: string;
 let miniflare: Miniflare;
 let db: D1Database;
 
@@ -123,6 +124,10 @@ beforeAll(async () => {
     tsconfig: join(repoRoot, 'tsconfig.json'),
     write: false,
   });
+  workerScript = bundled.outputFiles[0].text;
+}, 60_000);
+
+beforeEach(async () => {
   miniflare = new Miniflare(
     convertV4MiniflareOptions({
       bindings: {
@@ -135,7 +140,7 @@ beforeAll(async () => {
       compatibilityFlags: ['nodejs_compat'],
       d1Databases: ['DB'],
       modules: true,
-      script: bundled.outputFiles[0].text,
+      script: workerScript,
     }),
   );
   db = await miniflare.getD1Database('DB');
@@ -148,18 +153,18 @@ beforeAll(async () => {
       await db.prepare(statement).run();
     }
   }
-}, 60_000);
-
-afterAll(async () => {
-  await miniflare?.dispose();
-}, 30_000);
-
-test('boolean false and every field type survive create, read, and unchanged update', async () => {
   await createField('active_bool', 'boolean');
   await createField('optional_text');
   await createField('optional_num', 'number');
   await createField('optional_date', 'date');
   await createField('optional_select', 'select');
+}, 60_000);
+
+afterEach(async () => {
+  await miniflare?.dispose();
+}, 30_000);
+
+test('boolean false and every field type survive create, read, and unchanged update', async () => {
   const values = {
     active_bool: false,
     optional_date: '2026-09-08',
@@ -356,6 +361,7 @@ test('required fields reject null and cannot be bypassed on edit', async () => {
 });
 
 test('intake rejects null for required fields and omits blank optional fields', async () => {
+  await createField('required_text', 'text', true);
   const token = await ok<{ token: string }>('/v1/tokens', 'POST', { name: 'regression-intake' });
   const headers = { Authorization: `Bearer ${token.token}` };
 
@@ -396,6 +402,7 @@ test('intake rejects null for required fields and omits blank optional fields', 
 });
 
 test('manual opportunity creation rejects null for required contact fields', async () => {
+  await createField('required_text', 'text', true);
   const bad = await api('/v1/opportunities', 'POST', {
     contact: { customFields: { required_text: null }, firstName: 'NoBypass' },
     name: 'Manual opportunity',
