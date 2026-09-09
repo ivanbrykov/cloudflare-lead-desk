@@ -13,16 +13,18 @@ Companies, tasks, email sync, imports, reporting, workflows, custom objects, and
 
 ## Install on Cloudflare
 
-Prerequisites: a Cloudflare account, Bun or Node 24+, and a Cloudflare Zero Trust team.
+Prerequisites: a Cloudflare account, Node.js 24.20.0 (see `.node-version`) and pnpm 10.34.5, and a Cloudflare Zero Trust team.
 
-1. Install dependencies: `bun install` (or `npm install` where Bun is unavailable).
-2. Create a D1 database: `bunx wrangler d1 create cloudflare-lead-desk`.
+Install the pinned pnpm version using `npm install --global pnpm@10.34.5` if needed.
+
+1. Install dependencies: `pnpm install --frozen-lockfile`.
+2. Create a D1 database: `pnpm exec wrangler d1 create cloudflare-lead-desk`.
 3. Copy the returned database ID into `wrangler.jsonc`.
 4. Configure a Cloudflare Access application for the deployed hostname. Set its audience value and team hostname in `ACCESS_AUD` and `ACCESS_TEAM_DOMAIN`.
-5. Build and apply the generated migration: `bunx wrangler d1 migrations apply cloudflare-lead-desk --remote`.
-6. Deploy: `bun run deploy`.
+5. Build and apply the generated migration: `pnpm exec wrangler d1 migrations apply cloudflare-lead-desk --remote`.
+6. Deploy: `pnpm run deploy`.
 
-For local development, copy `.dev.vars.example` to `.dev.vars`, use `ENVIRONMENT=development`, then run `npm run dev:worker` and `npm run dev`. `DEV_ADMIN_EMAIL` is honored only outside production.
+For local development, copy `.dev.vars.example` to `.dev.vars`, use `ENVIRONMENT=development`, then run `pnpm run dev:worker` and `pnpm run dev`. `DEV_ADMIN_EMAIL` is honored only outside production.
 
 ## Integration API
 
@@ -58,9 +60,9 @@ Custom fields are configured per contact and opportunity (Settings → Fields) a
 ## Development
 
 ```sh
-npm run typecheck
-npm test
-npm run build
+pnpm run typecheck
+pnpm test
+pnpm run build
 ```
 
 The public contract is REST/OpenAPI. Elysia handles HTTP, Effect Schema is the single validation model, and Effect commands contain domain rules. See [`docs/adr`](docs/adr).
