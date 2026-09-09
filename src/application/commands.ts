@@ -11,11 +11,18 @@ import {
   createStage,
   getContact,
   getFieldDefinitions,
+  getIntakeKey,
+  intakePipelineId,
+  intakeStageId,
+  isStageInActiveWorkspacePipeline,
   moveOpportunity,
+  outcomeForStoredIntakeKey,
   updateContact,
   type Env,
+  type IntakePersistenceOutcome,
 } from '@/db/repository';
 import { validateCustomFields } from '@/domain/custom-fields';
+import { intakeRequestFingerprint } from '@/domain/intake';
 import type {
   ContactInput,
   CreateCustomField,
@@ -132,6 +139,36 @@ export const createIntakeCommand = (
   idempotencyKey: string,
 ) =>
   Effect.gen(function* () {
+    // Request identity: a pure fingerprint of the static-schema-decoded input.
+    // No field-definition or pipeline lookup may influence it, so mutable
+    // workspace state can never change whether a retry is recognized.
+    const requestHash = yield* Effect.tryPromise({
+      catch: (cause) => new PersistenceError({ cause }),
+      try: () => intakeRequestFingerprint(input),
+    });
+    // Replay/conflict/legacy checks run BEFORE current custom-field and
+    // pipeline validation, so an accepted submission keeps replaying after
+    // fields are archived or newly required and after pipelines are archived.
+    const stored = yield* persist(() => getIntakeKey(env, idempotencyKey));
+    const storedOutcome = outcomeForStoredIntakeKey(stored, requestHash);
+    if (storedOutcome) return storedOutcome;
+    // Mutable application rules apply to NEW submissions only.
+    const routingValid = yield* persist(() =>
+      isStageInActiveWorkspacePipeline(
+        env,
+        intakePipelineId(input),
+        intakeStageId(input),
+      ),
+    );
+    if (!routingValid) {
+      return yield* Effect.fail(
+        new DomainError({
+          code: 'invalid_stage',
+          message:
+            'The selected stage must belong to the selected pipeline, both must be active in this workspace.',
+        }),
+      );
+    }
     const contactDefinitions = yield* persist(() =>
       getFieldDefinitions(env, 'contact'),
     );
@@ -148,13 +185,14 @@ export const createIntakeCommand = (
         input.opportunity.customFields,
       ),
     );
-    return yield* persist(() =>
+    return yield* persist((): Promise<IntakePersistenceOutcome> =>
       createIntakeAtomically(
         env,
         input,
         contactFields,
         opportunityFields,
         idempotencyKey,
+        requestHash,
       ),
     );
   });

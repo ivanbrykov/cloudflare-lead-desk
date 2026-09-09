@@ -43,6 +43,7 @@ import {
   IntakeInputSchema,
   MoveOpportunitySchema,
 } from '@/domain/schemas';
+import { isIntakeKey } from '@/domain/intake';
 
 const errorResponse = (
   status: number,
@@ -321,9 +322,40 @@ export const createApp = (env: Env) =>
         if (!idempotencyKey) {
           return errorResponse(400, 'idempotency_key_required', 'Idempotency-Key is required.');
         }
+        if (!isIntakeKey(idempotencyKey)) {
+          return errorResponse(
+            400,
+            'invalid_idempotency_key',
+            'Idempotency-Key must be 1-128 printable ASCII characters (no spaces).',
+          );
+        }
         const parsed = await parse(IntakeInputSchema, body);
         if ('error' in parsed) return parsed.error;
         const result = await run(createIntakeCommand(env, parsed.data, idempotencyKey));
-        return 'error' in result ? result.error : Response.json({ data: result.data }, { status: 201 });
+        if ('error' in result) return result.error;
+        switch (result.data.kind) {
+          case 'created':
+          case 'replayed':
+            // Replays keep the original HTTP 201 and stored response for
+            // compatibility, without touching contacts or history.
+            return Response.json({ data: result.data.response }, { status: 201 });
+          case 'conflict':
+            return errorResponse(
+              409,
+              'idempotency_conflict',
+              'This Idempotency-Key has already been used with a different payload. Reconcile the stored response before resubmitting.',
+            );
+          case 'legacy_unverifiable': {
+            const stored = result.data.storedResponse;
+            return errorResponse(
+              409,
+              'idempotency_legacy_unverifiable',
+              'This Idempotency-Key was accepted before request fingerprints existed and cannot be verified. Reconcile it against the already stored opportunity before submitting again.',
+              typeof stored.opportunityId === 'string'
+                ? { opportunityId: stored.opportunityId }
+                : undefined,
+            );
+          }
+        }
       }
     );

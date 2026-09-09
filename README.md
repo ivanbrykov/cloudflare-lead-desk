@@ -48,6 +48,51 @@ curl https://crm.example.com/v1/intakes \
 
 The interactive OpenAPI documentation is available at `/openapi`.
 
+### Intake idempotency contract
+
+`POST /v1/intakes` is the only size-limited route: the raw request body is
+bounded to **65,536 actual bytes** (enforced on the streamed body, with or
+without a declared `Content-Length`) before JSON parsing. Larger bodies get
+`413 payload_too_large` and write no intake data.
+
+- **Keys.** `Idempotency-Key` is required and must be 1-128 printable ASCII
+  characters (`0x21`-`0x7E`, no spaces). A missing key returns
+  `400 idempotency_key_required`; any other malformed key returns
+  `400 invalid_idempotency_key`. Both are rejected before any intake data is
+  written, as are unauthorized requests.
+- **Identity.** The key is workspace-scoped and outlives tokens: rotating or
+  revoking tokens never duplicates a submission. Each accepted key stores a
+  deterministic SHA-256 fingerprint of the decoded request. The fingerprint
+  sorts object keys recursively, preserves array order, and normalizes the
+  contact email (case/whitespace), so JSON whitespace, property order, and
+  email case never create a conflict. Omitted versus explicitly supplied
+  optional values are fingerprinted differently and may legitimately
+  conflict; use one stable form per logical submission.
+- **Replay.** Re-sending the same logical payload returns the original
+  `201` response and IDs without updating contacts or inserting history.
+  Replays skip current custom-field and pipeline validation, so an accepted
+  submission keeps replaying after fields are archived or newly required and
+  after pipelines are archived.
+- **Conflicts.** A different payload under the same key returns
+  `409 idempotency_conflict` without exposing the stored payload or hash.
+  Concurrent same-key calls settle to one persisted winner; identical
+  concurrent retries all return the original success.
+- **Legacy keys.** Keys accepted before fingerprints existed (null
+  `request_hash`) return `409 idempotency_legacy_unverifiable`. Reconcile
+  them against the already stored opportunity (its ID is returned in
+  `details`) before considering another submission or key. The stored row is
+  never overwritten, backfilled from the new request, or deleted, and blind
+  new-key retries are not a substitute for reconciliation.
+- **Routing.** The selected or default stage must belong to the selected or
+  default pipeline, both must belong to the current workspace, and archived
+  pipelines are rejected. Invalid combinations return `422 invalid_stage`
+  with no contact, opportunity, activity, custom-value, or idempotency
+  writes.
+- **Atomicity.** Contact upsert, opportunity, intake activity, custom-field
+  values, and the idempotency key commit in one D1 transaction. A failed
+  transaction reserves no key, so the same key can be retried after a
+  transient failure.
+
 ## Custom fields
 
 Custom fields are configured per contact and opportunity (Settings → Fields) and validated against the active definitions:
