@@ -44,6 +44,7 @@ import {
   MoveOpportunitySchema,
 } from '@/domain/schemas';
 import { isIntakeKey } from '@/domain/intake';
+import { mapIntakeBodyError, parseIntakeBody } from '@/api/intake-parser';
 
 const errorResponse = (
   status: number,
@@ -357,5 +358,13 @@ export const createApp = (env: Env) =>
             );
           }
         }
-      }
+      },
+      {
+        // The raw intake body is bounded to 65,536 actual bytes by the
+        // get-stream-backed parse hook BEFORE JSON decoding and domain
+        // writes, on every accepted alias of this route. Overflow is mapped
+        // to the existing 413 payload_too_large response by the error hook.
+        parse: parseIntakeBody,
+        error: ({ error, status }) => mapIntakeBodyError(error, status),
+      },
     );

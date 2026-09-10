@@ -36,7 +36,7 @@ export const openApiSpecification = {
           '',
           'Routing: the selected (or default) stage must belong to the selected (or default) pipeline, both must belong to the current workspace, and archived pipelines are rejected with 422 invalid_stage. No intake data is written for rejected routing.',
           '',
-          'Size: the raw request body is limited to 65,536 actual bytes (streamed or declared) before JSON parsing; larger bodies return 413 payload_too_large. Other routes are not size-limited here.',
+          'Size: the raw request body is limited to 65,536 actual bytes (streamed or declared) before JSON parsing and domain writes, on every accepted alias of this route; larger bodies return 413 payload_too_large and the open input stream is cancelled. Other routes are not size-limited here.',
         ].join('\n'),
         parameters: [
           {
