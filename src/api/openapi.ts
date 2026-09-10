@@ -146,6 +146,33 @@ export const openApiSpecification = {
       },
       post: { responses: { 201: { description: 'Opportunity created' }, 401: { description: 'Access required' }, 404: { description: 'Contact not found' }, 422: { description: 'Invalid opportunity' } }, summary: 'Create opportunity' },
     },
+    '/v1/opportunities/{id}': {
+      patch: {
+        description:
+          'Update an opportunity. At least one of `name` (non-empty, no leading or trailing whitespace - the app-wide NonEmptyString contract) or `estimatedValue` (non-negative finite number, or an explicit `null` to clear it) is required. Omitted fields keep their stored values; an empty object or a whitespace-only name returns 422 validation_error, as do negative or non-finite values.',
+        requestBody: {
+          content: {
+            'application/json': {
+              schema: {
+                properties: {
+                  estimatedValue: { anyOf: [{ type: 'number' }, { type: 'null' }] },
+                  name: { type: 'string' },
+                },
+                type: 'object',
+              },
+            },
+          },
+          required: true,
+        },
+        responses: {
+          200: { description: 'Opportunity updated' },
+          401: { description: 'Access required' },
+          404: { description: 'Opportunity not found' },
+          422: { description: 'validation_error (no fields, whitespace name, or negative or non-finite estimatedValue)' },
+        },
+        summary: 'Update opportunity name and estimated value',
+      },
+    },
     '/v1/pipelines': {
       get: { responses: { 200: { description: 'Pipelines and stages' }, 401: { description: 'Access required' } }, summary: 'List pipelines' },
       post: { responses: { 201: { description: 'Pipeline created' }, 401: { description: 'Access required' } }, summary: 'Create pipeline' },

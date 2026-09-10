@@ -768,6 +768,26 @@ export const moveOpportunity = async (
   return getOpportunity(env, opportunityId);
 };
 
+export const updateOpportunity = async (
+  env: Env,
+  opportunityId: string,
+  input: { estimatedValue?: number | null; name?: string },
+): Promise<(OpportunityRecord & { customFields: Record<string, unknown> }) | null> => {
+  const existing = await getOpportunity(env, opportunityId);
+  if (!existing) return null;
+  const timestamp = now();
+  const name = input.name ?? existing.name;
+  const estimatedValue =
+    input.estimatedValue === undefined ? existing.estimatedValue : input.estimatedValue;
+  await env.DB
+    .prepare(
+      'UPDATE opportunities SET name = ?, estimated_value = ?, updated_at = ? WHERE id = ? AND workspace_id = ?',
+    )
+    .bind(name, estimatedValue, timestamp, opportunityId, DEFAULT_WORKSPACE_ID)
+    .run();
+  return getOpportunity(env, opportunityId);
+};
+
 export const createActivity = async (
   env: Env,
   opportunityId: string,

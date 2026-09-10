@@ -52,7 +52,7 @@ type Opportunity = {
 };
 
 type Stage = { color: string; id: string; name: string; position: number };
-type Pipeline = { id: string; name: string; stages: Stage[] };
+type Pipeline = { archivedAt: string | null; id: string; name: string; stages: Stage[] };
 type FieldDefinition = {
   entityType: 'contact' | 'opportunity';
   id: string;
@@ -73,7 +73,14 @@ const navigation = [
 
 const appQuery = {
   contacts: () => ({ queryFn: () => request<Contact[]>('/v1/contacts'), queryKey: ['contacts'] }),
-  opportunities: () => ({ queryFn: () => request<Opportunity[]>('/v1/opportunities'), queryKey: ['opportunities'] }),
+  // The board fetches opportunities filtered by the selected pipeline. The
+  // pipeline id is part of the query key so every board selection has its
+  // own cached list, while `invalidateQueries({ queryKey: ['opportunities'] })`
+  // still refreshes all of them.
+  opportunities: (pipelineId?: string) => ({
+    queryFn: () => request<Opportunity[]>(pipelineId ? `/v1/opportunities?pipelineId=${pipelineId}` : '/v1/opportunities'),
+    queryKey: ['opportunities', pipelineId ?? null],
+  }),
   pipelines: () => ({ queryFn: () => request<Pipeline[]>('/v1/pipelines'), queryKey: ['pipelines'] }),
 };
 
@@ -397,10 +404,23 @@ const OpportunityCard = ({ opportunity }: { opportunity: Opportunity }) => {
 };
 
 const OpportunitiesPage = () => {
+  const [selectedPipelineId, setSelectedPipelineId] = useState<string | null>(null);
   const [showOpportunity, setShowOpportunity] = useState(false);
   const queryClient = useQueryClient();
-  const opportunities = useQuery(appQuery.opportunities());
   const pipelines = useQuery(appQuery.pipelines());
+  // Only active pipelines can be listed (the API rejects archived ids), so
+  // archived pipelines never appear as options.
+  const activePipelines = (pipelines.data ?? []).filter((pipeline) => pipeline.archivedAt === null);
+  // Default selection: the first non-archived pipeline with stages, which
+  // matches the previous "first pipeline" board behavior. An explicit user
+  // selection stays sticky until it changes.
+  const defaultPipelineId =
+    activePipelines.find((pipeline) => pipeline.stages.length > 0)?.id ?? activePipelines[0]?.id;
+  const pipelineId = selectedPipelineId ?? defaultPipelineId;
+  const opportunities = useQuery({
+    ...appQuery.opportunities(pipelineId),
+    enabled: pipelineId !== undefined,
+  });
   const move = useMutation({
     mutationFn: ({ opportunityId, stageId }: { opportunityId: string; stageId: string }) => request<Opportunity>(`/v1/opportunities/${opportunityId}/move`, { body: JSON.stringify({ stageId }), method: 'POST' }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['opportunities'] }),
@@ -410,19 +430,35 @@ const OpportunitiesPage = () => {
     move.mutate({ opportunityId: String(event.active.id), stageId: String(event.over.id) });
   };
   if (opportunities.error || pipelines.error) return <div className="p-8"><ErrorState error={opportunities.error ?? pipelines.error} /></div>;
-  const pipeline = pipelines.data?.[0];
+  const pipeline = pipelineId ? activePipelines.find((item) => item.id === pipelineId) : undefined;
+  const noPipelines = !pipelines.isPending && !pipeline;
   return (
     <>
       <Header eyebrow="Work queue" title="Opportunities" action={<Button onClick={() => setShowOpportunity(true)}><Plus size={16} /> Add opportunity</Button>} />
       <div className="p-5 sm:p-8">
-        <div className="mb-5 flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-900/40 p-3 text-sm text-slate-400"><Settings2 size={16} /> Drag an opportunity between stages to update its pipeline.</div>
-        {opportunities.isPending || pipelines.isPending ? <p className="text-slate-400">Loading work queue…</p> : (
+        <div className="mb-5 flex flex-wrap items-center gap-3 rounded-lg border border-slate-800 bg-slate-900/40 p-3 text-sm text-slate-400">
+          <Settings2 size={16} />
+          <span>Drag an opportunity between stages to update its pipeline.</span>
+          <label className="ml-auto grid gap-1 text-xs text-slate-500">
+            <span>Pipeline</span>
+            <select
+              className="rounded-md border border-slate-700 bg-slate-950 px-2 py-1 text-sm text-slate-200"
+              disabled={pipelines.isPending || activePipelines.length === 0}
+              onChange={(event) => setSelectedPipelineId(event.target.value)}
+              value={pipelineId ?? ''}
+            >
+              {activePipelines.length === 0 && <option value="">No active pipelines</option>}
+              {activePipelines.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+            </select>
+          </label>
+        </div>
+        {noPipelines ? <p className="text-slate-400">No active pipelines, so there is nothing to show.</p> : opportunities.isPending || pipelines.isPending ? <p className="text-slate-400">Loading work queue…</p> : pipeline?.stages.length ? (
           <DndContext onDragEnd={onDragEnd}>
             <div className="grid gap-4 overflow-x-auto md:grid-cols-2 xl:grid-cols-3">
-              {pipeline?.stages.map((stage) => <StageColumn key={stage.id} stage={stage} opportunities={(opportunities.data ?? []).filter((opportunity) => opportunity.stageId === stage.id)} />)}
+              {pipeline.stages.map((stage) => <StageColumn key={stage.id} stage={stage} opportunities={(opportunities.data ?? []).filter((opportunity) => opportunity.stageId === stage.id)} />)}
             </div>
           </DndContext>
-        )}
+        ) : <p className="text-slate-400">This pipeline has no stages yet.</p>}
         {move.error && <div className="mt-4"><ErrorState error={move.error} /></div>}
       </div>
       <OpportunityDialog open={showOpportunity} onOpenChange={setShowOpportunity} />
@@ -433,21 +469,78 @@ const OpportunitiesPage = () => {
 const OpportunityDetail = ({ id }: { id: string }) => {
   const queryClient = useQueryClient();
   const [note, setNote] = useState('');
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState('');
+  const [estimatedValue, setEstimatedValue] = useState('');
   const opportunity = useQuery({ queryFn: () => request<Opportunity>(`/v1/opportunities/${id}`), queryKey: ['opportunity', id] });
   const activities = useQuery({ queryFn: () => request<Array<{ body: string; createdAt: string; id: string; kind: string }>>(`/v1/opportunities/${id}/activities`), queryKey: ['activities', id] });
   const addNote = useMutation({
+    // The note text is only cleared on success, so a failed add keeps it intact.
     mutationFn: () => request(`/v1/opportunities/${id}/activities`, { body: JSON.stringify({ body: note, kind: 'note' }), method: 'POST' }),
     onSuccess: () => { setNote(''); queryClient.invalidateQueries({ queryKey: ['activities', id] }); },
+  });
+  const update = useMutation({
+    mutationFn: (input: { estimatedValue?: number | null; name?: string }) => request<Opportunity>(`/v1/opportunities/${id}`, { body: JSON.stringify(input), method: 'PATCH' }),
+    onSuccess: () => {
+      setEditing(false);
+      queryClient.invalidateQueries({ queryKey: ['opportunity', id] });
+      queryClient.invalidateQueries({ queryKey: ['opportunities'] });
+    },
   });
   if (opportunity.isPending) return <div className="p-8 text-slate-400">Loading opportunity…</div>;
   if (opportunity.error || !opportunity.data) return <div className="p-8"><ErrorState error={opportunity.error ?? new Error('Opportunity not found.')} /></div>;
   const record = opportunity.data;
+  const startEditing = () => {
+    update.reset();
+    setName(record.name);
+    setEstimatedValue(record.estimatedValue === null ? '' : String(record.estimatedValue));
+    setEditing(true);
+  };
+  const parsedValue = estimatedValue === '' ? null : Number(estimatedValue);
+  const valueInvalid = parsedValue !== null && (!Number.isFinite(parsedValue) || parsedValue < 0);
+  const hasChanges = !valueInvalid && (name.trim() !== record.name || parsedValue !== record.estimatedValue);
+  const submitEdit = (event: React.FormEvent) => {
+    event.preventDefault();
+    const input: { estimatedValue?: number | null; name?: string } = {};
+    if (name.trim() !== record.name) input.name = name.trim();
+    if (parsedValue !== record.estimatedValue) input.estimatedValue = parsedValue;
+    if (Object.keys(input).length === 0) return;
+    update.mutate(input);
+  };
   return <>
     <Header eyebrow={record.source} title={record.name} action={<Link href="/opportunities" className="text-sm font-medium text-cyan-300 hover:text-cyan-200">Back to work queue</Link>} />
     <div className="grid gap-6 p-5 sm:p-8 xl:grid-cols-[minmax(0,1fr)_22rem]">
       <div className="xl:col-span-2 text-xs text-slate-500">Opportunity ID <code className="ml-2 font-mono text-slate-300">{record.id}</code></div>
-      <section className="rounded-xl border border-slate-800 bg-slate-900/40 p-5"><h2 className="font-semibold text-white">Contact</h2><p className="mt-3 text-lg">{[record.contact.firstName, record.contact.lastName].filter(Boolean).join(' ') || 'Unnamed contact'}</p><p className="text-sm text-slate-400">{record.contact.email ?? 'No email'}</p><div className="mt-6 grid gap-3 border-t border-slate-800 pt-5 text-sm">{Object.entries(record.customFields).map(([key, value]) => <div key={key} className="flex justify-between gap-4"><span className="text-slate-400">{key}</span><span>{String(value)}</span></div>)}</div></section>
-      <section className="rounded-xl border border-slate-800 bg-slate-900/40 p-5"><h2 className="font-semibold text-white">Activity</h2><form className="mt-4 grid gap-2" onSubmit={(event) => { event.preventDefault(); if (note.trim()) addNote.mutate(); }}><textarea value={note} onChange={(event) => setNote(event.target.value)} placeholder="Add a note…" rows={3} /><Button disabled={addNote.isPending} type="submit">Add note</Button></form><div className="mt-5 grid gap-4">{activities.data?.map((activity) => <article key={activity.id} className="border-l border-slate-700 pl-3"><p className="text-sm text-slate-200">{activity.body}</p><p className="mt-1 text-xs text-slate-500">{activity.kind.replaceAll('_', ' ')} · {new Date(activity.createdAt).toLocaleString()}</p></article>)}</div></section>
+      <div className="grid gap-6">
+        <section className="rounded-xl border border-slate-800 bg-slate-900/40 p-5">
+          <h2 className="font-semibold text-white">Details</h2>
+          {editing ? (
+            <form className="mt-4 grid gap-3" onSubmit={submitEdit}>
+              <label className="grid gap-1 text-sm text-slate-300">Name<input value={name} onChange={(event) => setName(event.target.value)} placeholder="Opportunity name" /></label>
+              <label className="grid gap-1 text-sm text-slate-300">Estimated value<input min="0" value={estimatedValue} onChange={(event) => setEstimatedValue(event.target.value)} placeholder="0" type="number" /><InlineFieldError error={valueInvalid} message="Estimated value must be zero or a positive number. Leave it blank to clear the value." /></label>
+              {update.error && <ErrorState error={update.error} />}
+              <div className="flex justify-end gap-2"><Button tone="secondary" onClick={() => setEditing(false)}>Cancel</Button><Button disabled={update.isPending || !hasChanges} type="submit">Save changes</Button></div>
+            </form>
+          ) : (
+            <>
+              <div className="mt-4 grid gap-3 text-sm">
+                <div className="flex justify-between gap-4"><span className="text-slate-400">Name</span><span className="text-right font-medium text-slate-100">{record.name}</span></div>
+                <div className="flex justify-between gap-4"><span className="text-slate-400">Estimated value</span><span className="font-medium text-slate-100">{record.estimatedValue === null ? 'Not set' : '$' + record.estimatedValue.toLocaleString()}</span></div>
+              </div>
+              <div className="mt-4"><Button tone="secondary" onClick={startEditing}>Edit details</Button></div>
+            </>
+          )}
+        </section>
+        <section className="rounded-xl border border-slate-800 bg-slate-900/40 p-5"><h2 className="font-semibold text-white">Contact</h2><p className="mt-3 text-lg">{[record.contact.firstName, record.contact.lastName].filter(Boolean).join(' ') || 'Unnamed contact'}</p><p className="text-sm text-slate-400">{record.contact.email ?? 'No email'}</p><div className="mt-6 grid gap-3 border-t border-slate-800 pt-5 text-sm">{Object.entries(record.customFields).map(([key, value]) => <div key={key} className="flex justify-between gap-4"><span className="text-slate-400">{key}</span><span>{String(value)}</span></div>)}</div></section>
+      </div>
+      <section className="rounded-xl border border-slate-800 bg-slate-900/40 p-5">
+        <h2 className="font-semibold text-white">Activity</h2>
+        <form className="mt-4 grid gap-2" onSubmit={(event) => { event.preventDefault(); if (note.trim()) addNote.mutate(); }}><textarea value={note} onChange={(event) => setNote(event.target.value)} placeholder="Add a note…" rows={3} /><Button disabled={addNote.isPending || note.trim() === ''} type="submit">Add note</Button></form>
+        {addNote.error && <div className="mt-3"><ErrorState error={addNote.error} /></div>}
+        <div className="mt-5 grid gap-4">
+          {activities.isPending ? <p className="text-sm text-slate-400">Loading activity…</p> : activities.error ? <ErrorState error={activities.error} /> : activities.data?.length ? activities.data.map((activity) => <article key={activity.id} className="border-l border-slate-700 pl-3"><p className="text-sm text-slate-200">{activity.body}</p><p className="mt-1 text-xs text-slate-500">{activity.kind.replaceAll('_', ' ')} · {new Date(activity.createdAt).toLocaleString()}</p></article>) : <p className="text-sm text-slate-400">No activity yet.</p>}
+        </div>
+      </section>
     </div>
   </>;
 };
