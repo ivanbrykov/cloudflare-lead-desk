@@ -139,13 +139,7 @@ export const createApp = (env: Env) =>
         limit,
         query: query.query ?? undefined,
       });
-      return {
-        // Items keep the flat contact shape (top-level fields, customFields)
-        // for the staff UI, and each also exposes the record under `data`
-        // for envelope-style consumers.
-        data: page.contacts.map((contact) => ({ ...contact, data: contact })),
-        nextCursor: page.nextCursor,
-      };
+      return { data: page.contacts, nextCursor: page.nextCursor };
     })
     .post(
       '/v1/contacts',
