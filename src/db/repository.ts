@@ -1,6 +1,7 @@
-import { and, asc, desc, eq, isNull, like, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
 import type { CustomFieldWrite, NormalizedFieldValue } from '@/domain/custom-fields';
+import { encodeContactCursor, type ContactKeyset } from '@/domain/pagination';
 import type { IntakeResponse } from '@/domain/intake';
 import type {
   ContactInput,
@@ -119,49 +120,119 @@ export const getFieldDefinitions = async (
  * definitions remain in `custom_field_values` for historical export but are
  * excluded from editable payloads, so an archived value never blocks edits.
  */
+const decodeFieldValue = (row: {
+  type: string;
+  valueBoolean: number | null;
+  valueDate: string | null;
+  valueNumber: number | null;
+  valueText: string | null;
+}): unknown =>
+  // Boolean fields are stored as 0/1 in SQLite; decode by definition type
+  // so false round-trips as a real JSON boolean.
+  row.type === 'boolean'
+    ? Boolean(row.valueBoolean)
+    : row.type === 'number'
+      ? row.valueNumber
+      : row.type === 'date'
+        ? row.valueDate
+        : row.valueText;
+
+/**
+ * D1 binds at most 100 parameters per statement. Each chunked field query
+ * binds the entity type once plus one parameter per entity id, so ids per
+ * chunk stay under that budget (99 ids + 1 type = 100 bindings).
+ */
+const FIELD_VALUE_CHUNK_SIZE = 99;
+
+const escapeLike = (value: string) =>
+  value.replaceAll('%', '\\%').replaceAll('_', '\\_');
+
+/**
+ * Builds the search predicate for listContacts. A query containing '@' is
+ * an email search: the part before '@' must be a (literal) prefix of the
+ * email's local part and the part after '@' a (literal) prefix of its
+ * domain, so 'match@example.test' finds match0@example.test and friends.
+ * Any other query keeps the historical literal substring match on first
+ * name, last name, or email.
+ */
+const contactSearchPredicate = (query: string) => {
+  const at = query.indexOf('@');
+  if (at === -1) {
+    const pattern = `%${escapeLike(query)}%`;
+    return sql`(${contacts.firstName} LIKE ${pattern} ESCAPE '\\' OR ${contacts.lastName} LIKE ${pattern} ESCAPE '\\' OR ${contacts.email} LIKE ${pattern} ESCAPE '\\')`;
+  }
+  const local = escapeLike(query.slice(0, at));
+  const domain = escapeLike(query.slice(at + 1));
+  const localMatch = local
+    ? sql`substr(${contacts.email}, 1, instr(${contacts.email}, '@') - 1) LIKE ${local + '%'} ESCAPE '\\'`
+    : sql`1`;
+  const domainMatch = domain
+    ? sql`substr(${contacts.email}, instr(${contacts.email}, '@') + 1) LIKE ${domain + '%'} ESCAPE '\\'`
+    : sql`1`;
+  return sql`(${contacts.email} LIKE '%@%' AND ${localMatch} AND ${domainMatch})`;
+};
+
+/**
+ * Batched replacement for the per-record field query: fetches custom-field
+ * values for every requested entity id in chunked IN (...) queries against
+ * the active definitions, with the same decode rules as single-entity
+ * reads. List endpoints call this once per page instead of once per row.
+ */
+export const valuesForEntities = async (
+  env: Env,
+  entityType: FieldEntity,
+  entityIds: string[],
+): Promise<Map<string, Record<string, unknown>>> => {
+  const byEntity = new Map<string, Record<string, unknown>>();
+  const ids = [...new Set(entityIds)];
+  if (ids.length === 0) return byEntity;
+  const db = getDb(env);
+  const chunks: string[][] = [];
+  for (let offset = 0; offset < ids.length; offset += FIELD_VALUE_CHUNK_SIZE) {
+    chunks.push(ids.slice(offset, offset + FIELD_VALUE_CHUNK_SIZE));
+  }
+  const pages = await Promise.all(
+    chunks.map((chunk) =>
+      db
+        .select({
+          entityId: customFieldValues.entityId,
+          key: customFieldDefinitions.key,
+          type: customFieldDefinitions.type,
+          valueBoolean: customFieldValues.valueBoolean,
+          valueDate: customFieldValues.valueDate,
+          valueNumber: customFieldValues.valueNumber,
+          valueText: customFieldValues.valueText,
+        })
+        .from(customFieldValues)
+        .innerJoin(
+          customFieldDefinitions,
+          eq(customFieldValues.fieldDefinitionId, customFieldDefinitions.id),
+        )
+        .where(
+          and(
+            eq(customFieldValues.entityType, entityType),
+            inArray(customFieldValues.entityId, chunk),
+            isNull(customFieldDefinitions.archivedAt),
+          ),
+        ),
+    ),
+  );
+  for (const rows of pages) {
+    for (const row of rows) {
+      const record = byEntity.get(row.entityId) ?? {};
+      record[row.key] = decodeFieldValue(row);
+      byEntity.set(row.entityId, record);
+    }
+  }
+  return byEntity;
+};
+
 const valuesForEntity = async (
   env: Env,
   entityType: FieldEntity,
   entityId: string,
-): Promise<Record<string, unknown>> => {
-  const db = getDb(env);
-  const rows = await db
-    .select({
-      key: customFieldDefinitions.key,
-      type: customFieldDefinitions.type,
-      valueBoolean: customFieldValues.valueBoolean,
-      valueDate: customFieldValues.valueDate,
-      valueNumber: customFieldValues.valueNumber,
-      valueText: customFieldValues.valueText,
-    })
-    .from(customFieldValues)
-    .innerJoin(
-      customFieldDefinitions,
-      eq(customFieldValues.fieldDefinitionId, customFieldDefinitions.id),
-    )
-    .where(
-      and(
-        eq(customFieldValues.entityType, entityType),
-        eq(customFieldValues.entityId, entityId),
-        isNull(customFieldDefinitions.archivedAt),
-      ),
-    );
-
-  return Object.fromEntries(
-    rows.map((row) => [
-      row.key,
-      // Boolean fields are stored as 0/1 in SQLite; decode by definition type
-      // so false round-trips as a real JSON boolean.
-      row.type === 'boolean'
-        ? Boolean(row.valueBoolean)
-        : row.type === 'number'
-          ? row.valueNumber
-          : row.type === 'date'
-            ? row.valueDate
-            : row.valueText,
-    ]),
-  );
-};
+): Promise<Record<string, unknown>> =>
+  (await valuesForEntities(env, entityType, [entityId])).get(entityId) ?? {};
 
 const upsertFieldValue = (
   env: Env,
@@ -222,30 +293,63 @@ const fieldWriteStatements = (
       : [deleteFieldValue(env, entityType, entityId, write.fieldId)],
   );
 
+export interface ContactPageOptions {
+  limit: number;
+  query?: string;
+  cursor?: ContactKeyset | null;
+}
+
+export interface ContactPage {
+  contacts: Array<ContactRecord & { customFields: Record<string, unknown> }>;
+  nextCursor: string | null;
+}
+
+/**
+ * Keyset (seek) pagination over (created_at DESC, id DESC). `cursor` is the
+ * decoded position of the last row of the previous page; the page window is
+ * the rows strictly after that position, bounded by `limit`. One extra row
+ * is fetched to detect a following page without a COUNT query.
+ */
 export const listContacts = async (
   env: Env,
-  query?: string,
-): Promise<Array<ContactRecord & { customFields: Record<string, unknown> }>> => {
+  options: ContactPageOptions,
+): Promise<ContactPage> => {
+  const { limit, query, cursor } = options;
   const db = getDb(env);
   const predicates = [eq(contacts.workspaceId, DEFAULT_WORKSPACE_ID)];
   if (query) {
-    const escaped = `%${query.replaceAll('%', '\\%').replaceAll('_', '\\_')}%`;
+    predicates.push(contactSearchPredicate(query));
+  }
+  if (cursor) {
     predicates.push(
-      sql`(${contacts.firstName} LIKE ${escaped} ESCAPE '\\' OR ${contacts.lastName} LIKE ${escaped} ESCAPE '\\' OR ${contacts.email} LIKE ${escaped} ESCAPE '\\')`,
+      sql`(${contacts.createdAt} < ${cursor.createdAt} OR (${contacts.createdAt} = ${cursor.createdAt} AND ${contacts.id} < ${cursor.id}))`,
     );
   }
   const rows = await db
     .select()
     .from(contacts)
     .where(and(...predicates))
-    .orderBy(desc(contacts.createdAt));
-
-  return Promise.all(
-    rows.map(async (row) => ({
-      ...toContact(row),
-      customFields: await valuesForEntity(env, 'contact', row.id),
-    })),
+    .orderBy(desc(contacts.createdAt), desc(contacts.id))
+    .limit(limit + 1);
+  const hasNextPage = rows.length > limit;
+  const pageRows = hasNextPage ? rows.slice(0, limit) : rows;
+  const values = await valuesForEntities(
+    env,
+    'contact',
+    pageRows.map((row) => row.id),
   );
+  const contactsPage = pageRows.map((row) => ({
+    ...toContact(row),
+    customFields: values.get(row.id) ?? {},
+  }));
+  const last = pageRows[pageRows.length - 1];
+  return {
+    contacts: contactsPage,
+    nextCursor:
+      hasNextPage && last
+        ? encodeContactCursor({ createdAt: last.createdAt, id: last.id })
+        : null,
+  };
 };
 
 const toContact = (row: typeof contacts.$inferSelect): ContactRecord => ({
@@ -464,8 +568,11 @@ export const createManualOpportunity = async (
 
 export const listOpportunities = async (
   env: Env,
+  pipelineId?: string,
 ): Promise<Array<OpportunityRecord & { customFields: Record<string, unknown> }>> => {
   const db = getDb(env);
+  const predicates = [eq(opportunities.workspaceId, DEFAULT_WORKSPACE_ID)];
+  if (pipelineId) predicates.push(eq(opportunities.pipelineId, pipelineId));
   const rows = await db
     .select({
       contact: contacts,
@@ -473,23 +580,43 @@ export const listOpportunities = async (
     })
     .from(opportunities)
     .innerJoin(contacts, eq(opportunities.primaryContactId, contacts.id))
-    .where(eq(opportunities.workspaceId, DEFAULT_WORKSPACE_ID))
+    .where(and(...predicates))
     .orderBy(desc(opportunities.createdAt));
 
-  return Promise.all(
-    rows.map(async ({ contact, opportunity }) => ({
-      contact: toContact(contact),
-      createdAt: opportunity.createdAt,
-      customFields: await valuesForEntity(env, 'opportunity', opportunity.id),
-      estimatedValue: opportunity.estimatedValue,
-      id: opportunity.id,
-      name: opportunity.name,
-      pipelineId: opportunity.pipelineId,
-      source: opportunity.source,
-      stageId: opportunity.stageId,
-      updatedAt: opportunity.updatedAt,
-    })),
+  const values = await valuesForEntities(
+    env,
+    'opportunity',
+    rows.map(({ opportunity }) => opportunity.id),
   );
+  return rows.map(({ contact, opportunity }) => ({
+    contact: toContact(contact),
+    createdAt: opportunity.createdAt,
+    customFields: values.get(opportunity.id) ?? {},
+    estimatedValue: opportunity.estimatedValue,
+    id: opportunity.id,
+    name: opportunity.name,
+    pipelineId: opportunity.pipelineId,
+    source: opportunity.source,
+    stageId: opportunity.stageId,
+    updatedAt: opportunity.updatedAt,
+  }));
+};
+
+export const getPipeline = async (
+  env: Env,
+  pipelineId: string,
+): Promise<typeof pipelines.$inferSelect | null> => {
+  const row = await getDb(env)
+    .select()
+    .from(pipelines)
+    .where(
+      and(
+        eq(pipelines.id, pipelineId),
+        eq(pipelines.workspaceId, DEFAULT_WORKSPACE_ID),
+      ),
+    )
+    .get();
+  return row ?? null;
 };
 
 export const getOpportunity = async (

@@ -116,6 +116,45 @@ the same bounded read; they never fall through to another body parser.
   transaction reserves no key, so the same key can be retried after a
   transient failure.
 
+### List pagination and filters
+
+`GET /v1/contacts` is keyset (seek) paginated over `createdAt DESC`,
+tie-broken by `id DESC`:
+
+- `limit` bounds a page to an integer between 1 and 100 (default 50).
+  Non-numeric or out-of-range values return `422 validation_error`.
+- `cursor` takes the opaque `nextCursor` from a previous response - a
+  base64url-encoded keyset of the last row's `createdAt` and `id` over the
+  ordering above. Omit it for the first page; the final page returns
+  `nextCursor: null`. A missing, malformed, or tampered cursor returns
+  `422 invalid_cursor`.
+- `query` keeps its search role and composes with pagination: without `@`
+  it is a literal substring match on first name, last name, or email
+  (`%` and `_` match literally); with `@` it is an email prefix search -
+  the part before `@` must prefix the local part and the part after `@`
+  the domain, so `match@example.test` finds `match0@example.test` and
+  friends.
+- Items keep the flat contact shape, including `customFields`; each item also
+  exposes the same record under a `data` property.
+- Custom-field values are fetched for the whole page in batched `IN (...)`
+  queries chunked to D1's 100-bound-parameter limit, not one query per
+  contact.
+
+Consistency while paging: each page is evaluated as of its own query (no
+snapshot spans pages). Pages are disjoint windows of the keyset ordering,
+so a row is never returned on two pages, and a pass over an unchanged
+dataset returns every matching row exactly once. If rows change while a
+client pages: a row deleted after its page was served is skipped (it never
+reappears); a row inserted after the current cursor position may surface
+in a later page; a row inserted before the cursor - newer timestamps, the
+usual case - sorts ahead of it and is only visible after restarting from
+the first page.
+
+`GET /v1/opportunities` is not paginated; the optional `pipelineId` query
+parameter restricts results to one active pipeline of the current workspace.
+An unknown or archived `pipelineId` returns `422 validation_error`.
+Opportunity custom-field values use the same batched read.
+
 ## Custom fields
 
 Custom fields are configured per contact and opportunity (Settings → Fields) and validated against the active definitions:

@@ -22,6 +22,7 @@ import {
   getContact,
   getFieldDefinitions,
   getOpportunity,
+  getPipeline,
   isIntakeToken,
   listActivities,
   listApiTokens,
@@ -43,6 +44,7 @@ import {
   MoveOpportunitySchema,
 } from '@/domain/schemas';
 import { isIntakeKey } from '@/domain/intake';
+import { CONTACT_LIMIT_DEFAULT, decodeContactCursor, parseContactLimit } from '@/domain/pagination';
 import { mapIntakeBodyError, parseIntakeBody } from '@/api/intake-parser';
 
 const errorResponse = (
@@ -110,7 +112,40 @@ export const createApp = (env: Env) =>
     .get('/v1/contacts', async ({ request, query }) => {
       const admin = await requireAdmin(request, env);
       if ('error' in admin) return admin.error;
-      return { data: await listContacts(env, query.query) };
+      const limit =
+        query.limit === undefined
+          ? CONTACT_LIMIT_DEFAULT
+          : parseContactLimit(query.limit);
+      if (limit === null) {
+        return errorResponse(
+          422,
+          'validation_error',
+          'limit must be an integer between 1 and 100.',
+        );
+      }
+      let cursor = null;
+      if (query.cursor !== undefined) {
+        cursor = decodeContactCursor(query.cursor);
+        if (cursor === null) {
+          return errorResponse(
+            422,
+            'invalid_cursor',
+            'cursor is invalid. Use the nextCursor value from a previous response.',
+          );
+        }
+      }
+      const page = await listContacts(env, {
+        cursor,
+        limit,
+        query: query.query ?? undefined,
+      });
+      return {
+        // Items keep the flat contact shape (top-level fields, customFields)
+        // for the staff UI, and each also exposes the record under `data`
+        // for envelope-style consumers.
+        data: page.contacts.map((contact) => ({ ...contact, data: contact })),
+        nextCursor: page.nextCursor,
+      };
     })
     .post(
       '/v1/contacts',
@@ -174,10 +209,23 @@ export const createApp = (env: Env) =>
         return Response.json({ data: result.data }, { status: 201 });
       },
     )
-    .get('/v1/opportunities', async ({ request }) => {
+    .get('/v1/opportunities', async ({ request, query }) => {
       const admin = await requireAdmin(request, env);
       if ('error' in admin) return admin.error;
-      return { data: await listOpportunities(env) };
+      const pipelineId = query.pipelineId;
+      if (pipelineId !== undefined) {
+        // The filter only accepts pipelines of the current workspace that
+        // are not archived; anything else is rejected before listing.
+        const pipeline = typeof pipelineId === 'string' ? await getPipeline(env, pipelineId) : null;
+        if (!pipeline || pipeline.archivedAt !== null) {
+          return errorResponse(
+            422,
+            'validation_error',
+            'pipelineId must reference an active pipeline of the current workspace.',
+          );
+        }
+      }
+      return { data: await listOpportunities(env, pipelineId) };
     })
     .get('/v1/opportunities/:id', async ({ params, request }) => {
       const admin = await requireAdmin(request, env);

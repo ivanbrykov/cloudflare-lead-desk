@@ -9,7 +9,45 @@ export const openApiSpecification = {
       get: { responses: { 200: { description: 'Healthy Worker' } }, summary: 'Health check' },
     },
     '/v1/contacts': {
-      get: { responses: { 200: { description: 'Contact list' }, 401: { description: 'Access required' } }, summary: 'List contacts' },
+      get: {
+        description: [
+          'Lists contacts, newest first (createdAt DESC, tie-broken by id DESC), with keyset (seek) pagination.',
+          '',
+          'Pagination: `limit` (integer 1-100, default 50) bounds the page size. `cursor` takes the opaque `nextCursor` from a previous response - a base64url-encoded keyset over the last row\'s (createdAt, id); omit it for the first page. The final page returns `nextCursor: null`. A non-numeric or out-of-range limit returns 422 validation_error; a missing, malformed, or tampered cursor returns 422 invalid_cursor.',
+          '',
+          'Each item keeps the flat contact shape, including `customFields`, and also exposes the same record under its `data` property. Custom-field values are fetched for the whole page in batched queries (chunked to D1\'s 100-bound-parameter limit), not one query per contact.',
+        ].join('\n'),
+        parameters: [
+          {
+            description:
+              'Search. Without "@": literal substring match on first name, last name, or email. With "@": email prefix search - the part before "@" must prefix the local part and the part after "@" the domain.',
+            in: 'query',
+            name: 'query',
+            required: false,
+            schema: { type: 'string' },
+          },
+          {
+            description: 'Page size (1-100, default 50)',
+            in: 'query',
+            name: 'limit',
+            required: false,
+            schema: { default: 50, maximum: 100, minimum: 1, type: 'integer' },
+          },
+          {
+            description: 'Opaque keyset cursor from a previous response',
+            in: 'query',
+            name: 'cursor',
+            required: false,
+            schema: { type: 'string' },
+          },
+        ],
+        responses: {
+          200: { description: 'One page: { data: [contacts], nextCursor: string | null }' },
+          401: { description: 'Access required' },
+          422: { description: 'validation_error (limit) or invalid_cursor (malformed or tampered cursor)' },
+        },
+        summary: 'List contacts (keyset pagination)',
+      },
       post: { responses: { 201: { description: 'Contact created' }, 401: { description: 'Access required' }, 422: { description: 'Invalid contact' } }, summary: 'Create contact' },
     },
     '/v1/contacts/{id}': {
@@ -87,7 +125,25 @@ export const openApiSpecification = {
       },
     },
     '/v1/opportunities': {
-      get: { responses: { 200: { description: 'Opportunity list' }, 401: { description: 'Access required' } }, summary: 'List opportunities' },
+      get: {
+        description:
+          'Lists opportunities, newest first. Not paginated; the optional `pipelineId` query parameter restricts results to one active pipeline of the current workspace. An unknown or archived pipelineId returns 422 validation_error. Custom-field values are fetched for the whole list in batched queries (chunked to D1\'s 100-bound-parameter limit), not one query per opportunity.',
+        parameters: [
+          {
+            description: 'Restrict to one active pipeline of the current workspace',
+            in: 'query',
+            name: 'pipelineId',
+            required: false,
+            schema: { type: 'string' },
+          },
+        ],
+        responses: {
+          200: { description: 'Opportunity list' },
+          401: { description: 'Access required' },
+          422: { description: 'validation_error (unknown or archived pipelineId)' },
+        },
+        summary: 'List opportunities (optional pipeline filter)',
+      },
       post: { responses: { 201: { description: 'Opportunity created' }, 401: { description: 'Access required' }, 404: { description: 'Contact not found' }, 422: { description: 'Invalid opportunity' } }, summary: 'Create opportunity' },
     },
     '/v1/pipelines': {
