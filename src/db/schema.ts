@@ -53,6 +53,7 @@ export const stages = sqliteTable(
   },
   (table) => [
     index('stages_pipeline_position_idx').on(table.pipelineId, table.position),
+    uniqueIndex('stages_pipeline_position_unique').on(table.pipelineId, table.position),
     uniqueIndex('stages_pipeline_name_unique').on(table.pipelineId, table.name),
   ],
 );

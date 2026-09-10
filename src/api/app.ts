@@ -29,7 +29,6 @@ import {
   listOpportunities,
   listPipelines,
   revokeApiToken,
-  seedDefaults,
   type Env,
 } from '@/db/repository';
 import {
@@ -106,9 +105,6 @@ const requireAdmin = async (request: Request, env: Env) => {
 
 export const createApp = (env: Env) =>
   new Elysia({ adapter: CloudflareAdapter, name: 'cloudflare-lead-desk-api' })
-    .onRequest(async () => {
-      await seedDefaults(env);
-    })
     .get('/health', () => ({ ok: true }))
     .get('/openapi', () => Response.json(openApiSpecification))
     .get('/v1/contacts', async ({ request, query }) => {

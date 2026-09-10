@@ -21,7 +21,7 @@ Install the pinned pnpm version using `npm install --global pnpm@10.34.5` if nee
 2. Create a D1 database: `pnpm exec wrangler d1 create cloudflare-lead-desk`.
 3. Copy the returned database ID into `wrangler.jsonc`.
 4. Configure a Cloudflare Access application for the deployed hostname. Set its audience value and team hostname in `ACCESS_AUD` and `ACCESS_TEAM_DOMAIN`.
-5. Build and apply the generated migration: `pnpm exec wrangler d1 migrations apply cloudflare-lead-desk --remote`.
+5. Build and apply the generated migration: `pnpm exec wrangler d1 migrations apply cloudflare-lead-desk --remote`. The migration also bootstraps the default workspace, pipeline, and stage rows (fixed ids, `INSERT OR IGNORE`) and makes stage positions unique per pipeline — the app itself never seeds data per request, so deleted bootstrap rows are not resurrected.
 6. Deploy: `pnpm run deploy`.
 
 Both `src/worker-global.ts` (the configured deployment entry) and the compatibility

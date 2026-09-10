@@ -83,48 +83,6 @@ export interface FieldDefinitionRecord {
   type: 'boolean' | 'date' | 'number' | 'select' | 'text';
 }
 
-export const seedDefaults = async (env: Env): Promise<void> => {
-  const timestamp = now();
-  await env.DB.batch([
-    env.DB
-      .prepare(
-        'INSERT OR IGNORE INTO workspaces (id, slug, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
-      )
-      .bind(
-        DEFAULT_WORKSPACE_ID,
-        'default',
-        'Lead Desk',
-        timestamp,
-        timestamp,
-      ),
-    env.DB
-      .prepare(
-        'INSERT OR IGNORE INTO pipelines (id, workspace_id, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
-      )
-      .bind(
-        DEFAULT_PIPELINE_ID,
-        DEFAULT_WORKSPACE_ID,
-        'Sales',
-        timestamp,
-        timestamp,
-      ),
-    env.DB
-      .prepare(
-        'INSERT OR IGNORE INTO stages (id, workspace_id, pipeline_id, name, color, position, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-      )
-      .bind(
-        DEFAULT_STAGE_ID,
-        DEFAULT_WORKSPACE_ID,
-        DEFAULT_PIPELINE_ID,
-        'New inquiry',
-        'blue',
-        0,
-        timestamp,
-        timestamp,
-      ),
-  ]);
-};
-
 const getDb = (env: Env) => drizzle(env.DB);
 
 export const getFieldDefinitions = async (
@@ -431,8 +389,8 @@ export const deleteContact = async (
 };
 
 // Intake preserves the current workspace defaults rather than inventing new
-// routing: a submission without explicit pipeline/stage uses the seeded
-// default pipeline and stage.
+// routing: a submission without explicit pipeline/stage uses the default
+// pipeline and stage bootstrapped by the schema migration.
 export const intakePipelineId = (input: IntakeInput): string =>
   input.opportunity.pipelineId ?? DEFAULT_PIPELINE_ID;
 export const intakeStageId = (input: IntakeInput): string =>
@@ -596,29 +554,67 @@ export const createPipeline = async (env: Env, name: string) => {
   return pipeline;
 };
 
+// (pipeline_id, position) is unique (stages_pipeline_position_unique).
+// Concurrent creators can read the same max and race for the same slot; the
+// loser recomputes from the committed state and retries, bounded so a
+// persistent conflict surfaces as a persistence error instead of looping.
+const STAGE_CREATE_MAX_ATTEMPTS = 10;
+
+const isStagePositionConflict = (error: unknown): boolean => {
+  const visit = (candidate: unknown): boolean => {
+    if (!(candidate instanceof Error)) return false;
+    if (
+      candidate.message.includes('UNIQUE constraint failed') &&
+      candidate.message.includes('stages.pipeline_id') &&
+      candidate.message.includes('stages.position')
+    ) {
+      return true;
+    }
+    const cause = (candidate as { cause?: unknown }).cause;
+    return cause !== undefined && cause !== candidate && visit(cause);
+  };
+  return visit(error);
+};
+
 export const createStage = async (
   env: Env,
   pipelineId: string,
   input: { color?: string; name: string; position?: number },
 ) => {
-  const timestamp = now();
-  const max = await getDb(env)
-    .select({ position: sql<number>`max(${stages.position})` })
-    .from(stages)
-    .where(eq(stages.pipelineId, pipelineId))
-    .get();
-  const stage = {
-    color: input.color ?? 'slate',
-    createdAt: timestamp,
-    id: id(),
-    name: input.name,
-    pipelineId,
-    position: input.position ?? (max?.position ?? -1) + 1,
-    updatedAt: timestamp,
-    workspaceId: DEFAULT_WORKSPACE_ID,
-  };
-  await getDb(env).insert(stages).values(stage);
-  return stage;
+  for (let attempt = 1; attempt <= STAGE_CREATE_MAX_ATTEMPTS; attempt += 1) {
+    const timestamp = now();
+    const max = await getDb(env)
+      .select({ position: sql<number>`max(${stages.position})` })
+      .from(stages)
+      .where(eq(stages.pipelineId, pipelineId))
+      .get();
+    const stage = {
+      color: input.color ?? 'slate',
+      createdAt: timestamp,
+      id: id(),
+      name: input.name,
+      pipelineId,
+      position: input.position ?? (max?.position ?? -1) + 1,
+      updatedAt: timestamp,
+      workspaceId: DEFAULT_WORKSPACE_ID,
+    };
+    try {
+      await getDb(env).insert(stages).values(stage);
+      return stage;
+    } catch (error) {
+      // Only a computed position is retryable: an explicit colliding
+      // position (or a same-name conflict) will keep failing on recompute.
+      if (
+        input.position === undefined &&
+        isStagePositionConflict(error) &&
+        attempt < STAGE_CREATE_MAX_ATTEMPTS
+      ) {
+        continue;
+      }
+      throw error;
+    }
+  }
+  throw new Error('unreachable: stage creation exhausted its bounded attempts');
 };
 
 export const moveOpportunity = async (
