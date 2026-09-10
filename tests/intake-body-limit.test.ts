@@ -57,7 +57,7 @@ interface Fixture {
     path: string,
     method: string,
     body?: string | ReadableStream<Uint8Array<ArrayBuffer>>,
-    headers?: Record<string, string>,
+    headers?: Record<string, string | undefined>,
   ): Promise<{ status: number; json: Record<string, unknown> }>;
   api(
     path: string,
@@ -99,14 +99,15 @@ const payload = (email = 'body-limit@example.test'): IntakePayload => ({
   source: 'website_form',
 });
 
-let workerScript: string | null = null;
+const workerScripts = new Map<string, string>();
 
-const bundleWorker = async (): Promise<string> => {
-  if (workerScript) return workerScript;
+const bundleWorker = async (entry = 'tests/intake-cancellation-probe.ts'): Promise<string> => {
+  const cached = workerScripts.get(entry);
+  if (cached) return cached;
   await assertRepoRoot();
   const bundled = await build({
     bundle: true,
-    entryPoints: [join(repoRoot, 'tests/intake-cancellation-probe.ts')],
+    entryPoints: [join(repoRoot, entry)],
     external: ['cloudflare:*', 'node:*'],
     format: 'esm',
     platform: 'browser',
@@ -114,12 +115,13 @@ const bundleWorker = async (): Promise<string> => {
     tsconfig: join(repoRoot, 'tsconfig.json'),
     write: false,
   });
-  workerScript = bundled.outputFiles[0].text;
-  return workerScript;
+  const script = bundled.outputFiles[0].text;
+  workerScripts.set(entry, script);
+  return script;
 };
 
-const startFixture = async (): Promise<Fixture> => {
-  const script = await bundleWorker();
+const startFixture = async (entry?: string): Promise<Fixture> => {
+  const script = await bundleWorker(entry);
   const mf = new Miniflare(
     convertV4MiniflareOptions({
       bindings: {
@@ -160,14 +162,16 @@ const startFixture = async (): Promise<Fixture> => {
       path: string,
       method = 'GET',
       body?: string | ReadableStream<Uint8Array<ArrayBuffer>>,
-      headers: Record<string, string> = {},
+      headers: Record<string, string | undefined> = {},
     ): Promise<{ status: number; json: Record<string, unknown> }> => {
       // The stream body and its duplex mode are not modelled by the
       // RequestInit type here; both are supported by the runtime.
-      const init: Record<string, unknown> = {
-        method,
-        headers: { 'Content-Type': 'application/json', ...headers },
-      };
+      const requestHeaders = new Headers({ 'Content-Type': 'application/json' });
+      for (const [name, value] of Object.entries(headers)) {
+        if (value === undefined) requestHeaders.delete(name);
+        else requestHeaders.set(name, value);
+      }
+      const init: Record<string, unknown> = { method, headers: requestHeaders };
       if (body !== undefined) {
         if (body instanceof ReadableStream) {
           init.duplex = 'half';
@@ -379,4 +383,34 @@ test('the worker cancels an oversized still-open intake stream and releases it',
   } finally {
     await f.dispose();
   }
+});
+
+
+test('non-JSON and missing content types cannot bypass the byte limit', async () => {
+  const f = await startFixture();
+  try {
+    const token = await f.createToken();
+    const before = await f.snapshot();
+    for (const contentType of [undefined, '', 'text/plain', 'application/x-www-form-urlencoded', 'multipart/form-data; boundary=x', 'application/octet-stream']) {
+      for (const path of INTAKE_ALIASES) {
+        const headers = { 'Content-Type': contentType, Authorization: `Bearer ${token.token}`, 'Idempotency-Key': 'unsupported' };
+        expectError(await f.raw(path, 'POST', stream('x'.repeat(65537)), headers), 413, 'payload_too_large');
+        expectError(await f.raw(path, 'POST', stream('{}'), headers), 415, 'unsupported_media_type');
+      }
+    }
+    expect(await f.snapshot()).toEqual(before);
+  } finally { await f.dispose(); }
+});
+
+test('the alternate entry delegates to the same compiled Worker', async () => {
+  const f = await startFixture('src/worker.ts');
+  try {
+    expect((await f.raw('/health', 'GET')).status).toBe(200);
+    const token = await f.createToken();
+    const before = await f.snapshot();
+    const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token.token}`, 'Idempotency-Key': 'alternate' };
+    expectError(await f.raw('/v1/intakes/', 'POST', stream('x'.repeat(65537)), headers), 413, 'payload_too_large');
+    expect(await f.snapshot()).toEqual(before);
+    expect((await f.raw('/v1/intakes/', 'POST', JSON.stringify(payload()), headers)).status).toBe(201);
+  } finally { await f.dispose(); }
 });
