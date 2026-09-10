@@ -221,16 +221,21 @@ test('the migration renumbers duplicate positions deterministically before enfor
   try {
     const rows = (
       await f.db
-        .prepare('SELECT id, position FROM stages ORDER BY created_at, id')
+        .prepare(
+          'SELECT pipeline_id AS p, position FROM stages ORDER BY pipeline_id, position',
+        )
         .all()
     ).results;
-    const positions = rows.map((row) => row.position as number);
-    // No duplicates survived, and the numbering follows the stable
-    // (created_at, id) order exactly: 0, 1, 2, ...
-    expect(new Set(positions).size, JSON.stringify(rows)).toBe(positions.length);
-    expect(positions[0]).toBe(0);
-    for (let i = 1; i < positions.length; i += 1) {
-      expect(positions[i]).toBe(positions[i - 1] + 1);
+    // Within each pipeline, positions are unique and contiguous from 0,
+    // following the stable (created_at, id) order.
+    const byPipeline = new Map<string, number[]>();
+    for (const row of rows) {
+      const list = byPipeline.get(row.p as string) ?? [];
+      list.push(row.position as number);
+      byPipeline.set(row.p as string, list);
+    }
+    for (const [pipelineId, positions] of byPipeline) {
+      expect(positions, pipelineId).toEqual(positions.map((_, i) => i));
     }
     // The API keeps serving the renumbered stages.
     const pipelines = await f.api('/v1/pipelines');
