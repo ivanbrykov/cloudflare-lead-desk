@@ -128,14 +128,10 @@ tie-broken by `id DESC`:
   ordering above. Omit it for the first page; the final page returns
   `nextCursor: null`. A missing, malformed, or tampered cursor returns
   `422 invalid_cursor`.
-- `query` keeps its search role and composes with pagination: without `@`
-  it is a literal substring match on first name, last name, or email
-  (`%` and `_` match literally); with `@` it is an email prefix search -
-  the part before `@` must prefix the local part and the part after `@`
-  the domain, so `match@example.test` finds `match0@example.test` and
-  friends.
-- Items keep the flat contact shape, including `customFields`; each item also
-  exposes the same record under a `data` property.
+- `query` keeps its search role and composes with pagination: a literal
+  substring match on first name, last name, or email (`%` and `_` match
+  literally).
+- Items keep the flat contact shape, including `customFields`.
 - Custom-field values are fetched for the whole page in batched `IN (...)`
   queries chunked to D1's 100-bound-parameter limit, not one query per
   contact.

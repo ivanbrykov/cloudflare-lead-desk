@@ -15,12 +15,12 @@ export const openApiSpecification = {
           '',
           'Pagination: `limit` (integer 1-100, default 50) bounds the page size. `cursor` takes the opaque `nextCursor` from a previous response - a base64url-encoded keyset over the last row\'s (createdAt, id); omit it for the first page. The final page returns `nextCursor: null`. A non-numeric or out-of-range limit returns 422 validation_error; a missing, malformed, or tampered cursor returns 422 invalid_cursor.',
           '',
-          'Each item keeps the flat contact shape, including `customFields`, and also exposes the same record under its `data` property. Custom-field values are fetched for the whole page in batched queries (chunked to D1\'s 100-bound-parameter limit), not one query per contact.',
+          'Each item keeps the flat contact shape, including `customFields`. Custom-field values are fetched for the whole page in batched queries (chunked to D1\'s 100-bound-parameter limit), not one query per contact.',
         ].join('\n'),
         parameters: [
           {
             description:
-              'Search. Without "@": literal substring match on first name, last name, or email. With "@": email prefix search - the part before "@" must prefix the local part and the part after "@" the domain.',
+              'Search. Literal substring match on first name, last name, or email; `%` and `_` match literally.',
             in: 'query',
             name: 'query',
             required: false,

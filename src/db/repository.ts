@@ -148,28 +148,12 @@ const escapeLike = (value: string) =>
   value.replaceAll('%', '\\%').replaceAll('_', '\\_');
 
 /**
- * Builds the search predicate for listContacts. A query containing '@' is
- * an email search: the part before '@' must be a (literal) prefix of the
- * email's local part and the part after '@' a (literal) prefix of its
- * domain, so 'match@example.test' finds match0@example.test and friends.
- * Any other query keeps the historical literal substring match on first
- * name, last name, or email.
+ * Literal substring match on first name, last name, or email; `%` and `_`
+ * in the query are escaped so they never act as LIKE wildcards.
  */
 const contactSearchPredicate = (query: string) => {
-  const at = query.indexOf('@');
-  if (at === -1) {
-    const pattern = `%${escapeLike(query)}%`;
-    return sql`(${contacts.firstName} LIKE ${pattern} ESCAPE '\\' OR ${contacts.lastName} LIKE ${pattern} ESCAPE '\\' OR ${contacts.email} LIKE ${pattern} ESCAPE '\\')`;
-  }
-  const local = escapeLike(query.slice(0, at));
-  const domain = escapeLike(query.slice(at + 1));
-  const localMatch = local
-    ? sql`substr(${contacts.email}, 1, instr(${contacts.email}, '@') - 1) LIKE ${local + '%'} ESCAPE '\\'`
-    : sql`1`;
-  const domainMatch = domain
-    ? sql`substr(${contacts.email}, instr(${contacts.email}, '@') + 1) LIKE ${domain + '%'} ESCAPE '\\'`
-    : sql`1`;
-  return sql`(${contacts.email} LIKE '%@%' AND ${localMatch} AND ${domainMatch})`;
+  const pattern = `%${escapeLike(query)}%`;
+  return sql`(${contacts.firstName} LIKE ${pattern} ESCAPE '\\' OR ${contacts.lastName} LIKE ${pattern} ESCAPE '\\' OR ${contacts.email} LIKE ${pattern} ESCAPE '\\')`;
 };
 
 /**

@@ -258,7 +258,6 @@ test('keyset pagination walks every contact exactly once', async () => {
     expect(body.data.length).toBeLessThanOrEqual(50);
     expect('nextCursor' in body).toBe(true);
     for (const item of body.data) {
-      expect(item.data.id).toBe(item.id);
       expect(item.customFields).toEqual({});
       if (previous) {
         const ordered =
@@ -334,7 +333,7 @@ test('search composes with pagination', async () => {
   do {
     const qs =
       '?query=' +
-      encodeURIComponent('match@example.test') +
+      encodeURIComponent('match') +
       '&limit=40' +
       (cursor ? '&cursor=' + encodeURIComponent(cursor) : '');
     const body = (await api('/v1/contacts' + qs)) as unknown as { status: number } & ListBody;
@@ -350,13 +349,13 @@ test('search composes with pagination', async () => {
   expect(new Set(seen).size, 'duplicate or missing rows across pages').toBe(75);
 
   const rest = (await api(
-    '/v1/contacts?query=' + encodeURIComponent('other@example.test'),
+    '/v1/contacts?query=' + encodeURIComponent('other'),
   )) as unknown as ListBody;
   expect(rest.data.length).toBe(30);
   expect(rest.nextCursor).toBeNull();
 });
 
-test('search without @ keeps literal substring semantics', async () => {
+test('search keeps literal substring semantics', async () => {
   await ok('/v1/contacts', 'POST', { email: 'uno@example.test', firstName: 'Quartz' });
   await ok('/v1/contacts', 'POST', { email: 'dos@example.test', firstName: 'Quartzite' });
   await ok('/v1/contacts', 'POST', { email: 'tres@example.test', firstName: 'Beryl' });
@@ -374,7 +373,8 @@ test('search without @ keeps literal substring semantics', async () => {
   expect(literal.status).toBe(200);
   expect(literal.data).toEqual([]);
 
-  // An '@' query is an email prefix search and does not match names.
+  // A query containing '@' is a plain literal substring search too; no
+  // contact has 'Quartz@example.test' as a substring of name or email.
   const emailOnly = (await api(
     '/v1/contacts?query=Quartz%40example.test',
   )) as unknown as { status: number } & ListBody;
