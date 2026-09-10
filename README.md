@@ -24,6 +24,9 @@ Install the pinned pnpm version using `npm install --global pnpm@10.34.5` if nee
 5. Build and apply the generated migration: `pnpm exec wrangler d1 migrations apply cloudflare-lead-desk --remote`.
 6. Deploy: `pnpm run deploy`.
 
+Both `src/worker-global.ts` (the configured deployment entry) and the compatibility
+entry `src/worker.ts` use the same app compiled at module scope.
+
 For local development, copy `.dev.vars.example` to `.dev.vars`, use `ENVIRONMENT=development`, then run `pnpm run dev:worker` and `pnpm run dev`. `DEV_ADMIN_EMAIL` is honored only outside production.
 
 ## Integration API
@@ -50,6 +53,11 @@ The interactive OpenAPI documentation is available at `/openapi`.
 
 ### Intake idempotency contract
 
+Send `Content-Type: application/json`. Every intake body is byte-limited before
+decoding; unsupported or missing media types return `415 unsupported_media_type`
+when within the limit, and oversized bodies return 413 regardless of media type.
+
+
 `POST /v1/intakes` is the only size-limited route: the raw request body is
 bounded to **65,536 actual bytes** (enforced on the streamed body, with or
 without a declared `Content-Length`) before JSON parsing. Larger bodies get
@@ -67,8 +75,8 @@ applies before token and idempotency checks. On overflow `get-stream` throws
 also releases the reader lock); the route `error` hook maps that one error
 type to the `413 payload_too_large` response and never returns or logs the
 error instance, which carries the raw submitted bytes. Malformed JSON keeps
-Elysia's ordinary `400` handling, and non-JSON content types fall through to
-Elysia's default body parser as before.
+Elysia's ordinary `400` handling. Unsupported media types return 415 after
+the same bounded read; they never fall through to another body parser.
 
 - **Keys.** `Idempotency-Key` is required and must be 1-128 printable ASCII
   characters (`0x21`-`0x7E`, no spaces). A missing key returns

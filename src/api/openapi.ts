@@ -76,7 +76,8 @@ export const openApiSpecification = {
           409: {
             description: 'idempotency_conflict (same key, different payload) or idempotency_legacy_unverifiable (pre-fingerprint key; reconcile against the stored opportunity first)',
           },
-          413: { description: 'payload_too_large (raw body over 65,536 bytes)' },
+          413: { description: 'payload_too_large (raw body over 65,536 bytes, regardless of media type)' },
+          415: { description: 'unsupported_media_type (Content-Type must be application/json)' },
           422: {
             description: 'Invalid intake payload, custom-field value, or invalid_stage (stage/pipeline/workspace mismatch or archived pipeline)',
           },
