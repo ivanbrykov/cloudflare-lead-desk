@@ -55,6 +55,21 @@ bounded to **65,536 actual bytes** (enforced on the streamed body, with or
 without a declared `Content-Length`) before JSON parsing. Larger bodies get
 `413 payload_too_large` and write no intake data.
 
+The limit is owned by the intake route itself, not by the Worker entry: a
+route-local Elysia `parse` hook reads the streamed body with
+[`get-stream`](https://github.com/sindresorhus/get-stream)
+(`getStreamAsArrayBuffer`, `maxBuffer: 65_536` bytes), then decodes it with a
+standard `TextDecoder` and `JSON.parse`. Because the hook is attached to the
+route, every accepted alias (`/v1/intakes`, `/v1/intakes/`, and the
+normalized `/v1/intakes/.`) enforces the identical byte limit, and the limit
+applies before token and idempotency checks. On overflow `get-stream` throws
+`MaxBufferError` and cancels the still-open input stream (its async iteration
+also releases the reader lock); the route `error` hook maps that one error
+type to the `413 payload_too_large` response and never returns or logs the
+error instance, which carries the raw submitted bytes. Malformed JSON keeps
+Elysia's ordinary `400` handling, and non-JSON content types fall through to
+Elysia's default body parser as before.
+
 - **Keys.** `Idempotency-Key` is required and must be 1-128 printable ASCII
   characters (`0x21`-`0x7E`, no spaces). A missing key returns
   `400 idempotency_key_required`; any other malformed key returns
