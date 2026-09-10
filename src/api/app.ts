@@ -13,6 +13,7 @@ import {
   createStageCommand,
   moveOpportunityCommand,
   updateContactCommand,
+  updateOpportunityCommand,
 } from '@/application/commands';
 import { DomainError, PersistenceError } from '@/application/errors';
 import { UnauthorizedError, bearerToken, requireAccessIdentity } from '@/auth/access';
@@ -42,6 +43,7 @@ import {
   CreateTokenSchema,
   IntakeInputSchema,
   MoveOpportunitySchema,
+  UpdateOpportunitySchema,
 } from '@/domain/schemas';
 import { isIntakeKey } from '@/domain/intake';
 import { CONTACT_LIMIT_DEFAULT, decodeContactCursor, parseContactLimit } from '@/domain/pagination';
@@ -229,6 +231,20 @@ export const createApp = (env: Env) =>
         ? { data: opportunity }
         : errorResponse(404, 'not_found', 'Opportunity not found.');
     })
+    .patch(
+      '/v1/opportunities/:id',
+      async ({ body, params, request }) => {
+        const admin = await requireAdmin(request, env);
+        if ('error' in admin) return admin.error;
+        const parsed = await parse(UpdateOpportunitySchema, body);
+        if ('error' in parsed) return parsed.error;
+        const result = await run(updateOpportunityCommand(env, params.id, parsed.data));
+        if ('error' in result) return result.error;
+        return result.data
+          ? { data: result.data }
+          : errorResponse(404, 'not_found', 'Opportunity not found.');
+      },
+    )
     .post(
       '/v1/opportunities/:id/move',
       async ({ body, params, request }) => {

@@ -18,6 +18,7 @@ import {
   moveOpportunity,
   outcomeForStoredIntakeKey,
   updateContact,
+  updateOpportunity,
   type Env,
   type IntakePersistenceOutcome,
 } from '@/db/repository';
@@ -28,6 +29,7 @@ import type {
   CreateCustomField,
   CreateOpportunityInput,
   IntakeInput,
+  UpdateOpportunityInput,
 } from '@/domain/schemas';
 
 const persist = <A>(operation: () => Promise<A>) =>
@@ -217,6 +219,12 @@ export const moveOpportunityCommand = (
   stageId: string,
   actorEmail: string,
 ) => persist(() => moveOpportunity(env, opportunityId, stageId, actorEmail));
+
+export const updateOpportunityCommand = (
+  env: Env,
+  opportunityId: string,
+  input: UpdateOpportunityInput,
+) => persist(() => updateOpportunity(env, opportunityId, input));
 
 export const createActivityCommand = (
   env: Env,

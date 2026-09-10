@@ -151,6 +151,25 @@ parameter restricts results to one active pipeline of the current workspace.
 An unknown or archived `pipelineId` returns `422 validation_error`.
 Opportunity custom-field values use the same batched read.
 
+### Opportunity editing
+
+`PATCH /v1/opportunities/:id` updates the editable staff fields of an
+existing opportunity. It accepts `{ name?, estimatedValue? }`:
+
+- At least one field is required; `{}` returns `422 validation_error`.
+- `name` must be non-empty without leading or trailing whitespace (the same
+  `NonEmptyString` contract as every other name field in the app); blank
+  names return `422 validation_error`.
+- `estimatedValue` must be a non-negative finite number. An explicit `null`
+  clears the stored value; omitting the field keeps it. Negative or
+  non-finite values return `422 validation_error`.
+- Unknown ids return `404 not_found`. Cloudflare Access authentication is
+  required; missing or invalid identities return `401 unauthorized`.
+
+The workbench exposes the endpoint as a minimal "Edit details" form on the
+opportunity detail page, and the board lists active pipelines in a pipeline
+selector whose selection drives `GET /v1/opportunities?pipelineId=`.
+
 ## Custom fields
 
 Custom fields are configured per contact and opportunity (Settings → Fields) and validated against the active definitions:

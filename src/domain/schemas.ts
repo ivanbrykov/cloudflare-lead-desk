@@ -109,6 +109,24 @@ export const MoveOpportunitySchema = Schema.Struct({
   stageId: RecordIdSchema,
 });
 
+export const UpdateOpportunitySchema = Schema.Struct({
+  estimatedValue: Schema.optional(
+    Schema.NullOr(Schema.Number.pipe(Schema.finite(), Schema.nonNegative())),
+  ),
+  name: Schema.optional(NonEmptyString),
+}).pipe(
+  Schema.filter(
+    (value) => value.name !== undefined || value.estimatedValue !== undefined,
+    {
+      message: () =>
+        'Provide at least one field to update: name or estimatedValue.',
+    },
+  ),
+);
+export type UpdateOpportunityInput = Schema.Schema.Type<
+  typeof UpdateOpportunitySchema
+>;
+
 export const CreateActivitySchema = Schema.Struct({
   body: NonEmptyString,
   kind: Schema.optional(Schema.Literal('note', 'contact_attempt')),
