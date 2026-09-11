@@ -13,22 +13,31 @@ Companies, tasks, email sync, imports, reporting, workflows, custom objects, and
 
 ## Install on Cloudflare
 
-Prerequisites: a Cloudflare account, Node.js 24.20.0 (see `.node-version`) and pnpm 10.34.5, and a Cloudflare Zero Trust team.
+Every deployment is independent: the repo carries no account-specific values.
 
-Install the pinned pnpm version using `npm install --global pnpm@10.34.5` if needed.
+### One-click install
 
-Every deployment is independent: the repo carries no account-specific values. Wrangler binds D1 by `database_name`, so any account with a database named `cloudflare-lead-desk` works.
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/ivanbrykov/cloudflare-lead-desk)
+
+The button clones this repository into your own GitHub or GitLab account, provisions a fresh D1 database in your Cloudflare account, prompts for the secrets listed in `.dev.vars.example`, runs the migrations as part of `pnpm run deploy`, and connects Workers Builds so every push to your copy deploys automatically.
+
+After the first deploy, create a Cloudflare Access application for the worker's hostname in your Zero Trust team and set its audience and team domain as the `ACCESS_AUD` and `ACCESS_TEAM_DOMAIN` secrets. Until these are set, staff routes return 401.
+
+### Manual install
+
+Prerequisites: a Cloudflare account, Node.js 24.20.0 (see `.node-version`) and pnpm 10.34.5, and a Cloudflare Zero Trust team. Install the pinned pnpm version using `npm install --global pnpm@10.34.5` if needed.
 
 1. Install dependencies: `pnpm install --frozen-lockfile`.
 2. Create the D1 database in your account: `pnpm exec wrangler d1 create cloudflare-lead-desk`.
-3. Apply the migrations: `pnpm exec wrangler d1 migrations apply cloudflare-lead-desk --remote`. The migration also bootstraps the default workspace, pipeline, and stage rows (fixed ids, `INSERT OR IGNORE`) and makes stage positions unique per pipeline — the app itself never seeds data per request, so deleted bootstrap rows are not resurrected.
-4. Configure a Cloudflare Access application for the deployed hostname in your Zero Trust team, then set its audience and team hostname as worker secrets: `pnpm exec wrangler secret put ACCESS_AUD` and `pnpm exec wrangler secret put ACCESS_TEAM_DOMAIN`. Until these are set, staff routes return 401.
-5. Deploy: `pnpm run deploy` (set `CLOUDFLARE_ACCOUNT_ID` if your wrangler login spans multiple accounts), or connect the repository in the dashboard under Workers → Settings → Builds.
+3. Configure a Cloudflare Access application for the deployed hostname in your Zero Trust team, then set its audience and team hostname as worker secrets: `pnpm exec wrangler secret put ACCESS_AUD` and `pnpm exec wrangler secret put ACCESS_TEAM_DOMAIN`.
+4. Deploy: `pnpm run deploy` (set `CLOUDFLARE_ACCOUNT_ID` if your wrangler login spans multiple accounts). The deploy script builds, applies the D1 migrations, and deploys. The migration also bootstraps the default workspace, pipeline, and stage rows (fixed ids, `INSERT OR IGNORE`) and makes stage positions unique per pipeline — the app itself never seeds data per request, so deleted bootstrap rows are not resurrected. Migration commands reference the `DB` binding rather than a database name, so renamed databases keep working.
+
+You can also connect the repository in the dashboard under Workers → Settings → Builds, with the deploy command set to `pnpm run deploy`.
 
 Both `src/worker-global.ts` (the configured deployment entry) and the compatibility
 entry `src/worker.ts` use the same app compiled at module scope.
 
-For local development, copy `.dev.vars.example` to `.dev.vars`, use `ENVIRONMENT=development`, then run `pnpm run dev:worker` and `pnpm run dev`. `DEV_ADMIN_EMAIL` is honored only outside production.
+For local development, copy `.dev.vars.example` to `.dev.vars` and add `ENVIRONMENT=development` and a `DEV_ADMIN_EMAIL`, then run `pnpm run dev:worker` and `pnpm run dev`. `DEV_ADMIN_EMAIL` is honored only outside production, and deployments always set `ENVIRONMENT=production`, so the two dev-only values are deliberately absent from `.dev.vars.example` (its entries become prompted secrets in the one-click install flow).
 
 ## Integration API
 
