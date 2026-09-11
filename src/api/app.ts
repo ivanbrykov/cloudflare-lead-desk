@@ -48,6 +48,7 @@ import {
 import { isIntakeKey } from '@/domain/intake';
 import { CONTACT_LIMIT_DEFAULT, decodeContactCursor, parseContactLimit } from '@/domain/pagination';
 import { mapIntakeBodyError, parseIntakeBody } from '@/api/intake-parser';
+import { logRequest } from './logging';
 
 const errorResponse = (
   status: number,
@@ -62,7 +63,10 @@ const errorResponse = (
     },
   );
 
-const run = async <A>(effect: Effect.Effect<A, DomainError | PersistenceError>) => {
+const run = async <A>(
+  request: Request,
+  effect: Effect.Effect<A, DomainError | PersistenceError>,
+) => {
   try {
     const outcome = await Effect.runPromise(Effect.either(effect));
     if (Either.isRight(outcome)) return { data: outcome.right } as const;
@@ -70,10 +74,21 @@ const run = async <A>(effect: Effect.Effect<A, DomainError | PersistenceError>) 
     if (error._tag === 'DomainError') {
       return { error: errorResponse(422, error.code, error.message, error.details) } as const;
     }
-    console.error('Lead Desk persistence failed', error.cause);
+    // Structured failure line: the cause's class identifies the layer that
+    // failed. The cause's message is deliberately not logged because a
+    // database error can embed SQL with bound values (contact data).
+    logRequest(request, 500, {
+      errorClass: 'PersistenceError',
+      errorCauseClass: error.cause instanceof Error ? error.cause.constructor.name : typeof error.cause,
+    });
     return { error: errorResponse(500, 'persistence_error', 'The request could not be persisted.') } as const;
   } catch (error) {
-    console.error('Lead Desk command defect', error);
+    // Command defects are programmer errors; keep the class and message,
+    // never the stack.
+    logRequest(request, 500, {
+      errorClass: error instanceof Error ? error.name || error.constructor.name : typeof error,
+      errorMessage: error instanceof Error ? error.message : String(error),
+    });
     return { error: errorResponse(500, 'internal_error', 'The request could not be completed.') } as const;
   }
 };
@@ -150,7 +165,7 @@ export const createApp = (env: Env) =>
         if ('error' in admin) return admin.error;
         const parsed = await parse(ContactInputSchema, body);
         if ('error' in parsed) return parsed.error;
-        const result = await run(createContactCommand(env, parsed.data));
+        const result = await run(request, createContactCommand(env, parsed.data));
         return 'error' in result ? result.error : Response.json({ data: result.data }, { status: 201 });
       }
     )
@@ -169,7 +184,7 @@ export const createApp = (env: Env) =>
         if ('error' in admin) return admin.error;
         const parsed = await parse(ContactInputSchema, body);
         if ('error' in parsed) return parsed.error;
-        const result = await run(updateContactCommand(env, params.id, parsed.data));
+        const result = await run(request, updateContactCommand(env, params.id, parsed.data));
         if ('error' in result) return result.error;
         return result.data
           ? { data: result.data }
@@ -179,7 +194,7 @@ export const createApp = (env: Env) =>
     .delete('/v1/contacts/:id', async ({ params, request }) => {
       const admin = await requireAdmin(request, env);
       if ('error' in admin) return admin.error;
-      const result = await run(deleteContactCommand(env, params.id));
+      const result = await run(request, deleteContactCommand(env, params.id));
       if ('error' in result) return result.error;
       if (result.data === 'deleted') return new Response(null, { status: 204 });
       if (result.data === 'has_opportunities') {
@@ -194,7 +209,7 @@ export const createApp = (env: Env) =>
         if ('error' in admin) return admin.error;
         const parsed = await parse(CreateOpportunitySchema, body);
         if ('error' in parsed) return parsed.error;
-        const result = await run(createManualOpportunityCommand(env, parsed.data, admin.email));
+        const result = await run(request, createManualOpportunityCommand(env, parsed.data, admin.email));
         if ('error' in result) return result.error;
         if (result.data === 'contact_not_found') {
           return errorResponse(404, 'not_found', 'Contact not found.');
@@ -238,7 +253,7 @@ export const createApp = (env: Env) =>
         if ('error' in admin) return admin.error;
         const parsed = await parse(UpdateOpportunitySchema, body);
         if ('error' in parsed) return parsed.error;
-        const result = await run(updateOpportunityCommand(env, params.id, parsed.data));
+        const result = await run(request, updateOpportunityCommand(env, params.id, parsed.data));
         if ('error' in result) return result.error;
         return result.data
           ? { data: result.data }
@@ -253,6 +268,7 @@ export const createApp = (env: Env) =>
         const parsed = await parse(MoveOpportunitySchema, body);
         if ('error' in parsed) return parsed.error;
         const result = await run(
+          request,
           moveOpportunityCommand(env, params.id, parsed.data.stageId, admin.email),
         );
         if ('error' in result) return result.error;
@@ -274,6 +290,7 @@ export const createApp = (env: Env) =>
         const parsed = await parse(CreateActivitySchema, body);
         if ('error' in parsed) return parsed.error;
         const result = await run(
+          request,
           createActivityCommand(
             env,
             params.id,
@@ -300,7 +317,7 @@ export const createApp = (env: Env) =>
         if ('error' in admin) return admin.error;
         const parsed = await parse(CreatePipelineSchema, body);
         if ('error' in parsed) return parsed.error;
-        const result = await run(createPipelineCommand(env, parsed.data.name));
+        const result = await run(request, createPipelineCommand(env, parsed.data.name));
         return 'error' in result ? result.error : Response.json({ data: result.data }, { status: 201 });
       }
     )
@@ -311,7 +328,7 @@ export const createApp = (env: Env) =>
         if ('error' in admin) return admin.error;
         const parsed = await parse(CreateStageSchema, body);
         if ('error' in parsed) return parsed.error;
-        const result = await run(createStageCommand(env, params.id, parsed.data));
+        const result = await run(request, createStageCommand(env, params.id, parsed.data));
         return 'error' in result ? result.error : Response.json({ data: result.data }, { status: 201 });
       }
     )
@@ -333,7 +350,7 @@ export const createApp = (env: Env) =>
         if (parsed.data.type === 'select' && (!parsed.data.options || parsed.data.options.length === 0)) {
           return errorResponse(422, 'validation_error', 'Select fields need at least one option.');
         }
-        const result = await run(createCustomFieldCommand(env, parsed.data));
+        const result = await run(request, createCustomFieldCommand(env, parsed.data));
         return 'error' in result ? result.error : Response.json({ data: result.data }, { status: 201 });
       }
     )
@@ -386,7 +403,7 @@ export const createApp = (env: Env) =>
         }
         const parsed = await parse(IntakeInputSchema, body);
         if ('error' in parsed) return parsed.error;
-        const result = await run(createIntakeCommand(env, parsed.data, idempotencyKey));
+        const result = await run(request, createIntakeCommand(env, parsed.data, idempotencyKey));
         if ('error' in result) return result.error;
         switch (result.data.kind) {
           case 'created':
