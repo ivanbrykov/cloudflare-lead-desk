@@ -1,6 +1,5 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
-  "account_id": "c601a905054c7c65651b49472c3a69e2",
   "name": "cloudflare-lead-desk",
   "main": "./src/worker-global.ts",
   "compatibility_date": "2026-08-23",
