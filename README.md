@@ -17,12 +17,13 @@ Prerequisites: a Cloudflare account, Node.js 24.20.0 (see `.node-version`) and p
 
 Install the pinned pnpm version using `npm install --global pnpm@10.34.5` if needed.
 
+Every deployment is independent: the repo carries no account-specific values. Wrangler binds D1 by `database_name`, so any account with a database named `cloudflare-lead-desk` works.
+
 1. Install dependencies: `pnpm install --frozen-lockfile`.
-2. Create a D1 database: `pnpm exec wrangler d1 create cloudflare-lead-desk`.
-3. Copy the returned database ID into `wrangler.jsonc`.
-4. Configure a Cloudflare Access application for the deployed hostname. Set its audience value and team hostname in `ACCESS_AUD` and `ACCESS_TEAM_DOMAIN`.
-5. Build and apply the generated migration: `pnpm exec wrangler d1 migrations apply cloudflare-lead-desk --remote`. The migration also bootstraps the default workspace, pipeline, and stage rows (fixed ids, `INSERT OR IGNORE`) and makes stage positions unique per pipeline — the app itself never seeds data per request, so deleted bootstrap rows are not resurrected.
-6. Deploy: `pnpm run deploy`.
+2. Create the D1 database in your account: `pnpm exec wrangler d1 create cloudflare-lead-desk`.
+3. Apply the migrations: `pnpm exec wrangler d1 migrations apply cloudflare-lead-desk --remote`. The migration also bootstraps the default workspace, pipeline, and stage rows (fixed ids, `INSERT OR IGNORE`) and makes stage positions unique per pipeline — the app itself never seeds data per request, so deleted bootstrap rows are not resurrected.
+4. Configure a Cloudflare Access application for the deployed hostname in your Zero Trust team, then set its audience and team hostname as worker secrets: `pnpm exec wrangler secret put ACCESS_AUD` and `pnpm exec wrangler secret put ACCESS_TEAM_DOMAIN`. Until these are set, staff routes return 401.
+5. Deploy: `pnpm run deploy` (set `CLOUDFLARE_ACCOUNT_ID` if your wrangler login spans multiple accounts), or connect the repository in the dashboard under Workers → Settings → Builds.
 
 Both `src/worker-global.ts` (the configured deployment entry) and the compatibility
 entry `src/worker.ts` use the same app compiled at module scope.

@@ -12,13 +12,10 @@
     {
       "binding": "DB",
       "database_name": "cloudflare-lead-desk",
-      "database_id": "9731d183-325a-4bb2-bb47-e2effa289b59",
       "migrations_dir": "drizzle"
     }
   ],
   "vars": {
-    "ACCESS_AUD": "fcf0832bcec6343c1135f795a6dcffb4bfafe5b17d7b675db7801734c7c128af",
-    "ACCESS_TEAM_DOMAIN": "brykov.cloudflareaccess.com",
     "ENVIRONMENT": "production"
   }
 }
