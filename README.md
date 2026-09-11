@@ -24,6 +24,11 @@ Install the pinned pnpm version using `npm install --global pnpm@10.34.5` if nee
 5. Build and apply the generated migration: `pnpm exec wrangler d1 migrations apply cloudflare-lead-desk --remote`. The migration also bootstraps the default workspace, pipeline, and stage rows (fixed ids, `INSERT OR IGNORE`) and makes stage positions unique per pipeline — the app itself never seeds data per request, so deleted bootstrap rows are not resurrected.
 6. Deploy: `pnpm run deploy`.
 
+Pushes to `main` deploy automatically: CI verifies (typecheck, tests, build),
+then applies D1 migrations and deploys. This requires a `CLOUDFLARE_API_TOKEN`
+repository secret (a scoped API token with Workers Scripts and D1 edit
+permissions on the account).
+
 Both `src/worker-global.ts` (the configured deployment entry) and the compatibility
 entry `src/worker.ts` use the same app compiled at module scope.
 
