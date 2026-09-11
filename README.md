@@ -179,13 +179,42 @@ Custom fields are configured per contact and opportunity (Settings → Fields) a
 - Reads expose active definitions only. Archived definitions keep their stored values for historical export but are excluded from payloads, so an archived value never blocks editing a contact.
 - Core fields and custom-field values are written in a single D1 transaction, so a failed field write rolls back the whole request.
 
+## Observability
+
+Every API request (`/health`, `/openapi`, and `/v1/*`) emits exactly one JSON log line, written synchronously before the response is returned (a Workers isolate can be suspended once the response is sent, so logging does not rely on post-response callbacks):
+
+```json
+{"event":"request","method":"GET","path":"/v1/contacts","status":200,"durationMs":3.42}
+```
+
+Fields:
+
+- `event` — `request` for the per-request line; `request.failure` for structured failure lines emitted when a persistence write or a command fails.
+- `method` — the HTTP method.
+- `path` — the URL pathname (the actual route path, e.g. `/v1/contacts/01...`). Query strings are never logged, so the contact search `query` parameter of `GET /v1/contacts` does not reach the logs.
+- `status` — the final HTTP status of the response.
+- `durationMs` — total processing time for the request in milliseconds.
+
+Responses with a 5xx status, and failure lines, are written with `console.error`; everything else uses `console.log`. Failure lines additionally carry `errorClass`, and for persistence failures the database error's class as `errorCauseClass` (the cause message is never logged because it can embed SQL with bound values), or for command defects the error `errorMessage`. Log lines never contain headers, request bodies, tokens, emails, query strings, stacks, or SQL.
+
+## Continuous integration
+
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every push and pull request from a clean checkout. It uses no secrets and performs no deployment:
+
+1. `pnpm install --frozen-lockfile` — pnpm pinned by the `packageManager` field, Node from `.node-version`.
+2. `pnpm run typecheck`.
+3. `pnpm exec vitest run` — includes the Miniflare-backed D1 suites.
+4. `pnpm run build`.
+5. `pnpm exec wrangler deploy --dry-run` — validates the deployable bundle without authentication.
+
 ## Development
 
 ```sh
-pnpm run typecheck
-pnpm test
+pnpm run check
 pnpm run build
 ```
+
+`pnpm run check` runs the typecheck and the full test suite; the same gates (plus the build and the deploy dry-run) run in CI.
 
 The public contract is REST/OpenAPI. Elysia handles HTTP, Effect Schema is the single validation model, and Effect commands contain domain rules. See [`docs/adr`](docs/adr).
 
