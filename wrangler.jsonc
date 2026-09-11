@@ -12,7 +12,7 @@
     {
       "binding": "DB",
       "database_name": "cloudflare-lead-desk",
-      "database_id": "9731d183-325a-4bb2-bb47-e2effa289b59",
+      "database_id": "217b62ae-216b-45bb-b542-02bc48592617",
       "migrations_dir": "drizzle"
     }
   ],
