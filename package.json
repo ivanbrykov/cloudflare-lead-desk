@@ -10,9 +10,9 @@
     "build": "vite build",
     "check": "pnpm run typecheck && pnpm run test",
     "db:generate": "drizzle-kit generate",
-    "db:migrate:local": "wrangler d1 migrations apply cloudflare-lead-desk --local",
-    "db:migrate:remote": "wrangler d1 migrations apply cloudflare-lead-desk --remote",
-    "deploy": "pnpm run build && wrangler deploy",
+    "db:migrate:local": "wrangler d1 migrations apply DB --local",
+    "db:migrate:remote": "wrangler d1 migrations apply DB --remote",
+    "deploy": "pnpm run build && wrangler d1 migrations apply DB --remote && wrangler deploy",
     "dev": "vite",
     "dev:worker": "pnpm run build && wrangler dev",
     "test": "vitest run",
@@ -61,5 +61,15 @@
   },
   "engines": {
     "node": ">=24.20.0 <25"
+  },
+  "cloudflare": {
+    "bindings": {
+      "ACCESS_AUD": {
+        "description": "The audience (AUD) tag of your Cloudflare Access application protecting this worker. Found in Zero Trust → Access → Applications."
+      },
+      "ACCESS_TEAM_DOMAIN": {
+        "description": "Your Cloudflare Zero Trust team domain, e.g. `your-team.cloudflareaccess.com`."
+      }
+    }
   }
 }
