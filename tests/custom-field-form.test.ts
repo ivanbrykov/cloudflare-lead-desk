@@ -1,21 +1,31 @@
-import { describe, expect, test } from 'vitest';
 import {
   customFieldsForCreate,
   customFieldsForUpdate,
   isBlankCustomFieldValue,
 } from '@/lib/custom-field-form';
+import { describe, expect, test } from 'vitest';
 
 describe('custom field form payloads', () => {
   test('creation omits cleared optional fields but keeps real values', () => {
     expect(
-      customFieldsForCreate({ cleared: null, consent: false, name: 'Fall', count: 0 }),
-    ).toEqual({ consent: false, name: 'Fall', count: 0 });
+      customFieldsForCreate({
+        cleared: null,
+        consent: false,
+        count: 0,
+        name: 'Fall',
+      }),
+    ).toEqual({ consent: false, count: 0, name: 'Fall' });
     expect(customFieldsForCreate({ cleared: null })).toBeUndefined();
     expect(customFieldsForCreate({})).toBeUndefined();
   });
 
   test('update keeps cleared optional fields as explicit nulls', () => {
-    expect(customFieldsForUpdate({ cleared: null, consent: false }, [{ key: 'cleared' }, { key: 'consent' }])).toEqual({
+    expect(
+      customFieldsForUpdate({ cleared: null, consent: false }, [
+        { key: 'cleared' },
+        { key: 'consent' },
+      ]),
+    ).toEqual({
       cleared: null,
       consent: false,
     });
@@ -23,10 +33,19 @@ describe('custom field form payloads', () => {
   });
 
   test('editing a cached contact drops archived keys using current definitions', () => {
-    const cached = { archived: 'old value', consent: false, cleared: null, count: 0 };
-    expect(customFieldsForUpdate(cached, [
-      { key: 'consent' }, { key: 'cleared' }, { key: 'count' },
-    ])).toEqual({ consent: false, cleared: null, count: 0 });
+    const cached = {
+      archived: 'old value',
+      cleared: null,
+      consent: false,
+      count: 0,
+    };
+    expect(
+      customFieldsForUpdate(cached, [
+        { key: 'consent' },
+        { key: 'cleared' },
+        { key: 'count' },
+      ]),
+    ).toEqual({ cleared: null, consent: false, count: 0 });
     expect(customFieldsForUpdate(cached, [])).toBeUndefined();
     expect(cached.archived).toBe('old value');
   });

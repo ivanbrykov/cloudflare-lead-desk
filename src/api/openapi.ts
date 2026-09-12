@@ -1,4 +1,9 @@
 export const openApiSpecification = {
+  components: {
+    securitySchemes: {
+      bearerAuth: { bearerFormat: 'token', scheme: 'bearer', type: 'http' },
+    },
+  },
   info: {
     title: 'Cloudflare Lead Desk API',
     version: '0.1.0-alpha.0',
@@ -6,16 +11,19 @@ export const openApiSpecification = {
   openapi: '3.1.0',
   paths: {
     '/health': {
-      get: { responses: { 200: { description: 'Healthy Worker' } }, summary: 'Health check' },
+      get: {
+        responses: { '200': { description: 'Healthy Worker' } },
+        summary: 'Health check',
+      },
     },
     '/v1/contacts': {
       get: {
         description: [
           'Lists contacts, newest first (createdAt DESC, tie-broken by id DESC), with keyset (seek) pagination.',
           '',
-          'Pagination: `limit` (integer 1-100, default 50) bounds the page size. `cursor` takes the opaque `nextCursor` from a previous response - a base64url-encoded keyset over the last row\'s (createdAt, id); omit it for the first page. The final page returns `nextCursor: null`. A non-numeric or out-of-range limit returns 422 validation_error; a missing, malformed, or tampered cursor returns 422 invalid_cursor.',
+          "Pagination: `limit` (integer 1-100, default 50) bounds the page size. `cursor` takes the opaque `nextCursor` from a previous response - a base64url-encoded keyset over the last row's (createdAt, id); omit it for the first page. The final page returns `nextCursor: null`. A non-numeric or out-of-range limit returns 422 validation_error; a missing, malformed, or tampered cursor returns 422 invalid_cursor.",
           '',
-          'Each item keeps the flat contact shape, including `customFields`. Custom-field values are fetched for the whole page in batched queries (chunked to D1\'s 100-bound-parameter limit), not one query per contact.',
+          "Each item keeps the flat contact shape, including `customFields`. Custom-field values are fetched for the whole page in batched queries (chunked to D1's 100-bound-parameter limit), not one query per contact.",
         ].join('\n'),
         parameters: [
           {
@@ -42,20 +50,53 @@ export const openApiSpecification = {
           },
         ],
         responses: {
-          200: { description: 'One page: { data: [contacts], nextCursor: string | null }' },
-          401: { description: 'Access required' },
-          422: { description: 'validation_error (limit) or invalid_cursor (malformed or tampered cursor)' },
+          '200': {
+            description:
+              'One page: { data: [contacts], nextCursor: string | null }',
+          },
+          '401': { description: 'Access required' },
+          '422': {
+            description:
+              'validation_error (limit) or invalid_cursor (malformed or tampered cursor)',
+          },
         },
         summary: 'List contacts (keyset pagination)',
       },
-      post: { responses: { 201: { description: 'Contact created' }, 401: { description: 'Access required' }, 422: { description: 'Invalid contact' } }, summary: 'Create contact' },
+      post: {
+        responses: {
+          '201': { description: 'Contact created' },
+          '401': { description: 'Access required' },
+          '422': { description: 'Invalid contact' },
+        },
+        summary: 'Create contact',
+      },
     },
     '/v1/contacts/{id}': {
-      delete: { responses: { 204: { description: 'Contact deleted' }, 404: { description: 'Contact not found' }, 409: { description: 'Contact has opportunities' } }, summary: 'Delete contact' },
-      get: { responses: { 200: { description: 'Contact' }, 401: { description: 'Access required' }, 404: { description: 'Contact not found' } }, summary: 'Get contact' },
+      delete: {
+        responses: {
+          '204': { description: 'Contact deleted' },
+          '404': { description: 'Contact not found' },
+          '409': { description: 'Contact has opportunities' },
+        },
+        summary: 'Delete contact',
+      },
+      get: {
+        responses: {
+          '200': { description: 'Contact' },
+          '401': { description: 'Access required' },
+          '404': { description: 'Contact not found' },
+        },
+        summary: 'Get contact',
+      },
       put: {
-        description: 'Update a contact. `customFields` is a patch: omit the object or a key to keep its stored value, or send an explicit `null` to clear an optional field. Required fields cannot be cleared or left without a value, unknown or archived keys are rejected, and the core fields plus all field writes commit in a single transaction.',
-        responses: { 200: { description: 'Contact updated' }, 401: { description: 'Access required' }, 404: { description: 'Contact not found' }, 422: { description: 'Invalid contact' } },
+        description:
+          'Update a contact. `customFields` is a patch: omit the object or a key to keep its stored value, or send an explicit `null` to clear an optional field. Required fields cannot be cleared or left without a value, unknown or archived keys are rejected, and the core fields plus all field writes commit in a single transaction.',
+        responses: {
+          '200': { description: 'Contact updated' },
+          '401': { description: 'Access required' },
+          '404': { description: 'Contact not found' },
+          '422': { description: 'Invalid contact' },
+        },
         summary: 'Update contact',
       },
     },
@@ -106,18 +147,30 @@ export const openApiSpecification = {
           required: true,
         },
         responses: {
-          201: { description: 'Intake captured, or the stored response replayed for a matching retry' },
-          400: {
-            description: 'Idempotency-Key missing (idempotency_key_required) or not 1-128 printable ASCII (invalid_idempotency_key)',
+          '201': {
+            description:
+              'Intake captured, or the stored response replayed for a matching retry',
           },
-          401: { description: 'Missing, invalid, or revoked intake token' },
-          409: {
-            description: 'idempotency_conflict (same key, different payload) or idempotency_legacy_unverifiable (pre-fingerprint key; reconcile against the stored opportunity first)',
+          '400': {
+            description:
+              'Idempotency-Key missing (idempotency_key_required) or not 1-128 printable ASCII (invalid_idempotency_key)',
           },
-          413: { description: 'payload_too_large (raw body over 65,536 bytes, regardless of media type)' },
-          415: { description: 'unsupported_media_type (Content-Type must be application/json)' },
-          422: {
-            description: 'Invalid intake payload, custom-field value, or invalid_stage (stage/pipeline/workspace mismatch or archived pipeline)',
+          '401': { description: 'Missing, invalid, or revoked intake token' },
+          '409': {
+            description:
+              'idempotency_conflict (same key, different payload) or idempotency_legacy_unverifiable (pre-fingerprint key; reconcile against the stored opportunity first)',
+          },
+          '413': {
+            description:
+              'payload_too_large (raw body over 65,536 bytes, regardless of media type)',
+          },
+          '415': {
+            description:
+              'unsupported_media_type (Content-Type must be application/json)',
+          },
+          '422': {
+            description:
+              'Invalid intake payload, custom-field value, or invalid_stage (stage/pipeline/workspace mismatch or archived pipeline)',
           },
         },
         security: [{ bearerAuth: [] }],
@@ -127,10 +180,11 @@ export const openApiSpecification = {
     '/v1/opportunities': {
       get: {
         description:
-          'Lists opportunities, newest first. Not paginated; the optional `pipelineId` query parameter restricts results to one active pipeline of the current workspace. An unknown or archived pipelineId returns 422 validation_error. Custom-field values are fetched for the whole list in batched queries (chunked to D1\'s 100-bound-parameter limit), not one query per opportunity.',
+          "Lists opportunities, newest first. Not paginated; the optional `pipelineId` query parameter restricts results to one active pipeline of the current workspace. An unknown or archived pipelineId returns 422 validation_error. Custom-field values are fetched for the whole list in batched queries (chunked to D1's 100-bound-parameter limit), not one query per opportunity.",
         parameters: [
           {
-            description: 'Restrict to one active pipeline of the current workspace',
+            description:
+              'Restrict to one active pipeline of the current workspace',
             in: 'query',
             name: 'pipelineId',
             required: false,
@@ -138,13 +192,23 @@ export const openApiSpecification = {
           },
         ],
         responses: {
-          200: { description: 'Opportunity list' },
-          401: { description: 'Access required' },
-          422: { description: 'validation_error (unknown or archived pipelineId)' },
+          '200': { description: 'Opportunity list' },
+          '401': { description: 'Access required' },
+          '422': {
+            description: 'validation_error (unknown or archived pipelineId)',
+          },
         },
         summary: 'List opportunities (optional pipeline filter)',
       },
-      post: { responses: { 201: { description: 'Opportunity created' }, 401: { description: 'Access required' }, 404: { description: 'Contact not found' }, 422: { description: 'Invalid opportunity' } }, summary: 'Create opportunity' },
+      post: {
+        responses: {
+          '201': { description: 'Opportunity created' },
+          '401': { description: 'Access required' },
+          '404': { description: 'Contact not found' },
+          '422': { description: 'Invalid opportunity' },
+        },
+        summary: 'Create opportunity',
+      },
     },
     '/v1/opportunities/{id}': {
       patch: {
@@ -155,7 +219,9 @@ export const openApiSpecification = {
             'application/json': {
               schema: {
                 properties: {
-                  estimatedValue: { anyOf: [{ type: 'number' }, { type: 'null' }] },
+                  estimatedValue: {
+                    anyOf: [{ type: 'number' }, { type: 'null' }],
+                  },
                   name: { type: 'string' },
                 },
                 type: 'object',
@@ -165,22 +231,32 @@ export const openApiSpecification = {
           required: true,
         },
         responses: {
-          200: { description: 'Opportunity updated' },
-          401: { description: 'Access required' },
-          404: { description: 'Opportunity not found' },
-          422: { description: 'validation_error (no fields, whitespace name, or negative or non-finite estimatedValue)' },
+          '200': { description: 'Opportunity updated' },
+          '401': { description: 'Access required' },
+          '404': { description: 'Opportunity not found' },
+          '422': {
+            description:
+              'validation_error (no fields, whitespace name, or negative or non-finite estimatedValue)',
+          },
         },
         summary: 'Update opportunity name and estimated value',
       },
     },
     '/v1/pipelines': {
-      get: { responses: { 200: { description: 'Pipelines and stages' }, 401: { description: 'Access required' } }, summary: 'List pipelines' },
-      post: { responses: { 201: { description: 'Pipeline created' }, 401: { description: 'Access required' } }, summary: 'Create pipeline' },
-    },
-  },
-  components: {
-    securitySchemes: {
-      bearerAuth: { bearerFormat: 'token', scheme: 'bearer', type: 'http' },
+      get: {
+        responses: {
+          '200': { description: 'Pipelines and stages' },
+          '401': { description: 'Access required' },
+        },
+        summary: 'List pipelines',
+      },
+      post: {
+        responses: {
+          '201': { description: 'Pipeline created' },
+          '401': { description: 'Access required' },
+        },
+        summary: 'Create pipeline',
+      },
     },
   },
 } as const;

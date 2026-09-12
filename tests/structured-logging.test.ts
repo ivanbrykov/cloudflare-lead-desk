@@ -1,6 +1,6 @@
 import { build } from 'esbuild';
-import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
-import { readFile, readdir } from 'node:fs/promises';
+import { convertV4MiniflareOptions, Miniflare } from 'miniflare';
+import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, beforeAll, beforeEach, expect, test } from 'vitest';
 
@@ -30,14 +30,14 @@ const assertRepoRoot = async () => {
   }
 };
 
-interface StructuredLog {
+type StructuredLog = {
   level: string;
   message: string;
-}
+};
 
 let workerScript: string;
 let miniflare: Miniflare;
-let db: D1Database;
+let database: D1Database;
 let logs: StructuredLog[];
 
 const api = async (
@@ -45,12 +45,17 @@ const api = async (
   method = 'GET',
   body?: unknown,
   headers: Record<string, string> = {},
-): Promise<{ status: number } & Record<string, unknown>> => {
-  const response = await miniflare.dispatchFetch('https://lead-desk.test' + path, {
-    method,
-    headers: { 'Content-Type': 'application/json', ...headers },
-    ...(body === undefined ? {} : { body: typeof body === 'string' ? body : JSON.stringify(body) }),
-  });
+): Promise<Record<string, unknown> & { status: number }> => {
+  const response = await miniflare.dispatchFetch(
+    'https://lead-desk.test' + path,
+    {
+      headers: { 'Content-Type': 'application/json', ...headers },
+      method,
+      ...(body === undefined
+        ? {}
+        : { body: typeof body === 'string' ? body : JSON.stringify(body) }),
+    },
+  );
   const raw = await response.text();
   let json: Record<string, unknown> = {};
   try {
@@ -58,6 +63,7 @@ const api = async (
   } catch {
     json = { raw: raw.slice(0, 200) };
   }
+
   return { status: response.status, ...json };
 };
 
@@ -72,7 +78,10 @@ const requestLines = (from: number, method: string, path: string) =>
         return false;
       }
     })
-    .map((entry) => ({ level: entry.level, parsed: JSON.parse(entry.message) as Record<string, unknown> }));
+    .map((entry) => ({
+      level: entry.level,
+      parsed: JSON.parse(entry.message) as Record<string, unknown>,
+    }));
 
 beforeAll(async () => {
   await assertRepoRoot();
@@ -102,21 +111,24 @@ beforeEach(async () => {
       compatibilityDate: '2026-08-22',
       compatibilityFlags: ['nodejs_compat'],
       d1Databases: ['DB'],
-      modules: true,
-      script: workerScript,
       handleStructuredLogs: (entry) => {
         logs.push({ level: entry.level, message: entry.message });
       },
+      modules: true,
+      script: workerScript,
     }),
   );
-  db = await miniflare.getD1Database('DB');
+  database = await miniflare.getD1Database('DB');
   const names = (await readdir(join(repoRoot, 'drizzle')))
     .filter((name) => name.endsWith('.sql'))
-    .sort();
+    .toSorted();
   for (const name of names) {
     const sql = await readFile(join(repoRoot, 'drizzle', name), 'utf8');
-    for (const statement of sql.split('--> statement-breakpoint').map((s) => s.trim()).filter(Boolean)) {
-      await db.prepare(statement).run();
+    for (const statement of sql
+      .split('--> statement-breakpoint')
+      .map((chunk) => chunk.trim())
+      .filter(Boolean)) {
+      await database.prepare(statement).run();
     }
   }
 }, 60_000);
@@ -175,7 +187,7 @@ test('a persistence failure is logged at error level with the class, never the c
   });
   expect(field.status).toBe(201);
 
-  await db
+  await database
     .prepare(
       "CREATE TRIGGER logging_fail_insert BEFORE INSERT ON custom_field_values WHEN NEW.value_text = 'reject-value' BEGIN SELECT RAISE(ABORT, 'logging regression injected failure'); END",
     )
@@ -189,30 +201,38 @@ test('a persistence failure is logged at error level with the class, never the c
     expect(result.status).toBe(500);
 
     const lines = requestLines(0, 'POST', '/v1/contacts');
-    const failure = lines.find((line) => line.parsed.event === 'request.failure');
+    const failure = lines.find(
+      (line) => line.parsed.event === 'request.failure',
+    );
     const request = lines.find((line) => line.parsed.event === 'request');
     expect(failure, 'no request.failure line').toBeDefined();
     expect(request, 'no request line').toBeDefined();
-    expect(failure!.level).toBe('error');
-    expect(request!.level).toBe('error');
-    expect(request!.parsed.status).toBe(500);
-    expect(failure!.parsed).toMatchObject({
+    if (failure === undefined || request === undefined) {
+      throw new Error('expected request log lines to be present');
+    }
+
+    expect(failure.level).toBe('error');
+    expect(request.level).toBe('error');
+    expect(request.parsed.status).toBe(500);
+    expect(failure.parsed).toMatchObject({
       errorClass: 'PersistenceError',
       status: 500,
     });
-    expect(typeof failure!.parsed.errorCauseClass).toBe('string');
+    expect(typeof failure.parsed.errorCauseClass).toBe('string');
     // The trigger message (and any SQL with bound values) must not leak.
     const raw = logs.map((entry) => entry.message).join('\n');
     expect(raw).not.toContain('logging regression injected failure');
     expect(raw).not.toContain('reject-value');
     expect(raw).not.toContain('logging-new@example.test');
   } finally {
-    await db.prepare('DROP TRIGGER logging_fail_insert').run();
+    await database.prepare('DROP TRIGGER logging_fail_insert').run();
   }
 });
 
 test('the intake 413 path is logged with its final status and no body or token', async () => {
-  const created = await api('/v1/tokens', 'POST', { name: 'logging-intake-token' });
+  const created = await api('/v1/tokens', 'POST', {
+    name: 'logging-intake-token',
+  });
   expect(created.status).toBe(201);
   const tokenValue = (created.data as { id: string; token: string }).token;
 

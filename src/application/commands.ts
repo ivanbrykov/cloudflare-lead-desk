@@ -1,17 +1,18 @@
-import { Effect } from 'effect';
 import { DomainError, PersistenceError } from './errors';
 import {
   createActivity,
   createContact,
-  deleteContact,
-  createManualOpportunity,
   createFieldDefinition,
   createIntakeAtomically,
+  createManualOpportunity,
   createPipeline,
   createStage,
+  deleteContact,
+  type Env,
   getContact,
   getFieldDefinitions,
   getIntakeKey,
+  type IntakePersistenceOutcome,
   intakePipelineId,
   intakeStageId,
   isStageInActiveWorkspacePipeline,
@@ -19,18 +20,17 @@ import {
   outcomeForStoredIntakeKey,
   updateContact,
   updateOpportunity,
-  type Env,
-  type IntakePersistenceOutcome,
 } from '@/db/repository';
 import { validateCustomFields } from '@/domain/custom-fields';
 import { intakeRequestFingerprint } from '@/domain/intake';
-import type {
-  ContactInput,
-  CreateCustomField,
-  CreateOpportunityInput,
-  IntakeInput,
-  UpdateOpportunityInput,
+import {
+  type ContactInput,
+  type CreateCustomField,
+  type CreateOpportunityInput,
+  type IntakeInput,
+  type UpdateOpportunityInput,
 } from '@/domain/schemas';
+import { Effect } from 'effect';
 
 const persist = <A>(operation: () => Promise<A>) =>
   Effect.tryPromise({
@@ -39,7 +39,10 @@ const persist = <A>(operation: () => Promise<A>) =>
   });
 
 const validateContactIdentity = (input: ContactInput): void => {
-  if (input.email || input.firstName || input.lastName) return;
+  if (input.email || input.firstName || input.lastName) {
+    return;
+  }
+
   throw new DomainError({
     code: 'contact_identity_required',
     message: 'Enter a first name, last name, or email address.',
@@ -58,21 +61,20 @@ const validate = <A>(operation: () => A) =>
     try: operation,
   });
 
-export const createContactCommand = (
-  env: Env,
-  input: ContactInput,
-) =>
+export const createContactCommand = (environment: Env, input: ContactInput) =>
   Effect.gen(function* () {
     yield* validate(() => validateContactIdentity(input));
-    const definitions = yield* persist(() => getFieldDefinitions(env, 'contact'));
+    const definitions = yield* persist(() =>
+      getFieldDefinitions(environment, 'contact'),
+    );
     const fields = yield* validate(() =>
       validateCustomFields('contact', definitions, input.customFields),
     );
-    return yield* persist(() => createContact(env, input, fields));
+    return yield* persist(() => createContact(environment, input, fields));
   });
 
 export const updateContactCommand = (
-  env: Env,
+  environment: Env,
   contactId: string,
   input: ContactInput,
 ) =>
@@ -83,60 +85,87 @@ export const updateContactCommand = (
     // values. A required field therefore only fails when the contact has no
     // stored value to fall back on, so validation needs the existing values.
     const existing = editingCustomFields
-      ? yield* persist(() => getContact(env, contactId))
+      ? yield* persist(() => getContact(environment, contactId))
       : null;
-    const definitions = editingCustomFields && existing
-      ? yield* persist(() => getFieldDefinitions(env, 'contact'))
-      : [];
-    const fields = editingCustomFields && existing
-      ? yield* validate(() =>
-          validateCustomFields(
-            'contact',
-            definitions,
-            input.customFields,
-            'update',
-            new Set(Object.keys(existing.customFields)),
-          ),
-        )
-      : [];
-    return yield* persist(() => updateContact(env, contactId, input, fields));
+    const definitions =
+      editingCustomFields && existing
+        ? yield* persist(() => getFieldDefinitions(environment, 'contact'))
+        : [];
+    const fields =
+      editingCustomFields && existing
+        ? yield* validate(() =>
+            validateCustomFields(
+              'contact',
+              definitions,
+              input.customFields,
+              'update',
+              new Set(Object.keys(existing.customFields)),
+            ),
+          )
+        : [];
+    return yield* persist(() =>
+      updateContact(environment, contactId, input, fields),
+    );
   });
 
-export const deleteContactCommand = (env: Env, contactId: string) =>
-  persist(() => deleteContact(env, contactId));
+export const deleteContactCommand = (environment: Env, contactId: string) =>
+  persist(() => deleteContact(environment, contactId));
 
 export const createManualOpportunityCommand = (
-  env: Env,
+  environment: Env,
   input: CreateOpportunityInput,
   actorEmail: string,
 ) =>
   Effect.gen(function* () {
     if (Boolean(input.contact) === Boolean(input.contactId)) {
-      return yield* Effect.fail(new DomainError({
-        code: 'contact_required',
-        message: 'Select an existing contact or provide a new contact.',
-      }));
+      return yield* Effect.fail(
+        new DomainError({
+          code: 'contact_required',
+          message: 'Select an existing contact or provide a new contact.',
+        }),
+      );
     }
-    if (input.contact) yield* validate(() => validateContactIdentity(input.contact!));
+
+    if (input.contact) {
+      const contact = input.contact;
+      yield* validate(() => validateContactIdentity(contact));
+    }
+
     const contactDefinitions = input.contact
-      ? yield* persist(() => getFieldDefinitions(env, 'contact'))
+      ? yield* persist(() => getFieldDefinitions(environment, 'contact'))
       : [];
-    const opportunityDefinitions = yield* persist(() => getFieldDefinitions(env, 'opportunity'));
+    const opportunityDefinitions = yield* persist(() =>
+      getFieldDefinitions(environment, 'opportunity'),
+    );
     const contactFields = input.contact
       ? yield* validate(() =>
-          validateCustomFields('contact', contactDefinitions, input.contact?.customFields),
+          validateCustomFields(
+            'contact',
+            contactDefinitions,
+            input.contact?.customFields,
+          ),
         )
       : [];
     const opportunityFields = yield* validate(() =>
-      validateCustomFields('opportunity', opportunityDefinitions, input.customFields),
+      validateCustomFields(
+        'opportunity',
+        opportunityDefinitions,
+        input.customFields,
+      ),
     );
     return yield* persist(() =>
-      createManualOpportunity(env, input, contactFields, opportunityFields, actorEmail),
+      createManualOpportunity(
+        environment,
+        input,
+        contactFields,
+        opportunityFields,
+        actorEmail,
+      ),
     );
   });
 
 export const createIntakeCommand = (
-  env: Env,
+  environment: Env,
   input: IntakeInput,
   idempotencyKey: string,
 ) =>
@@ -151,13 +180,18 @@ export const createIntakeCommand = (
     // Replay/conflict/legacy checks run BEFORE current custom-field and
     // pipeline validation, so an accepted submission keeps replaying after
     // fields are archived or newly required and after pipelines are archived.
-    const stored = yield* persist(() => getIntakeKey(env, idempotencyKey));
+    const stored = yield* persist(() =>
+      getIntakeKey(environment, idempotencyKey),
+    );
     const storedOutcome = outcomeForStoredIntakeKey(stored, requestHash);
-    if (storedOutcome) return storedOutcome;
+    if (storedOutcome) {
+      return storedOutcome;
+    }
+
     // Mutable application rules apply to NEW submissions only.
     const routingValid = yield* persist(() =>
       isStageInActiveWorkspacePipeline(
-        env,
+        environment,
         intakePipelineId(input),
         intakeStageId(input),
       ),
@@ -171,14 +205,19 @@ export const createIntakeCommand = (
         }),
       );
     }
+
     const contactDefinitions = yield* persist(() =>
-      getFieldDefinitions(env, 'contact'),
+      getFieldDefinitions(environment, 'contact'),
     );
     const opportunityDefinitions = yield* persist(() =>
-      getFieldDefinitions(env, 'opportunity'),
+      getFieldDefinitions(environment, 'opportunity'),
     );
     const contactFields = yield* validate(() =>
-      validateCustomFields('contact', contactDefinitions, input.contact.customFields),
+      validateCustomFields(
+        'contact',
+        contactDefinitions,
+        input.contact.customFields,
+      ),
     );
     const opportunityFields = yield* validate(() =>
       validateCustomFields(
@@ -189,7 +228,7 @@ export const createIntakeCommand = (
     );
     return yield* persist((): Promise<IntakePersistenceOutcome> =>
       createIntakeAtomically(
-        env,
+        environment,
         input,
         contactFields,
         opportunityFields,
@@ -200,36 +239,42 @@ export const createIntakeCommand = (
   });
 
 export const createCustomFieldCommand = (
-  env: Env,
+  environment: Env,
   input: CreateCustomField,
-) => persist(() => createFieldDefinition(env, input));
+) => persist(() => createFieldDefinition(environment, input));
 
-export const createPipelineCommand = (env: Env, name: string) =>
-  persist(() => createPipeline(env, name));
+export const createPipelineCommand = (environment: Env, name: string) =>
+  persist(() => createPipeline(environment, name));
 
 export const createStageCommand = (
-  env: Env,
+  environment: Env,
   pipelineId: string,
   input: { color?: string; name: string; position?: number },
-) => persist(() => createStage(env, pipelineId, input));
+) => persist(() => createStage(environment, pipelineId, input));
 
 export const moveOpportunityCommand = (
-  env: Env,
+  environment: Env,
   opportunityId: string,
   stageId: string,
   actorEmail: string,
-) => persist(() => moveOpportunity(env, opportunityId, stageId, actorEmail));
+) =>
+  persist(() =>
+    moveOpportunity(environment, opportunityId, stageId, actorEmail),
+  );
 
 export const updateOpportunityCommand = (
-  env: Env,
+  environment: Env,
   opportunityId: string,
   input: UpdateOpportunityInput,
-) => persist(() => updateOpportunity(env, opportunityId, input));
+) => persist(() => updateOpportunity(environment, opportunityId, input));
 
 export const createActivityCommand = (
-  env: Env,
+  environment: Env,
   opportunityId: string,
   actorEmail: string,
   kind: string,
   body: string,
-) => persist(() => createActivity(env, opportunityId, actorEmail, kind, body));
+) =>
+  persist(() =>
+    createActivity(environment, opportunityId, actorEmail, kind, body),
+  );

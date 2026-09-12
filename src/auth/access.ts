@@ -1,5 +1,5 @@
+import { type Env } from '@/db/repository';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
-import type { Env } from '@/db/repository';
 
 export class UnauthorizedError extends Error {
   constructor(message = 'Authentication is required.') {
@@ -7,36 +7,51 @@ export class UnauthorizedError extends Error {
   }
 }
 
+const HTTPS_PREFIX = /^https:\/\//u;
+
 const jwtSetFor = (teamDomain: string) =>
   createRemoteJWKSet(
-    new URL(`https://${teamDomain.replace(/^https:\/\//, '')}/cdn-cgi/access/certs`),
+    new URL(
+      `https://${teamDomain.replace(HTTPS_PREFIX, '')}/cdn-cgi/access/certs`,
+    ),
   );
 
 export const requireAccessIdentity = async (
   request: Request,
-  env: Env,
+  environment: Env,
 ): Promise<string> => {
-  if (env.ENVIRONMENT !== 'production' && env.DEV_ADMIN_EMAIL) {
-    return env.DEV_ADMIN_EMAIL;
+  if (environment.ENVIRONMENT !== 'production' && environment.DEV_ADMIN_EMAIL) {
+    return environment.DEV_ADMIN_EMAIL;
   }
-  if (!env.ACCESS_AUD || !env.ACCESS_TEAM_DOMAIN) {
+
+  if (!environment.ACCESS_AUD || !environment.ACCESS_TEAM_DOMAIN) {
     throw new UnauthorizedError('Cloudflare Access is not configured.');
   }
+
   const assertion = request.headers.get('Cf-Access-Jwt-Assertion');
-  if (!assertion) throw new UnauthorizedError();
-  const teamDomain = env.ACCESS_TEAM_DOMAIN.replace(/^https:\/\//, '');
+  if (!assertion) {
+    throw new UnauthorizedError();
+  }
+
+  const teamDomain = environment.ACCESS_TEAM_DOMAIN.replace(HTTPS_PREFIX, '');
   const { payload } = await jwtVerify(assertion, jwtSetFor(teamDomain), {
-    audience: env.ACCESS_AUD,
+    audience: environment.ACCESS_AUD,
     issuer: `https://${teamDomain}`,
   });
   if (typeof payload.email !== 'string' || payload.email.length === 0) {
-    throw new UnauthorizedError('Cloudflare Access did not provide an email identity.');
+    throw new UnauthorizedError(
+      'Cloudflare Access did not provide an email identity.',
+    );
   }
+
   return payload.email;
 };
 
-export const bearerToken = (request: Request): string | null => {
+export const bearerToken = (request: Request): null | string => {
   const value = request.headers.get('Authorization');
-  if (!value?.startsWith('Bearer ')) return null;
+  if (!value?.startsWith('Bearer ')) {
+    return null;
+  }
+
   return value.slice('Bearer '.length).trim() || null;
 };

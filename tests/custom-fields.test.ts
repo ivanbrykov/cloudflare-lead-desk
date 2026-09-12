@@ -1,5 +1,5 @@
-import { describe, expect, test } from 'vitest';
 import { validateCustomFields } from '@/domain/custom-fields';
+import { describe, expect, test } from 'vitest';
 
 const cohortId = '00000000-0000-4000-8000-000000000010';
 const childrenId = '00000000-0000-4000-8000-000000000011';
@@ -30,14 +30,19 @@ const fields = [
 ];
 
 const setWrites = (entries: Record<string, unknown>) =>
-  Object.entries(entries).map(([key, value]) => ({
-    fieldId: fields.find((field) => field.key === key)?.id,
-    kind: 'set' as const,
-    valueBoolean: typeof value === 'boolean' ? Number(value) : null,
-    valueDate: null,
-    valueNumber: typeof value === 'number' ? value : null,
-    valueText: typeof value === 'string' ? value : null,
-  }));
+  fields
+    .filter((field) => entries[field.key] !== undefined)
+    .map((field) => {
+      const value = entries[field.key];
+      return {
+        fieldId: field.id,
+        kind: 'set' as const,
+        valueBoolean: typeof value === 'boolean' ? Number(value) : null,
+        valueDate: null,
+        valueNumber: typeof value === 'number' ? value : null,
+        valueText: typeof value === 'string' ? value : null,
+      };
+    });
 
 describe('dynamic custom field validation', () => {
   test('normalizes an active field value into a typed persistence write', () => {
@@ -46,7 +51,7 @@ describe('dynamic custom field validation', () => {
         children_count: 2,
         cohort: 'Fall',
       }),
-    ).toEqual(setWrites({ cohort: 'Fall', children_count: 2 }));
+    ).toEqual(setWrites({ children_count: 2, cohort: 'Fall' }));
   });
 
   test('normalizes boolean false as a real value, not a missing one', () => {
@@ -70,28 +75,37 @@ describe('dynamic custom field validation', () => {
   });
 
   test('rejects unknown, missing, and invalid fields', () => {
-    expect(() => validateCustomFields('opportunity', fields, { cohort: 'Summer' })).toThrow(
-      'Invalid value',
-    );
-    expect(() => validateCustomFields('opportunity', fields, { children_count: 2 })).toThrow(
-      'required',
-    );
-    expect(() => validateCustomFields('opportunity', fields, { cohort: 'Fall', unknown: true })).toThrow(
-      'not an active',
-    );
+    expect(() =>
+      validateCustomFields('opportunity', fields, { cohort: 'Summer' }),
+    ).toThrow('Invalid value');
+    expect(() =>
+      validateCustomFields('opportunity', fields, { children_count: 2 }),
+    ).toThrow('required');
+    expect(() =>
+      validateCustomFields('opportunity', fields, {
+        cohort: 'Fall',
+        unknown: true,
+      }),
+    ).toThrow('not an active');
   });
 });
 
 describe('create mode rejects null for required fields', () => {
   test('null on a required field is rejected on creation', () => {
     expect(() =>
-      validateCustomFields('contact', fields, { cohort: null, children_count: 1 }),
+      validateCustomFields('contact', fields, {
+        children_count: 1,
+        cohort: null,
+      }),
     ).toThrow('required and cannot be cleared');
   });
 
   test('null on an optional field is omitted, not persisted', () => {
     expect(
-      validateCustomFields('contact', fields, { cohort: 'Fall', children_count: null }),
+      validateCustomFields('contact', fields, {
+        children_count: null,
+        cohort: 'Fall',
+      }),
     ).toEqual(setWrites({ cohort: 'Fall' }));
   });
 });
@@ -102,7 +116,7 @@ describe('update mode is PATCH-like', () => {
       validateCustomFields(
         'contact',
         fields,
-        { cohort: 'Fall', children_count: null },
+        { children_count: null, cohort: 'Fall' },
         'update',
       ),
     ).toEqual([
