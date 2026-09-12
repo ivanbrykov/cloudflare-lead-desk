@@ -1,10 +1,10 @@
-import { env } from 'cloudflare:workers';
 import { createApp } from './api/app';
 import { logRequest, markRequestStart } from './api/logging';
-import type { Env } from './db/repository';
+import { type Env as Environment } from './db/repository';
+import { env } from 'cloudflare:workers';
 
-const workerEnv = env as unknown as Env;
-const app = createApp(workerEnv).compile();
+const workerEnvironment = env as unknown as Environment;
+const app = createApp(workerEnvironment).compile();
 const API_PATHS = ['/v1/', '/openapi', '/health'];
 
 export default {
@@ -13,7 +13,9 @@ export default {
     // route's get-stream-backed parse hook, so the entry forwards requests
     // untouched and performs no route matching of its own.
     const pathname = new URL(request.url).pathname;
-    if (API_PATHS.some((path) => pathname === path || pathname.startsWith(path))) {
+    if (
+      API_PATHS.some((path) => pathname === path || pathname.startsWith(path))
+    ) {
       // One structured JSON line per API request, emitted before the
       // response is returned so it survives isolate suspension. See
       // src/api/logging.ts for the fields and the privacy rules.
@@ -23,14 +25,19 @@ export default {
         response = await app.handle(request);
       } catch (error) {
         logRequest(request, 500, {
-          errorClass: error instanceof Error ? error.name || error.constructor.name : typeof error,
+          errorClass:
+            error instanceof Error
+              ? error.name || error.constructor.name
+              : typeof error,
           errorMessage: error instanceof Error ? error.message : String(error),
         });
         throw error;
       }
+
       logRequest(request, response.status);
       return response;
     }
-    return workerEnv.ASSETS.fetch(request);
+
+    return workerEnvironment.ASSETS.fetch(request);
   },
 };

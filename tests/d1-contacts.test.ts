@@ -1,6 +1,6 @@
 import { build } from 'esbuild';
-import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
-import { readFile, readdir } from 'node:fs/promises';
+import { convertV4MiniflareOptions, Miniflare } from 'miniflare';
+import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, beforeAll, beforeEach, expect, test } from 'vitest';
 
@@ -25,45 +25,48 @@ const assertRepoRoot = async () => {
   }
 };
 
-interface Contact {
+type Contact = {
   createdAt: string;
   customFields: Record<string, unknown>;
-  email: string | null;
-  firstName: string | null;
+  email: null | string;
+  firstName: null | string;
   id: string;
-  lastName: string | null;
-}
+  lastName: null | string;
+};
 
-interface ContactRecord {
+type ContactRecord = {
   createdAt: string;
-  email: string | null;
-  firstName: string | null;
+  email: null | string;
+  firstName: null | string;
   id: string;
-  lastName: string | null;
-}
+  lastName: null | string;
+};
 
-interface Opportunity {
+type Opportunity = {
   contact: ContactRecord;
   customFields: Record<string, unknown>;
   id: string;
   name: string;
-}
+};
 
 let workerScript: string;
 let miniflare: Miniflare;
-let db: D1Database;
+let database: D1Database;
 
 const api = async (
   path: string,
   method = 'GET',
   body?: unknown,
   headers: Record<string, string> = {},
-): Promise<{ status: number } & Record<string, unknown>> => {
-  const response = await miniflare.dispatchFetch('https://lead-desk.test' + path, {
-    method,
-    headers: { 'Content-Type': 'application/json', ...headers },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-  });
+): Promise<Record<string, unknown> & { status: number }> => {
+  const response = await miniflare.dispatchFetch(
+    'https://lead-desk.test' + path,
+    {
+      headers: { 'Content-Type': 'application/json', ...headers },
+      method,
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    },
+  );
   const raw = await response.text();
   let json: Record<string, unknown> = {};
   try {
@@ -71,6 +74,7 @@ const api = async (
   } catch {
     json = { raw: raw.slice(0, 200) };
   }
+
   return { status: response.status, ...json };
 };
 
@@ -99,10 +103,14 @@ const createField = async (key: string, type = 'text', required = false) =>
   });
 
 const createContact = (email: string, customFields?: Record<string, unknown>) =>
-  ok<Contact>('/v1/contacts', 'POST', { email, firstName: 'Before', customFields });
+  ok<Contact>('/v1/contacts', 'POST', {
+    customFields,
+    email,
+    firstName: 'Before',
+  });
 
 const valueRow = (fieldKey: string, entityId: string) =>
-  db
+  database
     .prepare(
       `SELECT v.value_text, v.value_number, v.value_boolean
        FROM custom_field_values v
@@ -143,16 +151,20 @@ beforeEach(async () => {
       script: workerScript,
     }),
   );
-  db = await miniflare.getD1Database('DB');
+  database = await miniflare.getD1Database('DB');
   const names = (await readdir(join(repoRoot, 'drizzle')))
     .filter((name) => name.endsWith('.sql'))
-    .sort();
+    .toSorted();
   for (const name of names) {
     const sql = await readFile(join(repoRoot, 'drizzle', name), 'utf8');
-    for (const statement of sql.split('--> statement-breakpoint').map((s) => s.trim()).filter(Boolean)) {
-      await db.prepare(statement).run();
+    for (const statement of sql
+      .split('--> statement-breakpoint')
+      .map((chunk) => chunk.trim())
+      .filter(Boolean)) {
+      await database.prepare(statement).run();
     }
   }
+
   await createField('active_bool', 'boolean');
   await createField('optional_text');
   await createField('optional_num', 'number');
@@ -194,18 +206,28 @@ test('explicit null clears optional values; omission preserves them', async () =
     optional_text: 'keep',
   });
   await ok('/v1/contacts/' + contact.id, 'PUT', {
-    customFields: { optional_date: null, optional_num: null, optional_select: null },
+    customFields: {
+      optional_date: null,
+      optional_num: null,
+      optional_select: null,
+    },
     email: contact.email,
     firstName: 'After',
   });
   let read = await ok<Contact>('/v1/contacts/' + contact.id);
   expect(read.customFields).toEqual({ optional_text: 'keep' });
   for (const key of ['optional_num', 'optional_date', 'optional_select']) {
-    expect(await valueRow(key, contact.id), `${key} row should be deleted`).toBeNull();
+    expect(
+      await valueRow(key, contact.id),
+      `${key} row should be deleted`,
+    ).toBeNull();
   }
 
   // Omitting the whole object preserves everything.
-  await ok('/v1/contacts/' + contact.id, 'PUT', { email: contact.email, firstName: 'Again' });
+  await ok('/v1/contacts/' + contact.id, 'PUT', {
+    email: contact.email,
+    firstName: 'Again',
+  });
   read = await ok<Contact>('/v1/contacts/' + contact.id);
   expect(read.customFields).toEqual({ optional_text: 'keep' });
 
@@ -249,7 +271,7 @@ test('archived values stay in storage, leave edit payloads, and do not block edi
 });
 
 test('an injected field write failure rolls back the whole create', async () => {
-  await db
+  await database
     .prepare(
       "CREATE TRIGGER regression_fail_insert BEFORE INSERT ON custom_field_values WHEN NEW.value_text = 'reject-value' BEGIN SELECT RAISE(ABORT, 'regression injected failure'); END",
     )
@@ -261,7 +283,7 @@ test('an injected field write failure rolls back the whole create', async () => 
       firstName: 'New',
     });
     expect(made.status).toBe(500);
-    const contact = await db
+    const contact = await database
       .prepare('SELECT id FROM contacts WHERE normalized_email = ?')
       .bind('atomic-new@example.test')
       .first();
@@ -269,7 +291,7 @@ test('an injected field write failure rolls back the whole create', async () => 
     const value = await valueRow('optional_text', 'atomic-new@example.test');
     expect(value).toBeNull();
   } finally {
-    await db.prepare('DROP TRIGGER regression_fail_insert').run();
+    await database.prepare('DROP TRIGGER regression_fail_insert').run();
   }
 });
 
@@ -277,11 +299,11 @@ test('an injected field write failure leaves an existing contact untouched', asy
   const contact = await createContact('atomic-existing@example.test', {
     optional_text: 'original',
   });
-  const before = await db
+  const before = await database
     .prepare('SELECT * FROM contacts WHERE id = ?')
     .bind(contact.id)
     .first();
-  await db
+  await database
     .prepare(
       "CREATE TRIGGER regression_fail_update BEFORE UPDATE ON custom_field_values WHEN NEW.value_text = 'reject-value' BEGIN SELECT RAISE(ABORT, 'regression injected failure'); END",
     )
@@ -293,7 +315,7 @@ test('an injected field write failure leaves an existing contact untouched', asy
       firstName: 'Must rollback',
     });
     expect(changed.status).toBe(500);
-    const after = await db
+    const after = await database
       .prepare('SELECT * FROM contacts WHERE id = ?')
       .bind(contact.id)
       .first();
@@ -301,7 +323,7 @@ test('an injected field write failure leaves an existing contact untouched', asy
     const read = await ok<Contact>('/v1/contacts/' + contact.id);
     expect(read.customFields).toEqual({ optional_text: 'original' });
   } finally {
-    await db.prepare('DROP TRIGGER regression_fail_update').run();
+    await database.prepare('DROP TRIGGER regression_fail_update').run();
   }
 });
 
@@ -333,7 +355,10 @@ test('required fields reject null and cannot be bypassed on edit', async () => {
     customFields: { optional_text: 'other', required_text: 'now' },
     email: missing.email,
   });
-  expect(filled.customFields).toEqual({ optional_text: 'other', required_text: 'now' });
+  expect(filled.customFields).toEqual({
+    optional_text: 'other',
+    required_text: 'now',
+  });
 
   const contact = await createContact('required@example.test', {
     optional_text: 'before',
@@ -351,7 +376,10 @@ test('required fields reject null and cannot be bypassed on edit', async () => {
     email: contact.email,
   });
   const read = await ok<Contact>('/v1/contacts/' + contact.id);
-  expect(read.customFields).toEqual({ optional_text: 'after', required_text: 'required' });
+  expect(read.customFields).toEqual({
+    optional_text: 'after',
+    required_text: 'required',
+  });
 
   const unknown = await api('/v1/contacts/' + contact.id, 'PUT', {
     customFields: { unknown_key: 'bad' },
@@ -362,14 +390,19 @@ test('required fields reject null and cannot be bypassed on edit', async () => {
 
 test('intake rejects null for required fields and omits blank optional fields', async () => {
   await createField('required_text', 'text', true);
-  const token = await ok<{ token: string }>('/v1/tokens', 'POST', { name: 'regression-intake' });
+  const token = await ok<{ token: string }>('/v1/tokens', 'POST', {
+    name: 'regression-intake',
+  });
   const headers = { Authorization: `Bearer ${token.token}` };
 
   const bad = await api(
     '/v1/intakes',
     'POST',
     {
-      contact: { customFields: { required_text: null }, email: 'intake-required@example.test' },
+      contact: {
+        customFields: { required_text: null },
+        email: 'intake-required@example.test',
+      },
       opportunity: { name: 'Intake inquiry', source: 'calculator' },
       source: 'website_form',
     },
@@ -392,7 +425,7 @@ test('intake rejects null for required fields and omits blank optional fields', 
   );
   expect(good.status).toBe(201);
 
-  const contact = await db
+  const contact = await database
     .prepare('SELECT id FROM contacts WHERE normalized_email = ?')
     .bind('intake-optional@example.test')
     .first();

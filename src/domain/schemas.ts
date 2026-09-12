@@ -6,14 +6,12 @@ const NonEmptyString = Schema.String.pipe(
 );
 
 export const EmailSchema = NonEmptyString.pipe(
-  Schema.pattern(/^[^\s@]+@[^\s@]+\.[^\s@]+$/),
+  Schema.pattern(/^[^\s@]+@[^\s@][^\s.@]*\.[^\s@]+$/u),
 ).annotations({ description: 'A valid email address.' });
 
 export const RecordIdSchema = Schema.String.pipe(
-  Schema.pattern(/[0-7][0-9A-HJKMNPQRSTVWXYZ]{25}/),
-  Schema.filter((value) => value.length === 26, {
-    message: () => "must be a 26-character ULID",
-  }),
+  Schema.pattern(/[0-7][\dA-HJKMNP-TV-Z]{25}/u),
+  Schema.filter((value) => value.length === 26),
 ).annotations({ description: 'A ULID record identifier.' });
 
 export const FieldEntitySchema = Schema.Literal('contact', 'opportunity');
@@ -37,14 +35,15 @@ export type CustomFieldValues = Schema.Schema.Type<
 >;
 
 export const ContactInputSchema = Schema.Struct({
+  customFields: Schema.optional(CustomFieldValuesSchema),
   email: Schema.optional(EmailSchema),
   firstName: Schema.optional(NonEmptyString),
   lastName: Schema.optional(NonEmptyString),
-  customFields: Schema.optional(CustomFieldValuesSchema),
 });
 export type ContactInput = Schema.Schema.Type<typeof ContactInputSchema>;
 
 export const OpportunityInputSchema = Schema.Struct({
+  customFields: Schema.optional(CustomFieldValuesSchema),
   estimatedValue: Schema.optional(
     Schema.Number.pipe(Schema.finite(), Schema.nonNegative()),
   ),
@@ -52,7 +51,6 @@ export const OpportunityInputSchema = Schema.Struct({
   pipelineId: Schema.optional(RecordIdSchema),
   source: Schema.optional(NonEmptyString),
   stageId: Schema.optional(RecordIdSchema),
-  customFields: Schema.optional(CustomFieldValuesSchema),
 });
 export type OpportunityInput = Schema.Schema.Type<
   typeof OpportunityInputSchema
@@ -61,6 +59,7 @@ export type OpportunityInput = Schema.Schema.Type<
 export const CreateOpportunitySchema = Schema.Struct({
   contact: Schema.optional(ContactInputSchema),
   contactId: Schema.optional(RecordIdSchema),
+  customFields: Schema.optional(CustomFieldValuesSchema),
   estimatedValue: Schema.optional(
     Schema.Number.pipe(Schema.finite(), Schema.nonNegative()),
   ),
@@ -68,7 +67,6 @@ export const CreateOpportunitySchema = Schema.Struct({
   pipelineId: Schema.optional(RecordIdSchema),
   source: Schema.optional(NonEmptyString),
   stageId: Schema.optional(RecordIdSchema),
-  customFields: Schema.optional(CustomFieldValuesSchema),
 });
 export type CreateOpportunityInput = Schema.Schema.Type<
   typeof CreateOpportunitySchema
@@ -117,10 +115,6 @@ export const UpdateOpportunitySchema = Schema.Struct({
 }).pipe(
   Schema.filter(
     (value) => value.name !== undefined || value.estimatedValue !== undefined,
-    {
-      message: () =>
-        'Provide at least one field to update: name or estimatedValue.',
-    },
   ),
 );
 export type UpdateOpportunityInput = Schema.Schema.Type<
@@ -134,7 +128,7 @@ export const CreateActivitySchema = Schema.Struct({
 
 export const CreateCustomFieldSchema = Schema.Struct({
   entityType: FieldEntitySchema,
-  key: NonEmptyString.pipe(Schema.pattern(/^[a-z][a-z0-9_]*$/)),
+  key: NonEmptyString.pipe(Schema.pattern(/^[a-z][\d_a-z]*$/u)),
   label: NonEmptyString,
   options: Schema.optional(Schema.Array(NonEmptyString)),
   required: Schema.optional(Schema.Boolean),
@@ -164,4 +158,5 @@ export const ApiErrorSchema = Schema.Struct({
 
 export type ApiError = Schema.Schema.Type<typeof ApiErrorSchema>;
 
-export const normalizeEmail = (email: string): string => email.trim().toLowerCase();
+export const normalizeEmail = (email: string): string =>
+  email.trim().toLowerCase();

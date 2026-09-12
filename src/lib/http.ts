@@ -1,5 +1,5 @@
+import { type createApp } from '@/api/app';
 import { treaty } from '@elysia/eden';
-import type { createApp } from '@/api/app';
 
 type App = ReturnType<typeof createApp>;
 
@@ -30,10 +30,19 @@ export const request = async <T>(
       ...init.headers,
     },
   });
-  if (response.status === 204) return undefined as T;
-  const payload = (await response.json()) as ApiEnvelope<T> & { message?: string };
-  if (!response.ok) {
-    throw new ApiClientError(response.status, payload.message ?? 'Request failed.');
+  if (response.status === 204) {
+    return undefined as T;
   }
+
+  const payload = (await response.json()) as ApiEnvelope<T> & {
+    message?: string;
+  };
+  if (!response.ok) {
+    throw new ApiClientError(
+      response.status,
+      payload.message ?? 'Request failed.',
+    );
+  }
+
   return payload.data;
 };

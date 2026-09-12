@@ -1,6 +1,6 @@
 import { build } from 'esbuild';
-import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
-import { readFile, readdir } from 'node:fs/promises';
+import { convertV4MiniflareOptions, Miniflare } from 'miniflare';
+import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, beforeAll, beforeEach, expect, test } from 'vitest';
 
@@ -36,47 +36,50 @@ const DEFAULT_WORKSPACE_ID = '01ARZ3NDEKTSV4RRFFQ69G5FAV';
 const DEFAULT_PIPELINE_ID = '01ARZ3NDEKTSV4RRFFQ69G5FAW';
 const DEFAULT_STAGE_ID = '01ARZ3NDEKTSV4RRFFQ69G5FAX';
 
-interface ContactItem {
+type ContactItem = {
   createdAt: string;
   customFields: Record<string, unknown>;
   data: { id: string };
-  email: string | null;
-  firstName: string | null;
+  email: null | string;
+  firstName: null | string;
   id: string;
-  lastName: string | null;
-}
+  lastName: null | string;
+};
 
-interface ListBody {
+type ListBody = {
   data: ContactItem[];
-  nextCursor: string | null;
-}
+  nextCursor: null | string;
+};
 
-interface OpportunityItem {
+type OpportunityItem = {
   customFields: Record<string, unknown>;
   id: string;
   name: string;
   pipelineId: string;
-}
+};
 
-interface OpportunityListBody {
+type OpportunityListBody = {
   data: OpportunityItem[];
-}
+};
 
 let workerScript: string;
 let miniflare: Miniflare;
-let db: D1Database;
+let database: D1Database;
 
 const api = async (
   path: string,
   method = 'GET',
   body?: unknown,
   headers: Record<string, string> = {},
-): Promise<{ status: number } & Record<string, unknown>> => {
-  const response = await miniflare.dispatchFetch('https://lead-desk.test' + path, {
-    method,
-    headers: { 'Content-Type': 'application/json', ...headers },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-  });
+): Promise<Record<string, unknown> & { status: number }> => {
+  const response = await miniflare.dispatchFetch(
+    'https://lead-desk.test' + path,
+    {
+      headers: { 'Content-Type': 'application/json', ...headers },
+      method,
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    },
+  );
   const raw = await response.text();
   let json: Record<string, unknown> = {};
   try {
@@ -84,6 +87,7 @@ const api = async (
   } catch {
     json = { raw: raw.slice(0, 200) };
   }
+
   return { status: response.status, ...json };
 };
 
@@ -103,50 +107,69 @@ const ok = async <T>(
 
 const pad = (value: number) => String(value).padStart(24, '0');
 const ts = (offsetSeconds: number) =>
-  new Date(Date.UTC(2026, 0, 1, 0, 0, offsetSeconds)).toISOString();
+  new Date(Date.UTC(2_026, 0, 1, 0, 0, offsetSeconds)).toISOString();
 
-/** Inserts contacts directly (fast) with unique created_at values in i order. */
-const seedContacts = async (count: number, prefix: string): Promise<string[]> => {
+/**
+ * Inserts contacts directly (fast) with unique created_at values in i order.
+ */
+const seedContacts = async (
+  count: number,
+  prefix: string,
+): Promise<string[]> => {
   const ids: string[] = [];
   const stmts = [];
-  for (let i = 0; i < count; i += 1) {
-    const contactId = prefix + pad(i);
+  for (let index = 0; index < count; index += 1) {
+    const contactId = prefix + pad(index);
     ids.push(contactId);
     stmts.push(
-      db
+      database
         .prepare(
           'INSERT INTO contacts (id,workspace_id,first_name,last_name,email,created_at,updated_at) VALUES (?,?,?,?,?,?,?)',
         )
         .bind(
           contactId,
           DEFAULT_WORKSPACE_ID,
-          'Name' + i,
-          'Family' + i,
-          prefix + i + '@example.test',
-          ts(i),
-          ts(i),
+          'Name' + index,
+          'Family' + index,
+          prefix + index + '@example.test',
+          ts(index),
+          ts(index),
         ),
     );
   }
-  for (let i = 0; i < stmts.length; i += 50) await db.batch(stmts.slice(i, i + 50));
+
+  for (let index = 0; index < stmts.length; index += 50) {
+    await database.batch(stmts.slice(index, index + 50));
+  }
+
   return ids;
 };
 
-/** Inserts opportunities (and their contacts) directly for bulk reads. */
+/**
+ * Inserts opportunities (and their contacts) directly for bulk reads.
+ */
 const seedOpportunities = async (count: number): Promise<string[]> => {
   const ids: string[] = [];
   const stmts = [];
-  for (let i = 0; i < count; i += 1) {
-    const contactId = 'oc' + pad(i);
-    const opportunityId = 'op' + pad(i);
+  for (let index = 0; index < count; index += 1) {
+    const contactId = 'oc' + pad(index);
+    const opportunityId = 'op' + pad(index);
     ids.push(opportunityId);
     stmts.push(
-      db
+      database
         .prepare(
           'INSERT INTO contacts (id,workspace_id,first_name,last_name,email,created_at,updated_at) VALUES (?,?,?,?,?,?,?)',
         )
-        .bind(contactId, DEFAULT_WORKSPACE_ID, 'Owner' + i, 'F' + i, 'o' + i + '@example.test', ts(i), ts(i)),
-      db
+        .bind(
+          contactId,
+          DEFAULT_WORKSPACE_ID,
+          'Owner' + index,
+          'F' + index,
+          'o' + index + '@example.test',
+          ts(index),
+          ts(index),
+        ),
+      database
         .prepare(
           'INSERT INTO opportunities (id,workspace_id,primary_contact_id,pipeline_id,stage_id,name,source,estimated_value,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)',
         )
@@ -156,26 +179,32 @@ const seedOpportunities = async (count: number): Promise<string[]> => {
           contactId,
           DEFAULT_PIPELINE_ID,
           DEFAULT_STAGE_ID,
-          'Opp ' + i,
+          'Opp ' + index,
           'manual',
           null,
-          ts(i),
-          ts(i),
+          ts(index),
+          ts(index),
         ),
     );
   }
-  for (let i = 0; i < stmts.length; i += 50) await db.batch(stmts.slice(i, i + 50));
+
+  for (let index = 0; index < stmts.length; index += 50) {
+    await database.batch(stmts.slice(index, index + 50));
+  }
+
   return ids;
 };
 
-/** Inserts one custom-field value per entity id, with the value derived from the id. */
+/**
+ * Inserts one custom-field value per entity id, with the value derived from the id.
+ */
 const seedValues = async (
   entityType: 'contact' | 'opportunity',
   fieldId: string,
   entityIds: string[],
 ) => {
   const stmts = entityIds.map((entityId) =>
-    db
+    database
       .prepare(
         'INSERT INTO custom_field_values (id,workspace_id,entity_type,entity_id,field_definition_id,value_text,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)',
       )
@@ -190,7 +219,9 @@ const seedValues = async (
         ts(0),
       ),
   );
-  for (let i = 0; i < stmts.length; i += 50) await db.batch(stmts.slice(i, i + 50));
+  for (let index = 0; index < stmts.length; index += 50) {
+    await database.batch(stmts.slice(index, index + 50));
+  }
 };
 
 const b64url = (value: string) => Buffer.from(value).toString('base64url');
@@ -226,14 +257,17 @@ beforeEach(async () => {
       script: workerScript,
     }),
   );
-  db = await miniflare.getD1Database('DB');
+  database = await miniflare.getD1Database('DB');
   const names = (await readdir(join(repoRoot, 'drizzle')))
     .filter((name) => name.endsWith('.sql'))
-    .sort();
+    .toSorted();
   for (const name of names) {
     const sql = await readFile(join(repoRoot, 'drizzle', name), 'utf8');
-    for (const statement of sql.split('--> statement-breakpoint').map((s) => s.trim()).filter(Boolean)) {
-      await db.prepare(statement).run();
+    for (const statement of sql
+      .split('--> statement-breakpoint')
+      .map((chunk) => chunk.trim())
+      .filter(Boolean)) {
+      await database.prepare(statement).run();
     }
   }
 }, 60_000);
@@ -246,12 +280,15 @@ test('keyset pagination walks every contact exactly once', async () => {
   await seedContacts(120, 'c');
 
   const seen: string[] = [];
-  let cursor: string | null = null;
+  let cursor: null | string = null;
   let pages = 0;
-  let previous: { createdAt: string; id: string } | null = null;
+  let previous: null | { createdAt: string; id: string } = null;
   do {
-    const qs = '?limit=50' + (cursor ? '&cursor=' + encodeURIComponent(cursor) : '');
-    const body = (await api('/v1/contacts' + qs)) as unknown as { status: number } & ListBody;
+    const qs =
+      '?limit=50' + (cursor ? '&cursor=' + encodeURIComponent(cursor) : '');
+    const body = (await api('/v1/contacts' + qs)) as unknown as ListBody & {
+      status: number;
+    };
     expect(body.status).toBe(200);
     expect(Array.isArray(body.data)).toBe(true);
     expect(body.data.length).toBeGreaterThan(0);
@@ -265,8 +302,10 @@ test('keyset pagination walks every contact exactly once', async () => {
           (item.createdAt === previous.createdAt && item.id < previous.id);
         expect(ordered, `${item.id} vs ${previous.id}`).toBe(true);
       }
+
       previous = { createdAt: item.createdAt, id: item.id };
     }
+
     seen.push(...body.data.map((item) => item.id));
     cursor = body.nextCursor;
     pages += 1;
@@ -274,9 +313,13 @@ test('keyset pagination walks every contact exactly once', async () => {
 
   expect(pages, '120 contacts at limit 50 must take 3 pages').toBe(3);
   expect(seen.length).toBe(120);
-  expect(new Set(seen).size, 'duplicate or missing rows across pages').toBe(120);
+  expect(new Set(seen).size, 'duplicate or missing rows across pages').toBe(
+    120,
+  );
 
-  const first = (await api('/v1/contacts')) as unknown as { status: number } & ListBody;
+  const first = (await api('/v1/contacts')) as unknown as ListBody & {
+    status: number;
+  };
   expect(first.status).toBe(200);
   expect(first.data.length, 'default limit must be 50').toBe(50);
   expect(typeof first.nextCursor).toBe('string');
@@ -312,7 +355,9 @@ test('pagination parameters are validated', async () => {
     b64url('not json at all'),
     b64url('["zeta"]'),
     b64url('{"v":1}'),
-    b64url('{"v":2,"c":"2026-01-01T00:00:00.000Z","i":"c000000000000000000000000000"}'),
+    b64url(
+      '{"v":2,"c":"2026-01-01T00:00:00.000Z","i":"c000000000000000000000000000"}',
+    ),
     b64url('{"v":1,"c":"yesterday","i":"c000000000000000000000000000"}'),
     b64url('{"v":1,"c":"2026-01-01T00:00:00.000Z","i":""}'),
   ];
@@ -328,7 +373,7 @@ test('search composes with pagination', async () => {
   await seedContacts(30, 'other');
 
   const seen: string[] = [];
-  let cursor: string | null = null;
+  let cursor: null | string = null;
   let pages = 0;
   do {
     const qs =
@@ -336,7 +381,9 @@ test('search composes with pagination', async () => {
       encodeURIComponent('match') +
       '&limit=40' +
       (cursor ? '&cursor=' + encodeURIComponent(cursor) : '');
-    const body = (await api('/v1/contacts' + qs)) as unknown as { status: number } & ListBody;
+    const body = (await api('/v1/contacts' + qs)) as unknown as ListBody & {
+      status: number;
+    };
     expect(body.status).toBe(200);
     expect(body.data.length).toBeGreaterThan(0);
     expect(body.data.length).toBeLessThanOrEqual(40);
@@ -356,20 +403,32 @@ test('search composes with pagination', async () => {
 });
 
 test('search keeps literal substring semantics', async () => {
-  await ok('/v1/contacts', 'POST', { email: 'uno@example.test', firstName: 'Quartz' });
-  await ok('/v1/contacts', 'POST', { email: 'dos@example.test', firstName: 'Quartzite' });
-  await ok('/v1/contacts', 'POST', { email: 'tres@example.test', firstName: 'Beryl' });
+  await ok('/v1/contacts', 'POST', {
+    email: 'uno@example.test',
+    firstName: 'Quartz',
+  });
+  await ok('/v1/contacts', 'POST', {
+    email: 'dos@example.test',
+    firstName: 'Quartzite',
+  });
+  await ok('/v1/contacts', 'POST', {
+    email: 'tres@example.test',
+    firstName: 'Beryl',
+  });
 
   const sub = (await api(
     '/v1/contacts?query=' + encodeURIComponent('Quartz'),
-  )) as unknown as { status: number } & ListBody;
+  )) as unknown as ListBody & { status: number };
   expect(sub.status).toBe(200);
-  expect(sub.data.map((item) => item.firstName).sort()).toEqual(['Quartz', 'Quartzite']);
+  expect(sub.data.map((item) => item.firstName).toSorted()).toEqual([
+    'Quartz',
+    'Quartzite',
+  ]);
 
   // Literal characters stay literal: an unescaped '%' would match 'Quartz'.
   const literal = (await api(
     '/v1/contacts?query=' + encodeURIComponent('Q%a'),
-  )) as unknown as { status: number } & ListBody;
+  )) as unknown as ListBody & { status: number };
   expect(literal.status).toBe(200);
   expect(literal.data).toEqual([]);
 
@@ -377,7 +436,7 @@ test('search keeps literal substring semantics', async () => {
   // contact has 'Quartz@example.test' as a substring of name or email.
   const emailOnly = (await api(
     '/v1/contacts?query=Quartz%40example.test',
-  )) as unknown as { status: number } & ListBody;
+  )) as unknown as ListBody & { status: number };
   expect(emailOnly.status).toBe(200);
   expect(emailOnly.data).toEqual([]);
 });
@@ -385,42 +444,67 @@ test('search keeps literal substring semantics', async () => {
 test('equal createdAt ties order by id DESC and keep paging across ties', async () => {
   const fixed = ts(0);
   for (const name of ['beta', 'alpha', 'delta', 'gamma', 'zeta']) {
-    await db
+    await database
       .prepare(
         'INSERT INTO contacts (id,workspace_id,first_name,last_name,email,created_at,updated_at) VALUES (?,?,?,?,?,?,?)',
       )
-      .bind(name, DEFAULT_WORKSPACE_ID, 'Tie', 'Name', name + '@example.test', fixed, fixed)
+      .bind(
+        name,
+        DEFAULT_WORKSPACE_ID,
+        'Tie',
+        'Name',
+        name + '@example.test',
+        fixed,
+        fixed,
+      )
       .run();
   }
 
   const all = (await api('/v1/contacts?limit=100')) as unknown as ListBody;
-  expect(all.data.map((item) => item.id)).toEqual(['zeta', 'gamma', 'delta', 'beta', 'alpha']);
+  expect(all.data.map((item) => item.id)).toEqual([
+    'zeta',
+    'gamma',
+    'delta',
+    'beta',
+    'alpha',
+  ]);
   expect(all.nextCursor).toBeNull();
 
   const page1 = (await api('/v1/contacts?limit=2')) as unknown as ListBody;
   expect(page1.data.map((item) => item.id)).toEqual(['zeta', 'gamma']);
   expect(typeof page1.nextCursor).toBe('string');
+  const page1Cursor = page1.nextCursor as string;
   const page2 = (await api(
-    '/v1/contacts?limit=2&cursor=' + encodeURIComponent(page1.nextCursor!),
+    '/v1/contacts?limit=2&cursor=' + encodeURIComponent(page1Cursor),
   )) as unknown as ListBody;
   expect(page2.data.map((item) => item.id)).toEqual(['delta', 'beta']);
   expect(typeof page2.nextCursor).toBe('string');
+  const page2Cursor = page2.nextCursor as string;
   const page3 = (await api(
-    '/v1/contacts?limit=2&cursor=' + encodeURIComponent(page2.nextCursor!),
+    '/v1/contacts?limit=2&cursor=' + encodeURIComponent(page2Cursor),
   )) as unknown as ListBody;
   expect(page3.data.map((item) => item.id)).toEqual(['alpha']);
   expect(page3.nextCursor).toBeNull();
 });
 
 test('opportunities filter by pipeline and reject unknown or archived pipelines', async () => {
-  const other = await ok<{ id: string }>('/v1/pipelines', 'POST', { name: 'Second' });
-  const stage = await ok<{ id: string }>('/v1/pipelines/' + other.id + '/stages', 'POST', {
-    name: 'Stage A',
+  const other = await ok<{ id: string }>('/v1/pipelines', 'POST', {
+    name: 'Second',
   });
+  const stage = await ok<{ id: string }>(
+    '/v1/pipelines/' + other.id + '/stages',
+    'POST',
+    {
+      name: 'Stage A',
+    },
+  );
   const contact = await ok<{ id: string }>('/v1/contacts', 'POST', {
     email: 'pipeline@example.test',
   });
-  await ok('/v1/opportunities', 'POST', { contactId: contact.id, name: 'Default deal' });
+  await ok('/v1/opportunities', 'POST', {
+    contactId: contact.id,
+    name: 'Default deal',
+  });
   await ok('/v1/opportunities', 'POST', {
     contactId: contact.id,
     name: 'Second deal',
@@ -428,7 +512,9 @@ test('opportunities filter by pipeline and reject unknown or archived pipelines'
     stageId: stage.id,
   });
 
-  const all = (await api('/v1/opportunities')) as unknown as { status: number } & OpportunityListBody;
+  const all = (await api(
+    '/v1/opportunities',
+  )) as unknown as OpportunityListBody & { status: number };
   expect(all.status).toBe(200);
   expect(all.data.length).toBe(2);
 
@@ -444,12 +530,14 @@ test('opportunities filter by pipeline and reject unknown or archived pipelines'
   expect(defaultOnly.data.length).toBe(1);
   expect(defaultOnly.data[0].name).toBe('Default deal');
 
-  const unknown = await api('/v1/opportunities?pipelineId=01ARZ3NDEKTSV4RRFFQ69G5FC9');
+  const unknown = await api(
+    '/v1/opportunities?pipelineId=01ARZ3NDEKTSV4RRFFQ69G5FC9',
+  );
   expect(unknown.status).toBe(422);
   expect(unknown.code).toBe('validation_error');
 
   // Archived pipelines are rejected by the filter as well.
-  await db
+  await database
     .prepare('UPDATE pipelines SET archived_at = ? WHERE id = ?')
     .bind(ts(0), other.id)
     .run();
@@ -474,28 +562,37 @@ test('batched custom-field reads cover more entities than one D1 bind limit', as
   for (const item of page1.data) {
     expect(item.customFields.tier, item.id).toBe(item.id);
   }
+
   expect(typeof page1.nextCursor).toBe('string');
 
+  const page1Cursor = page1.nextCursor as string;
   const page2 = (await api(
-    '/v1/contacts?limit=100&cursor=' + encodeURIComponent(page1.nextCursor!),
+    '/v1/contacts?limit=100&cursor=' + encodeURIComponent(page1Cursor),
   )) as unknown as ListBody;
   expect(page2.data.length).toBe(20);
   for (const item of page2.data) {
     expect(item.customFields.tier, item.id).toBe(item.id);
   }
+
   expect(page2.nextCursor).toBeNull();
 
-  const opportunityField = await ok<{ id: string }>('/v1/custom-fields', 'POST', {
-    entityType: 'opportunity',
-    key: 'priority',
-    label: 'Priority',
-    type: 'text',
-  });
+  const opportunityField = await ok<{ id: string }>(
+    '/v1/custom-fields',
+    'POST',
+    {
+      entityType: 'opportunity',
+      key: 'priority',
+      label: 'Priority',
+      type: 'text',
+    },
+  );
   const opportunityIds = await seedOpportunities(105);
   await seedValues('opportunity', opportunityField.id, opportunityIds);
 
   // 105 ids cross the boundary as 99 + 6 chunks.
-  const opportunities = (await api('/v1/opportunities')) as unknown as OpportunityListBody;
+  const opportunities = (await api(
+    '/v1/opportunities',
+  )) as unknown as OpportunityListBody;
   expect(opportunities.data.length).toBe(105);
   for (const item of opportunities.data) {
     expect(item.customFields.priority, item.id).toBe(item.id);
