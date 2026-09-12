@@ -360,10 +360,9 @@ const ContactDialog = ({
     defaultValues: contactFormValues(contact),
     resolver: effectTsResolver(ContactInputSchema),
   });
-  // Reset the form and field state when the dialog opens for a different
-  // contact (or reopens). Adjusting state during render, as in the React
-  // docs, re-renders immediately, so the previous contact's values never
-  // flash on screen
+  // Reset field state when the dialog opens for a different contact (or
+  // reopens). Adjusting state during render, as in the React docs, re-renders
+  // immediately, so the previous contact's values never flash on screen
   const [resetKey, setResetKey] = useState<null | string>(null);
   const dialogKey = open ? (contact?.id ?? 'new') : null;
 
@@ -375,8 +374,17 @@ const ContactDialog = ({
     setResetKey(dialogKey);
     setCustomFields(contact?.customFields ?? {});
     setCustomFieldErrors({});
-    form.reset(contactFormValues(contact));
   }
+
+  // form.reset is an imperative call, not React state, so it stays in an
+  // effect rather than the render-phase state adjustment above
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    form.reset(contactFormValues(contact));
+  }, [contact, form, open]);
 
   const mutation = useMutation({
     mutationFn: (input: ContactInput) =>
