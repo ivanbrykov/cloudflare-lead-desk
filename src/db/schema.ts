@@ -8,8 +8,8 @@ import {
 } from 'drizzle-orm/sqlite-core';
 
 export const workspaces = sqliteTable('workspaces', {
-  id: text('id').primaryKey(),
   createdAt: text('created_at').notNull(),
+  id: text('id').primaryKey(),
   name: text('name').notNull(),
   slug: text('slug').notNull().unique(),
   updatedAt: text('updated_at').notNull(),
@@ -18,9 +18,9 @@ export const workspaces = sqliteTable('workspaces', {
 export const pipelines = sqliteTable(
   'pipelines',
   {
-    id: text('id').primaryKey(),
     archivedAt: text('archived_at'),
     createdAt: text('created_at').notNull(),
+    id: text('id').primaryKey(),
     name: text('name').notNull(),
     updatedAt: text('updated_at').notNull(),
     workspaceId: text('workspace_id')
@@ -53,7 +53,10 @@ export const stages = sqliteTable(
   },
   (table) => [
     index('stages_pipeline_position_idx').on(table.pipelineId, table.position),
-    uniqueIndex('stages_pipeline_position_unique').on(table.pipelineId, table.position),
+    uniqueIndex('stages_pipeline_position_unique').on(
+      table.pipelineId,
+      table.position,
+    ),
     uniqueIndex('stages_pipeline_name_unique').on(table.pipelineId, table.name),
   ],
 );
@@ -73,7 +76,10 @@ export const contacts = sqliteTable(
       .references(() => workspaces.id),
   },
   (table) => [
-    index('contacts_workspace_created_idx').on(table.workspaceId, table.createdAt),
+    index('contacts_workspace_created_idx').on(
+      table.workspaceId,
+      table.createdAt,
+    ),
     uniqueIndex('contacts_workspace_email_unique').on(
       table.workspaceId,
       table.normalizedEmail,
@@ -134,7 +140,10 @@ export const activities = sqliteTable(
       .references(() => workspaces.id),
   },
   (table) => [
-    index('activities_contact_created_idx').on(table.contactId, table.createdAt),
+    index('activities_contact_created_idx').on(
+      table.contactId,
+      table.createdAt,
+    ),
     index('activities_opportunity_created_idx').on(
       table.opportunityId,
       table.createdAt,
@@ -147,7 +156,9 @@ export const customFieldDefinitions = sqliteTable(
   {
     archivedAt: text('archived_at'),
     createdAt: text('created_at').notNull(),
-    entityType: text('entity_type', { enum: ['contact', 'opportunity'] }).notNull(),
+    entityType: text('entity_type', {
+      enum: ['contact', 'opportunity'],
+    }).notNull(),
     id: text('id').primaryKey(),
     key: text('key').notNull(),
     label: text('label').notNull(),
@@ -183,7 +194,9 @@ export const customFieldValues = sqliteTable(
   {
     createdAt: text('created_at').notNull(),
     entityId: text('entity_id').notNull(),
-    entityType: text('entity_type', { enum: ['contact', 'opportunity'] }).notNull(),
+    entityType: text('entity_type', {
+      enum: ['contact', 'opportunity'],
+    }).notNull(),
     fieldDefinitionId: text('field_definition_id')
       .notNull()
       .references(() => customFieldDefinitions.id),

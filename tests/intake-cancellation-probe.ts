@@ -21,31 +21,38 @@ export default {
       let cancelled = false;
       // highWaterMark 0 plus one oversized chunk: the stream is still open
       // when the worker reads it, so only an explicit cancel() ends it.
-      const body = new ReadableStream<Uint8Array>({
-        start(controller) {
-          controller.enqueue(new Uint8Array(65_537));
+      const body = new ReadableStream<Uint8Array>(
+        {
+          cancel() {
+            cancelled = true;
+          },
+          start(controller) {
+            controller.enqueue(new Uint8Array(65_537));
+          },
         },
-        cancel() {
-          cancelled = true;
-        },
-      }, { highWaterMark: 0 });
+        { highWaterMark: 0 },
+      );
       // The duplex mode is not modelled by the RequestInit type here; the
       // runtime supports it.
-      const intakeRequest = new Request('https://intake-cancellation.test/v1/intakes', {
-        method: 'POST',
-        body,
-        headers: { 'Content-Type': 'application/json' },
-        duplex: 'half',
-      } as RequestInit);
+      const intakeRequest = new Request(
+        'https://intake-cancellation.test/v1/intakes',
+        {
+          body,
+          duplex: 'half',
+          headers: { 'Content-Type': 'application/json' },
+          method: 'POST',
+        } as RequestInit,
+      );
       const response = await actual.fetch(intakeRequest);
       const responseBody = await response.text();
       return Response.json({
-        status: response.status,
-        responseBody,
         cancelled,
         locked: body.locked,
+        responseBody,
+        status: response.status,
       });
     }
+
     return actual.fetch(request);
   },
 };

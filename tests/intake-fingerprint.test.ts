@@ -1,6 +1,6 @@
+import { intakeRequestFingerprint, isIntakeKey } from '@/domain/intake';
+import { type IntakeInput } from '@/domain/schemas';
 import { describe, expect, test } from 'vitest';
-import { isIntakeKey, intakeRequestFingerprint } from '@/domain/intake';
-import type { IntakeInput } from '@/domain/schemas';
 
 const baseInput = (
   overrides: {
@@ -34,17 +34,21 @@ describe('intake request fingerprint', () => {
   test('is stable across object property order', async () => {
     const a = baseInput();
     const b: IntakeInput = {
-      opportunity: { source: 'form', name: 'New inquiry' },
-      contact: { firstName: ' Alex ', email: 'Alex@Example.COM' },
+      contact: { email: 'Alex@Example.COM', firstName: ' Alex ' },
+      opportunity: { name: 'New inquiry', source: 'form' },
       source: 'website_form',
     };
-    expect(await intakeRequestFingerprint(b)).toBe(await intakeRequestFingerprint(a));
+    expect(await intakeRequestFingerprint(b)).toBe(
+      await intakeRequestFingerprint(a),
+    );
   });
 
   test('normalizes email case and surrounding whitespace', async () => {
     const a = baseInput();
     const b = baseInput({ contact: { email: '  alex@example.com ' } });
-    expect(await intakeRequestFingerprint(b)).toBe(await intakeRequestFingerprint(a));
+    expect(await intakeRequestFingerprint(b)).toBe(
+      await intakeRequestFingerprint(a),
+    );
   });
 
   test('preserves array order inside custom fields', async () => {
@@ -65,7 +69,11 @@ describe('intake request fingerprint', () => {
       opportunity: { estimatedValue: 0, name: 'New inquiry', source: 'form' },
     });
     const explicitEmptyCustomFields = baseInput({
-      contact: { customFields: {}, email: 'Alex@Example.COM', firstName: ' Alex ' },
+      contact: {
+        customFields: {},
+        email: 'Alex@Example.COM',
+        firstName: ' Alex ',
+      },
     });
     expect(await intakeRequestFingerprint(explicitZero)).not.toBe(
       await intakeRequestFingerprint(omitted),
@@ -86,7 +94,9 @@ describe('intake request fingerprint', () => {
   });
 
   test('produces a 64-character hex SHA-256 digest', async () => {
-    expect(await intakeRequestFingerprint(baseInput())).toMatch(/^[a-f0-9]{64}$/);
+    expect(await intakeRequestFingerprint(baseInput())).toMatch(
+      /^[\da-f]{64}$/u,
+    );
   });
 });
 

@@ -1,6 +1,6 @@
 import { build } from 'esbuild';
-import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
-import { readFile, readdir } from 'node:fs/promises';
+import { convertV4MiniflareOptions, Miniflare } from 'miniflare';
+import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
 
@@ -33,10 +33,14 @@ const assertRepoRoot = async () => {
   }
 };
 
-let workerScript: string | null = null;
+const workerScripts = new Map<string, string>();
 
 const bundleWorker = async (): Promise<string> => {
-  if (workerScript) return workerScript;
+  const cached = workerScripts.get('default');
+  if (cached) {
+    return cached;
+  }
+
   await assertRepoRoot();
   const bundled = await build({
     bundle: true,
@@ -48,30 +52,36 @@ const bundleWorker = async (): Promise<string> => {
     tsconfig: join(repoRoot, 'tsconfig.json'),
     write: false,
   });
-  workerScript = bundled.outputFiles[0].text;
-  return workerScript;
+  const script = bundled.outputFiles[0].text;
+  workerScripts.set('default', script);
+  return script;
 };
 
-interface Opportunity {
-  contact: { email: string | null; firstName: string | null; id: string; lastName: string | null };
+type Opportunity = {
+  contact: {
+    email: null | string;
+    firstName: null | string;
+    id: string;
+    lastName: null | string;
+  };
   customFields: Record<string, unknown>;
-  estimatedValue: number | null;
+  estimatedValue: null | number;
   id: string;
   name: string;
   pipelineId: string;
   stageId: string;
-}
+};
 
-interface PatchFixture {
-  api(
+type PatchFixture = {
+  api: (
     path: string,
     method?: string,
     body?: unknown,
-  ): Promise<{ status: number; json: Record<string, unknown> }>;
+  ) => Promise<{ json: Record<string, unknown>; status: number }>;
   db: D1Database;
-  dispose(): Promise<void>;
-  ok<T>(path: string, method: string, body?: unknown): Promise<T>;
-}
+  dispose: () => Promise<void>;
+  ok: <T>(path: string, method: string, body?: unknown) => Promise<T>;
+};
 
 /**
  * Fresh in-memory D1 fixture with drizzle/ migrations applied. Without
@@ -79,14 +89,18 @@ interface PatchFixture {
  * every request is authenticated; with it the fixture has no identity at all,
  * which exercises the 401 path without needing the JWKS endpoint.
  */
-const startFixture = async (options: { devAdmin?: boolean } = {}): Promise<PatchFixture> => {
+const startFixture = async (
+  options: { devAdmin?: boolean } = {},
+): Promise<PatchFixture> => {
   const script = await bundleWorker();
   const mf = new Miniflare(
     convertV4MiniflareOptions({
       bindings: {
         ACCESS_AUD: 'test',
         ACCESS_TEAM_DOMAIN: 'test.cloudflareaccess.com',
-        ...(options.devAdmin === false ? {} : { DEV_ADMIN_EMAIL: 'patch-regression@example.test' }),
+        ...(options.devAdmin === false
+          ? {}
+          : { DEV_ADMIN_EMAIL: 'patch-regression@example.test' }),
         ENVIRONMENT: 'test',
       },
       compatibilityDate: '2026-08-22',
@@ -98,34 +112,42 @@ const startFixture = async (options: { devAdmin?: boolean } = {}): Promise<Patch
   );
   let disposed = false;
   const dispose = async () => {
-    if (disposed) return;
+    if (disposed) {
+      return;
+    }
+
     disposed = true;
     await mf.dispose();
   };
+
   try {
-    const db = await mf.getD1Database('DB');
+    const database = await mf.getD1Database('DB');
     const names = (await readdir(join(repoRoot, 'drizzle')))
       .filter((name) => name.endsWith('.sql'))
-      .sort();
+      .toSorted();
     for (const name of names) {
       const sql = await readFile(join(repoRoot, 'drizzle', name), 'utf8');
       for (const statement of sql
         .split('--> statement-breakpoint')
-        .map((s) => s.trim())
+        .map((chunk) => chunk.trim())
         .filter(Boolean)) {
-        await db.prepare(statement).run();
+        await database.prepare(statement).run();
       }
     }
+
     const api = async (
       path: string,
       method = 'GET',
       body?: unknown,
-    ): Promise<{ status: number; json: Record<string, unknown> }> => {
-      const response = await mf.dispatchFetch(`https://patch-test.example${path}`, {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-      });
+    ): Promise<{ json: Record<string, unknown>; status: number }> => {
+      const response = await mf.dispatchFetch(
+        `https://patch-test.example${path}`,
+        {
+          headers: { 'Content-Type': 'application/json' },
+          method,
+          ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        },
+      );
       const text = await response.text();
       let json: Record<string, unknown> = {};
       try {
@@ -133,9 +155,15 @@ const startFixture = async (options: { devAdmin?: boolean } = {}): Promise<Patch
       } catch {
         json = { raw: text.slice(0, 200) };
       }
-      return { status: response.status, json };
+
+      return { json, status: response.status };
     };
-    const ok = async <T>(path: string, method: string, body?: unknown): Promise<T> => {
+
+    const ok = async <T>(
+      path: string,
+      method: string,
+      body?: unknown,
+    ): Promise<T> => {
       const result = await api(path, method, body);
       expect(
         result.status >= 200 && result.status < 300,
@@ -143,33 +171,37 @@ const startFixture = async (options: { devAdmin?: boolean } = {}): Promise<Patch
       ).toBe(true);
       return result.json.data as T;
     };
-    return { api, db, dispose, ok };
+
+    return { api, db: database, dispose, ok };
   } catch (error) {
     await dispose();
     throw error;
   }
 };
 
-const tick = () => new Promise((resolve) => setTimeout(resolve, 5));
+const tick = () =>
+  new Promise<void>((resolve) => {
+    setTimeout(resolve, 5);
+  });
 
 const createOpportunity = async (
-  f: PatchFixture,
+  fx: PatchFixture,
   name = 'Patch me',
-  estimatedValue?: number | null,
+  estimatedValue?: null | number,
 ): Promise<Opportunity> => {
-  const contact = await f.ok<{ id: string }>('/v1/contacts', 'POST', {
+  const contact = await fx.ok<{ id: string }>('/v1/contacts', 'POST', {
     email: 'patch@example.test',
     firstName: 'Patch',
   });
-  return f.ok<Opportunity>('/v1/opportunities', 'POST', {
+  return fx.ok<Opportunity>('/v1/opportunities', 'POST', {
     contactId: contact.id,
     name,
     ...(estimatedValue === undefined ? {} : { estimatedValue }),
   });
 };
 
-const opportunityRow = (f: PatchFixture, id: string) =>
-  f.db
+const opportunityRow = (fx: PatchFixture, id: string) =>
+  fx.db
     .prepare(
       'SELECT name, estimated_value, pipeline_id, stage_id, updated_at FROM opportunities WHERE id = ?',
     )
@@ -177,14 +209,21 @@ const opportunityRow = (f: PatchFixture, id: string) =>
     .first();
 
 test('PATCH renames an opportunity and leaves other fields intact', async () => {
-  const f = await startFixture();
+  const fx = await startFixture();
   try {
-    const opportunity = await createOpportunity(f, 'Original deal', 250);
-    const before = (await opportunityRow(f, opportunity.id)) as Record<string, string | number | null>;
+    const opportunity = await createOpportunity(fx, 'Original deal', 250);
+    const before = (await opportunityRow(fx, opportunity.id)) as Record<
+      string,
+      null | number | string
+    >;
 
-    const result = await f.api(`/v1/opportunities/${opportunity.id}`, 'PATCH', {
-      name: 'Renamed deal',
-    });
+    const result = await fx.api(
+      `/v1/opportunities/${opportunity.id}`,
+      'PATCH',
+      {
+        name: 'Renamed deal',
+      },
+    );
     expect(result.status, JSON.stringify(result)).toBe(200);
     const updated = result.json.data as Opportunity;
     expect(updated.name).toBe('Renamed deal');
@@ -194,73 +233,102 @@ test('PATCH renames an opportunity and leaves other fields intact', async () => 
     expect(updated.contact.id).toBe(opportunity.contact.id);
     expect(updated.customFields).toEqual(opportunity.customFields);
 
-    const row = (await opportunityRow(f, opportunity.id)) as Record<string, string | number | null>;
+    const row = (await opportunityRow(fx, opportunity.id)) as Record<
+      string,
+      null | number | string
+    >;
     expect(row.name).toBe('Renamed deal');
     expect(row.estimated_value).toBe(250);
     expect(row.pipeline_id).toBe(opportunity.pipelineId);
     expect(row.stage_id).toBe(opportunity.stageId);
     await tick();
-    const again = await f.api(`/v1/opportunities/${opportunity.id}`, 'PATCH', { name: 'Renamed deal' });
+    const again = await fx.api(`/v1/opportunities/${opportunity.id}`, 'PATCH', {
+      name: 'Renamed deal',
+    });
     expect(again.status).toBe(200);
-    const after = (await opportunityRow(f, opportunity.id)) as Record<string, string | number | null>;
-    expect(after.updated_at, 'updated_at must move forward on update').not.toBe(before.updated_at);
+    const after = (await opportunityRow(fx, opportunity.id)) as Record<
+      string,
+      null | number | string
+    >;
+    expect(after.updated_at, 'updated_at must move forward on update').not.toBe(
+      before.updated_at,
+    );
 
-    const read = await f.ok<Opportunity>('/v1/opportunities/' + opportunity.id, 'GET');
+    const read = await fx.ok<Opportunity>(
+      '/v1/opportunities/' + opportunity.id,
+      'GET',
+    );
     expect(read.name).toBe('Renamed deal');
     expect(read.estimatedValue).toBe(250);
   } finally {
-    await f.dispose();
+    await fx.dispose();
   }
 });
 
 test('PATCH updates the estimated value, and explicit null clears it while omission preserves it', async () => {
-  const f = await startFixture();
+  const fx = await startFixture();
   try {
-    const opportunity = await createOpportunity(f, 'Value deal', 100);
+    const opportunity = await createOpportunity(fx, 'Value deal', 100);
 
-    const set = await f.api(`/v1/opportunities/${opportunity.id}`, 'PATCH', { estimatedValue: 1234.5 });
+    const set = await fx.api(`/v1/opportunities/${opportunity.id}`, 'PATCH', {
+      estimatedValue: 1_234.5,
+    });
     expect(set.status, JSON.stringify(set)).toBe(200);
-    expect((set.json.data as Opportunity).estimatedValue).toBe(1234.5);
-    expect((await opportunityRow(f, opportunity.id))?.estimated_value).toBe(1234.5);
+    expect((set.json.data as Opportunity).estimatedValue).toBe(1_234.5);
+    expect((await opportunityRow(fx, opportunity.id))?.estimated_value).toBe(
+      1_234.5,
+    );
 
-    const clear = await f.api(`/v1/opportunities/${opportunity.id}`, 'PATCH', { estimatedValue: null });
+    const clear = await fx.api(`/v1/opportunities/${opportunity.id}`, 'PATCH', {
+      estimatedValue: null,
+    });
     expect(clear.status, JSON.stringify(clear)).toBe(200);
     expect((clear.json.data as Opportunity).estimatedValue).toBeNull();
-    expect((await opportunityRow(f, opportunity.id))?.estimated_value).toBeNull();
+    expect(
+      (await opportunityRow(fx, opportunity.id))?.estimated_value,
+    ).toBeNull();
 
     // Omitting the field keeps the (null) value: a rename must not touch it.
-    const keep = await f.api(`/v1/opportunities/${opportunity.id}`, 'PATCH', { name: 'Kept' });
+    const keep = await fx.api(`/v1/opportunities/${opportunity.id}`, 'PATCH', {
+      name: 'Kept',
+    });
     expect(keep.status, JSON.stringify(keep)).toBe(200);
     const data = keep.json.data as Opportunity;
     expect(data.name).toBe('Kept');
     expect(data.estimatedValue).toBeNull();
-    expect((await opportunityRow(f, opportunity.id))?.estimated_value).toBeNull();
+    expect(
+      (await opportunityRow(fx, opportunity.id))?.estimated_value,
+    ).toBeNull();
   } finally {
-    await f.dispose();
+    await fx.dispose();
   }
 });
 
 test('PATCH updates name and estimated value in one request', async () => {
-  const f = await startFixture();
+  const fx = await startFixture();
   try {
-    const opportunity = await createOpportunity(f, 'Both', 10);
-    const result = await f.api(`/v1/opportunities/${opportunity.id}`, 'PATCH', {
-      estimatedValue: 77.25,
-      name: 'Both updated',
-    });
+    const opportunity = await createOpportunity(fx, 'Both', 10);
+    const result = await fx.api(
+      `/v1/opportunities/${opportunity.id}`,
+      'PATCH',
+      {
+        estimatedValue: 77.25,
+        name: 'Both updated',
+      },
+    );
     expect(result.status, JSON.stringify(result)).toBe(200);
     const data = result.json.data as Opportunity;
     expect(data.name).toBe('Both updated');
     expect(data.estimatedValue).toBe(77.25);
   } finally {
-    await f.dispose();
+    await fx.dispose();
   }
 });
 
 test('PATCH rejects empty payloads, blank names, and invalid values with 422 without touching the row', async () => {
-  const f = await startFixture();
+  const fx = await startFixture();
   try {
-    const opportunity = await createOpportunity(f, 'Untouched', 42);
+    const opportunity = await createOpportunity(fx, 'Untouched', 42);
 
     const bodies = [
       {},
@@ -273,50 +341,71 @@ test('PATCH rejects empty payloads, blank names, and invalid values with 422 wit
       { unrelated: true },
     ];
     for (const body of bodies) {
-      const result = await f.api(`/v1/opportunities/${opportunity.id}`, 'PATCH', body);
+      const result = await fx.api(
+        `/v1/opportunities/${opportunity.id}`,
+        'PATCH',
+        body,
+      );
       expect(result.status, JSON.stringify(result)).toBe(422);
       expect(result.json.code, JSON.stringify(result)).toBe('validation_error');
       expect(typeof result.json.message, JSON.stringify(result)).toBe('string');
     }
 
-    const row = (await opportunityRow(f, opportunity.id)) as Record<string, string | number | null>;
+    const row = (await opportunityRow(fx, opportunity.id)) as Record<
+      string,
+      null | number | string
+    >;
     expect(row.name).toBe('Untouched');
     expect(row.estimated_value).toBe(42);
   } finally {
-    await f.dispose();
+    await fx.dispose();
   }
 });
 
 test('PATCH returns 404 not_found for unknown opportunities and writes nothing', async () => {
-  const f = await startFixture();
+  const fx = await startFixture();
   try {
-    const unknown = await f.api('/v1/opportunities/01ARZ3NDEKTSV4RRFFQ69G5FC9', 'PATCH', { name: 'Ghost' });
+    const unknown = await fx.api(
+      '/v1/opportunities/01ARZ3NDEKTSV4RRFFQ69G5FC9',
+      'PATCH',
+      { name: 'Ghost' },
+    );
     expect(unknown.status, JSON.stringify(unknown)).toBe(404);
     expect(unknown.json.code, JSON.stringify(unknown)).toBe('not_found');
     expect(typeof unknown.json.message).toBe('string');
 
-    const malformed = await f.api('/v1/opportunities/not-a-ulid', 'PATCH', { name: 'Ghost' });
+    const malformed = await fx.api('/v1/opportunities/not-a-ulid', 'PATCH', {
+      name: 'Ghost',
+    });
     expect(malformed.status, JSON.stringify(malformed)).toBe(404);
     expect(malformed.json.code, JSON.stringify(malformed)).toBe('not_found');
 
-    const count = await f.db.prepare('SELECT count(*) AS n FROM opportunities').first();
+    const count = await fx.db
+      .prepare('SELECT count(*) AS n FROM opportunities')
+      .first();
     expect(count?.n).toBe(0);
   } finally {
-    await f.dispose();
+    await fx.dispose();
   }
 });
 
 test('PATCH requires an authenticated identity (401 unauthorized)', async () => {
-  const f = await startFixture({ devAdmin: false });
+  const fx = await startFixture({ devAdmin: false });
   try {
-    const result = await f.api('/v1/opportunities/01ARZ3NDEKTSV4RRFFQ69G5FC9', 'PATCH', { name: 'Ghost' });
+    const result = await fx.api(
+      '/v1/opportunities/01ARZ3NDEKTSV4RRFFQ69G5FC9',
+      'PATCH',
+      { name: 'Ghost' },
+    );
     expect(result.status, JSON.stringify(result)).toBe(401);
     expect(result.json.code, JSON.stringify(result)).toBe('unauthorized');
     expect(typeof result.json.message).toBe('string');
 
-    const count = await f.db.prepare('SELECT count(*) AS n FROM opportunities').first();
+    const count = await fx.db
+      .prepare('SELECT count(*) AS n FROM opportunities')
+      .first();
     expect(count?.n).toBe(0);
   } finally {
-    await f.dispose();
+    await fx.dispose();
   }
 });

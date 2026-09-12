@@ -1,13 +1,13 @@
-import { build } from 'esbuild';
-import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
-import { readFile, readdir } from 'node:fs/promises';
-import { join } from 'node:path';
-import { expect, test } from 'vitest';
 import {
   DEFAULT_PIPELINE_ID,
   DEFAULT_STAGE_ID,
   DEFAULT_WORKSPACE_ID,
 } from '@/db/repository';
+import { build } from 'esbuild';
+import { convertV4MiniflareOptions, Miniflare } from 'miniflare';
+import { readdir, readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { expect, test } from 'vitest';
 
 /**
  * D1-backed regression tests for migration bootstrapping and deterministic
@@ -35,10 +35,14 @@ const assertRepoRoot = async () => {
   }
 };
 
-let workerScript: string | null = null;
+const workerScripts = new Map<string, string>();
 
 const bundleWorker = async (): Promise<string> => {
-  if (workerScript) return workerScript;
+  const cached = workerScripts.get('default');
+  if (cached) {
+    return cached;
+  }
+
   await assertRepoRoot();
   const bundled = await build({
     bundle: true,
@@ -50,20 +54,21 @@ const bundleWorker = async (): Promise<string> => {
     tsconfig: join(repoRoot, 'tsconfig.json'),
     write: false,
   });
-  workerScript = bundled.outputFiles[0].text;
-  return workerScript;
+  const script = bundled.outputFiles[0].text;
+  workerScripts.set('default', script);
+  return script;
 };
 
-interface StageFixture {
-  db: D1Database;
-  dispose(): Promise<void>;
-  api(
+type StageFixture = {
+  api: (
     path: string,
     method?: string,
     body?: unknown,
-  ): Promise<{ status: number; json: Record<string, unknown> }>;
-  ok<T>(path: string, method: string, body?: unknown): Promise<T>;
-}
+  ) => Promise<{ json: Record<string, unknown>; status: number }>;
+  db: D1Database;
+  dispose: () => Promise<void>;
+  ok: <T>(path: string, method: string, body?: unknown) => Promise<T>;
+};
 
 /**
  * Fresh fixture applying drizzle/ migrations in order. `preLastMigration`
@@ -71,7 +76,7 @@ interface StageFixture {
  * accumulated data (e.g. duplicate stage positions) before 0002 shipped.
  */
 const startFixture = async (
-  options: { preLastMigration?: (db: D1Database) => Promise<void> } = {},
+  options: { preLastMigration?: (database: D1Database) => Promise<void> } = {},
 ): Promise<StageFixture> => {
   const script = await bundleWorker();
   const mf = new Miniflare(
@@ -91,37 +96,49 @@ const startFixture = async (
   );
   let disposed = false;
   const dispose = async () => {
-    if (disposed) return;
+    if (disposed) {
+      return;
+    }
+
     disposed = true;
     await mf.dispose();
   };
+
   try {
-    const db = await mf.getD1Database('DB');
+    const database = await mf.getD1Database('DB');
     const names = (await readdir(join(repoRoot, 'drizzle')))
       .filter((name) => name.endsWith('.sql'))
-      .sort();
+      .toSorted();
     for (let index = 0; index < names.length; index += 1) {
       if (options.preLastMigration && index === names.length - 1) {
-        await options.preLastMigration(db);
+        await options.preLastMigration(database);
       }
-      const sql = await readFile(join(repoRoot, 'drizzle', names[index]), 'utf8');
+
+      const sql = await readFile(
+        join(repoRoot, 'drizzle', names[index]),
+        'utf8',
+      );
       for (const statement of sql
         .split('--> statement-breakpoint')
-        .map((s) => s.trim())
+        .map((chunk) => chunk.trim())
         .filter(Boolean)) {
-        await db.prepare(statement).run();
+        await database.prepare(statement).run();
       }
     }
+
     const api = async (
       path: string,
       method = 'GET',
       body?: unknown,
-    ): Promise<{ status: number; json: Record<string, unknown> }> => {
-      const response = await mf.dispatchFetch(`https://stage-test.example${path}`, {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-      });
+    ): Promise<{ json: Record<string, unknown>; status: number }> => {
+      const response = await mf.dispatchFetch(
+        `https://stage-test.example${path}`,
+        {
+          headers: { 'Content-Type': 'application/json' },
+          method,
+          ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        },
+      );
       const text = await response.text();
       let json: Record<string, unknown> = {};
       try {
@@ -129,9 +146,15 @@ const startFixture = async (
       } catch {
         json = { raw: text.slice(0, 200) };
       }
-      return { status: response.status, json };
+
+      return { json, status: response.status };
     };
-    const ok = async <T>(path: string, method: string, body?: unknown): Promise<T> => {
+
+    const ok = async <T>(
+      path: string,
+      method: string,
+      body?: unknown,
+    ): Promise<T> => {
       const result = await api(path, method, body);
       expect(
         result.status >= 200 && result.status < 300,
@@ -139,7 +162,8 @@ const startFixture = async (
       ).toBe(true);
       return result.json.data as T;
     };
-    return { api, db, dispose, ok };
+
+    return { api, db: database, dispose, ok };
   } catch (error) {
     await dispose();
     throw error;
@@ -147,72 +171,93 @@ const startFixture = async (
 };
 
 test('bootstrap rows come from the migration and requests never resurrect them', async () => {
-  const f = await startFixture();
+  const fx = await startFixture();
   try {
     // Before any request: the fixed-id bootstrap rows already exist.
-    const workspace = await f.db
+    const workspace = await fx.db
       .prepare('SELECT slug, name FROM workspaces WHERE id = ?')
       .bind(DEFAULT_WORKSPACE_ID)
       .first();
     expect(workspace).toEqual({ name: 'Lead Desk', slug: 'default' });
-    const pipeline = await f.db
+    const pipeline = await fx.db
       .prepare('SELECT name, workspace_id FROM pipelines WHERE id = ?')
       .bind(DEFAULT_PIPELINE_ID)
       .first();
-    expect(pipeline).toEqual({ name: 'Sales', workspace_id: DEFAULT_WORKSPACE_ID });
-    const stage = await f.db
+    expect(pipeline).toEqual({
+      name: 'Sales',
+      workspace_id: DEFAULT_WORKSPACE_ID,
+    });
+    const stage = await fx.db
       .prepare('SELECT name, position, pipeline_id FROM stages WHERE id = ?')
       .bind(DEFAULT_STAGE_ID)
       .first();
-    expect(stage).toEqual({ name: 'New inquiry', pipeline_id: DEFAULT_PIPELINE_ID, position: 0 });
+    expect(stage).toEqual({
+      name: 'New inquiry',
+      pipeline_id: DEFAULT_PIPELINE_ID,
+      position: 0,
+    });
 
     // Deleting the bootstrap rows must NOT be undone by any request.
-    await f.db.prepare('DELETE FROM stages').run();
-    await f.db.prepare('DELETE FROM pipelines').run();
-    await f.db.prepare('DELETE FROM workspaces').run();
-    const result = await f.api('/v1/pipelines');
+    await fx.db.prepare('DELETE FROM stages').run();
+    await fx.db.prepare('DELETE FROM pipelines').run();
+    await fx.db.prepare('DELETE FROM workspaces').run();
+    const result = await fx.api('/v1/pipelines');
     expect(result.status, JSON.stringify(result)).toBe(200);
-    const names = (result.json.data as Array<{ name: string }>).map((p) => p.name);
+    const names = (result.json.data as Array<{ name: string }>).map(
+      (item) => item.name,
+    );
     expect(names).not.toContain('Sales');
     expect(
-      (await f.db.prepare('SELECT count(*) AS n FROM workspaces').first())?.n,
+      (await fx.db.prepare('SELECT count(*) AS n FROM workspaces').first())?.n,
     ).toBe(0);
   } finally {
-    await f.dispose();
+    await fx.dispose();
   }
 });
 
 test('the migration renumbers duplicate positions deterministically before enforcing uniqueness', async () => {
-  const f = await startFixture({
-    preLastMigration: async (db) => {
+  const fx = await startFixture({
+    preLastMigration: async (database) => {
       // A pre-0002 database: same workspace id, a second pipeline whose
       // stages all share position 0 (legal before the unique index).
-      await db
+      await database
         .prepare(
           'INSERT OR IGNORE INTO workspaces (id, slug, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
         )
-        .bind(DEFAULT_WORKSPACE_ID, 'default', 'Lead Desk', '2026-01-01', '2026-01-01')
+        .bind(
+          DEFAULT_WORKSPACE_ID,
+          'default',
+          'Lead Desk',
+          '2026-01-01',
+          '2026-01-01',
+        )
         .run();
-      await db
+      await database
         .prepare(
           'INSERT OR IGNORE INTO pipelines (id, workspace_id, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
         )
-        .bind('01ARZ3NDEKTSV4RRFFQ69G5FD0', DEFAULT_WORKSPACE_ID, 'Legacy', '2026-01-01', '2026-01-01')
+        .bind(
+          '01ARZ3NDEKTSV4RRFFQ69G5FD0',
+          DEFAULT_WORKSPACE_ID,
+          'Legacy',
+          '2026-01-01',
+          '2026-01-01',
+        )
         .run();
-      for (let i = 0; i < 3; i += 1) {
-        await db
+      for (let index = 0; index < 3; index += 1) {
+        await database
           .prepare(
             'INSERT INTO stages (id, workspace_id, pipeline_id, name, color, position, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
           )
           .bind(
-            `01ARZ3NDEKTSV4RRFFQ69G5FE${i}`,
+            `01ARZ3NDEKTSV4RRFFQ69G5FE${index}`,
             DEFAULT_WORKSPACE_ID,
             '01ARZ3NDEKTSV4RRFFQ69G5FD0',
-            `Dup${i}`,
+            `Dup${index}`,
             'blue',
             0,
-            `2026-01-0${1 + i}`,
-            `2026-01-0${1 + i}`,
+            `2026-01-0${1 + index}`,
+            `2026-01-0${1 + index}`,
           )
           .run();
       }
@@ -220,7 +265,7 @@ test('the migration renumbers duplicate positions deterministically before enfor
   });
   try {
     const rows = (
-      await f.db
+      await fx.db
         .prepare(
           'SELECT pipeline_id AS p, position FROM stages ORDER BY pipeline_id, position',
         )
@@ -234,56 +279,67 @@ test('the migration renumbers duplicate positions deterministically before enfor
       list.push(row.position as number);
       byPipeline.set(row.p as string, list);
     }
+
     for (const [pipelineId, positions] of byPipeline) {
-      expect(positions, pipelineId).toEqual(positions.map((_, i) => i));
+      expect(positions, pipelineId).toEqual(positions.map((_, index) => index));
     }
+
     // The API keeps serving the renumbered stages.
-    const pipelines = await f.api('/v1/pipelines');
+    const pipelines = await fx.api('/v1/pipelines');
     expect(pipelines.status, JSON.stringify(pipelines)).toBe(200);
   } finally {
-    await f.dispose();
+    await fx.dispose();
   }
 });
 
 test('concurrent stage creation yields unique contiguous positions from zero', async () => {
-  const f = await startFixture();
+  const fx = await startFixture();
   try {
-    const pipeline = await f.ok<{ id: string }>('/v1/pipelines', 'POST', { name: 'Race' });
+    const pipeline = await fx.ok<{ id: string }>('/v1/pipelines', 'POST', {
+      name: 'Race',
+    });
     const results = await Promise.all(
-      Array.from({ length: 6 }, (_, i) =>
-        f.api(`/v1/pipelines/${pipeline.id}/stages`, 'POST', { name: `S${i}` }),
+      Array.from({ length: 6 }, (_, index) =>
+        fx.api(`/v1/pipelines/${pipeline.id}/stages`, 'POST', {
+          name: `S${index}`,
+        }),
       ),
     );
     for (const result of results) {
       expect(result.status, JSON.stringify(result)).toBe(201);
     }
-    const rows = await f.db
-      .prepare('SELECT position FROM stages WHERE pipeline_id = ? ORDER BY position')
+
+    const rows = await fx.db
+      .prepare(
+        'SELECT position FROM stages WHERE pipeline_id = ? ORDER BY position',
+      )
       .bind(pipeline.id)
       .all();
     expect(rows.results.map((row) => row.position)).toEqual([0, 1, 2, 3, 4, 5]);
   } finally {
-    await f.dispose();
+    await fx.dispose();
   }
 });
 
 test('an explicit colliding position is rejected instead of creating a duplicate', async () => {
-  const f = await startFixture();
+  const fx = await startFixture();
   try {
     // The bootstrap stage already holds position 0 in the default pipeline.
-    const result = await f.api(
+    const result = await fx.api(
       `/v1/pipelines/${DEFAULT_PIPELINE_ID}/stages`,
       'POST',
       { name: 'Explicit', position: 0 },
     );
     expect(result.status, JSON.stringify(result)).toBe(500);
     expect(result.json.code).toBe('persistence_error');
-    const rows = await f.db
-      .prepare('SELECT position FROM stages WHERE pipeline_id = ? ORDER BY position')
+    const rows = await fx.db
+      .prepare(
+        'SELECT position FROM stages WHERE pipeline_id = ? ORDER BY position',
+      )
       .bind(DEFAULT_PIPELINE_ID)
       .all();
     expect(rows.results.map((row) => row.position)).toEqual([0]);
   } finally {
-    await f.dispose();
+    await fx.dispose();
   }
 });

@@ -1,8 +1,8 @@
 import { build } from 'esbuild';
-import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
-import { readFile, readdir } from 'node:fs/promises';
-import { join } from 'node:path';
 import * as jose from 'jose';
+import { convertV4MiniflareOptions, Miniflare } from 'miniflare';
+import { readdir, readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { expect, test } from 'vitest';
 
 /**
@@ -33,10 +33,14 @@ const assertRepoRoot = async () => {
 const TEAM = 'test.cloudflareaccess.com';
 const AUD = 'test-aud';
 
-let workerScript: string | null = null;
+const workerScripts = new Map<string, string>();
 
 const bundleWorker = async (): Promise<string> => {
-  if (workerScript) return workerScript;
+  const cached = workerScripts.get('default');
+  if (cached) {
+    return cached;
+  }
+
   await assertRepoRoot();
   const bundled = await build({
     bundle: true,
@@ -48,8 +52,9 @@ const bundleWorker = async (): Promise<string> => {
     tsconfig: join(repoRoot, 'tsconfig.json'),
     write: false,
   });
-  workerScript = bundled.outputFiles[0].text;
-  return workerScript;
+  const script = bundled.outputFiles[0].text;
+  workerScripts.set('default', script);
+  return script;
 };
 
 const jwksDocument = async (publicKey: CryptoKey) => {
@@ -60,27 +65,27 @@ const jwksDocument = async (publicKey: CryptoKey) => {
   return { keys: [jwk] };
 };
 
-interface SignOverrides {
-  aud?: string;
-  iss?: string;
-  key?: CryptoKey;
-  kid?: string;
-}
-
-interface AuthFixture {
+type AuthFixture = {
   db: D1Database;
-  dispose(): Promise<void>;
-  raw(
+  dispose: () => Promise<void>;
+  raw: (
     path: string,
     method?: string,
     body?: unknown,
     headers?: Record<string, string>,
-  ): Promise<{ status: number; json: Record<string, unknown> }>;
-  sign(
+  ) => Promise<{ json: Record<string, unknown>; status: number }>;
+  sign: (
     claims: Record<string, unknown>,
     overrides?: SignOverrides,
-  ): Promise<string>;
-}
+  ) => Promise<string>;
+};
+
+type SignOverrides = {
+  aud?: string;
+  iss?: string;
+  key?: CryptoKey;
+  kid?: string;
+};
 
 /**
  * Fresh in-memory D1 + worker fixture. `devAdmin` switches the fixture to
@@ -88,7 +93,9 @@ interface AuthFixture {
  * intake token; otherwise the fixture runs in production mode with the
  * JWKS endpoint served (or failed) by the outbound service.
  */
-const startFixture = async (options: { devAdmin?: string; jwksFails?: boolean } = {}): Promise<AuthFixture> => {
+const startFixture = async (
+  options: { devAdmin?: string; jwksFails?: boolean } = {},
+): Promise<AuthFixture> => {
   const script = await bundleWorker();
   const { privateKey, publicKey } = await jose.generateKeyPair('ES256', {
     extractable: true,
@@ -99,11 +106,14 @@ const startFixture = async (options: { devAdmin?: string; jwksFails?: boolean } 
       if (options.jwksFails) {
         return new Response('upstream JWKS unavailable', { status: 500 });
       }
+
       return Response.json(await jwksDocument(publicKey));
     }
+
     // Any other outbound call is a test defect; fail loudly.
     return new Response(`unexpected outbound ${request.url}`, { status: 502 });
   };
+
   const bindings: Record<string, string> = options.devAdmin
     ? {
         ACCESS_AUD: 'test',
@@ -129,35 +139,43 @@ const startFixture = async (options: { devAdmin?: string; jwksFails?: boolean } 
   );
   let disposed = false;
   const dispose = async () => {
-    if (disposed) return;
+    if (disposed) {
+      return;
+    }
+
     disposed = true;
     await mf.dispose();
   };
+
   try {
-    const db = await mf.getD1Database('DB');
+    const database = await mf.getD1Database('DB');
     const names = (await readdir(join(repoRoot, 'drizzle')))
       .filter((name) => name.endsWith('.sql'))
-      .sort();
+      .toSorted();
     for (const name of names) {
       const sql = await readFile(join(repoRoot, 'drizzle', name), 'utf8');
       for (const statement of sql
         .split('--> statement-breakpoint')
-        .map((s) => s.trim())
+        .map((chunk) => chunk.trim())
         .filter(Boolean)) {
-        await db.prepare(statement).run();
+        await database.prepare(statement).run();
       }
     }
+
     const raw = async (
       path: string,
       method = 'GET',
       body?: unknown,
       headers: Record<string, string> = {},
-    ): Promise<{ status: number; json: Record<string, unknown> }> => {
-      const response = await mf.dispatchFetch(`https://auth-test.example${path}`, {
-        method,
-        headers: { 'Content-Type': 'application/json', ...headers },
-        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-      });
+    ): Promise<{ json: Record<string, unknown>; status: number }> => {
+      const response = await mf.dispatchFetch(
+        `https://auth-test.example${path}`,
+        {
+          headers: { 'Content-Type': 'application/json', ...headers },
+          method,
+          ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        },
+      );
       const text = await response.text();
       let json: Record<string, unknown> = {};
       try {
@@ -165,8 +183,10 @@ const startFixture = async (options: { devAdmin?: string; jwksFails?: boolean } 
       } catch {
         json = { raw: text.slice(0, 200) };
       }
-      return { status: response.status, json };
+
+      return { json, status: response.status };
     };
+
     const sign = (
       claims: Record<string, unknown>,
       overrides: SignOverrides = {},
@@ -178,7 +198,7 @@ const startFixture = async (options: { devAdmin?: string; jwksFails?: boolean } 
         .setIssuedAt()
         .setExpirationTime('10m')
         .sign(overrides.key ?? privateKey);
-    return { db, dispose, raw, sign };
+    return { db: database, dispose, raw, sign };
   } catch (error) {
     await dispose();
     throw error;
@@ -186,133 +206,149 @@ const startFixture = async (options: { devAdmin?: string; jwksFails?: boolean } 
 };
 
 const expectUnauthorized = (
-  result: { status: number; json: Record<string, unknown> },
+  result: { json: Record<string, unknown>; status: number },
   label: string,
 ) => {
   expect(result.status, `${label}: ${JSON.stringify(result)}`).toBe(401);
-  expect(result.json.code, `${label}: ${JSON.stringify(result)}`).toBe('unauthorized');
+  expect(result.json.code, `${label}: ${JSON.stringify(result)}`).toBe(
+    'unauthorized',
+  );
   expect(typeof result.json.message).toBe('string');
 };
 
 test('a missing assertion header is rejected with 401', async () => {
-  const f = await startFixture();
+  const fx = await startFixture();
   try {
-    expectUnauthorized(await f.raw('/v1/contacts'), 'missing header');
+    expectUnauthorized(await fx.raw('/v1/contacts'), 'missing header');
   } finally {
-    await f.dispose();
+    await fx.dispose();
   }
 });
 
 test('a forged signature (key not in the JWKS) is rejected with 401', async () => {
-  const f = await startFixture();
+  const fx = await startFixture();
   try {
-    const { privateKey } = await jose.generateKeyPair('ES256', { extractable: true });
-    const token = await f.sign({ email: 'forger@example.test' }, { key: privateKey });
+    const { privateKey } = await jose.generateKeyPair('ES256', {
+      extractable: true,
+    });
+    const token = await fx.sign(
+      { email: 'forger@example.test' },
+      { key: privateKey },
+    );
     expectUnauthorized(
-      await f.raw('/v1/contacts', 'GET', undefined, { 'Cf-Access-Jwt-Assertion': token }),
+      await fx.raw('/v1/contacts', 'GET', undefined, {
+        'Cf-Access-Jwt-Assertion': token,
+      }),
       'forged signature',
     );
   } finally {
-    await f.dispose();
+    await fx.dispose();
   }
 });
 
 test('a wrong audience is rejected with 401', async () => {
-  const f = await startFixture();
+  const fx = await startFixture();
   try {
-    const token = await f.sign({ email: 'a@b.test' }, { aud: 'other-aud' });
+    const token = await fx.sign({ email: 'a@b.test' }, { aud: 'other-aud' });
     expectUnauthorized(
-      await f.raw('/v1/contacts', 'GET', undefined, { 'Cf-Access-Jwt-Assertion': token }),
+      await fx.raw('/v1/contacts', 'GET', undefined, {
+        'Cf-Access-Jwt-Assertion': token,
+      }),
       'wrong audience',
     );
   } finally {
-    await f.dispose();
+    await fx.dispose();
   }
 });
 
 test('a wrong issuer is rejected with 401', async () => {
-  const f = await startFixture();
+  const fx = await startFixture();
   try {
-    const token = await f.sign({ email: 'a@b.test' }, { iss: 'https://evil.example.com' });
+    const token = await fx.sign(
+      { email: 'a@b.test' },
+      { iss: 'https://evil.example.com' },
+    );
     expectUnauthorized(
-      await f.raw('/v1/contacts', 'GET', undefined, { 'Cf-Access-Jwt-Assertion': token }),
+      await fx.raw('/v1/contacts', 'GET', undefined, {
+        'Cf-Access-Jwt-Assertion': token,
+      }),
       'wrong issuer',
     );
   } finally {
-    await f.dispose();
+    await fx.dispose();
   }
 });
 
 test('a token without an email claim is rejected with 401', async () => {
-  const f = await startFixture();
+  const fx = await startFixture();
   try {
-    const token = await f.sign({ sub: 'no-email' });
+    const token = await fx.sign({ sub: 'no-email' });
     expectUnauthorized(
-      await f.raw('/v1/contacts', 'GET', undefined, { 'Cf-Access-Jwt-Assertion': token }),
+      await fx.raw('/v1/contacts', 'GET', undefined, {
+        'Cf-Access-Jwt-Assertion': token,
+      }),
       'missing email',
     );
   } finally {
-    await f.dispose();
+    await fx.dispose();
   }
 });
 
 test('an unknown key id is rejected with 401', async () => {
-  const f = await startFixture();
+  const fx = await startFixture();
   try {
-    const token = await f.sign({ email: 'a@b.test' }, { kid: 'unknown-kid' });
+    const token = await fx.sign({ email: 'a@b.test' }, { kid: 'unknown-kid' });
     expectUnauthorized(
-      await f.raw('/v1/contacts', 'GET', undefined, { 'Cf-Access-Jwt-Assertion': token }),
+      await fx.raw('/v1/contacts', 'GET', undefined, {
+        'Cf-Access-Jwt-Assertion': token,
+      }),
       'unknown kid',
     );
   } finally {
-    await f.dispose();
+    await fx.dispose();
   }
 });
 
 test('a JWKS endpoint failure is rejected with 401, never 500', async () => {
-  const f = await startFixture({ jwksFails: true });
+  const fx = await startFixture({ jwksFails: true });
   try {
-    const token = await f.sign({ email: 'admin@example.test' });
-    const result = await f.raw(
-      '/v1/contacts',
-      'GET',
-      undefined,
-      { 'Cf-Access-Jwt-Assertion': token },
-    );
+    const token = await fx.sign({ email: 'admin@example.test' });
+    const result = await fx.raw('/v1/contacts', 'GET', undefined, {
+      'Cf-Access-Jwt-Assertion': token,
+    });
     expectUnauthorized(result, 'JWKS failure');
   } finally {
-    await f.dispose();
+    await fx.dispose();
   }
 });
 
 test('a valid Access token is accepted', async () => {
-  const f = await startFixture();
+  const fx = await startFixture();
   try {
-    const token = await f.sign({ email: 'admin@example.test' });
-    const result = await f.raw(
-      '/v1/contacts',
-      'GET',
-      undefined,
-      { 'Cf-Access-Jwt-Assertion': token },
-    );
+    const token = await fx.sign({ email: 'admin@example.test' });
+    const result = await fx.raw('/v1/contacts', 'GET', undefined, {
+      'Cf-Access-Jwt-Assertion': token,
+    });
     expect(result.status, JSON.stringify(result)).toBe(200);
     expect(Array.isArray(result.json.data)).toBe(true);
     // The bootstrap pipeline exists straight from the migration.
-    const pipelines = await f.raw('/v1/pipelines', 'GET', undefined, {
+    const pipelines = await fx.raw('/v1/pipelines', 'GET', undefined, {
       'Cf-Access-Jwt-Assertion': token,
     });
     expect(pipelines.status, JSON.stringify(pipelines)).toBe(200);
-    const names = (pipelines.json.data as Array<{ name: string }>).map((p) => p.name);
+    const names = (pipelines.json.data as Array<{ name: string }>).map(
+      (item) => item.name,
+    );
     expect(names).toContain('Sales');
   } finally {
-    await f.dispose();
+    await fx.dispose();
   }
 });
 
 test('a revoked intake token cannot submit and an unknown token is rejected', async () => {
-  const f = await startFixture({ devAdmin: 'intake-auth@example.test' });
+  const fx = await startFixture({ devAdmin: 'intake-auth@example.test' });
   try {
-    const created = await f.raw('/v1/tokens', 'POST', { name: 'to-revoke' });
+    const created = await fx.raw('/v1/tokens', 'POST', { name: 'to-revoke' });
     expect(created.status, JSON.stringify(created)).toBe(201);
     const { id, token } = created.json.data as { id: string; token: string };
     const payload = {
@@ -321,17 +357,23 @@ test('a revoked intake token cannot submit and an unknown token is rejected', as
       source: 'website_form',
     };
     const intake = (auth: string, key: string) =>
-      f.raw('/v1/intakes', 'POST', payload, {
+      fx.raw('/v1/intakes', 'POST', payload, {
         Authorization: `Bearer ${auth}`,
         'Idempotency-Key': key,
       });
 
     expect((await intake(token, 'neg-first')).status).toBe(201);
-    const revoked = await f.raw(`/v1/tokens/${id}`, 'DELETE');
+    const revoked = await fx.raw(`/v1/tokens/${id}`, 'DELETE');
     expect(revoked.status, JSON.stringify(revoked)).toBe(204);
-    expectUnauthorized(await intake(token, 'neg-second'), 'revoked intake token');
-    expectUnauthorized(await intake('cld_unknown', 'neg-third'), 'unknown intake token');
+    expectUnauthorized(
+      await intake(token, 'neg-second'),
+      'revoked intake token',
+    );
+    expectUnauthorized(
+      await intake('cld_unknown', 'neg-third'),
+      'unknown intake token',
+    );
   } finally {
-    await f.dispose();
+    await fx.dispose();
   }
 });

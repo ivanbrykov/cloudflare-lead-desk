@@ -4,17 +4,32 @@
     "baseUrl": ".",
     "composite": true,
     "jsx": "react-jsx",
-    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "lib": [
+      "ES2023",
+      "DOM",
+      "DOM.Iterable"
+    ],
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "noEmit": true,
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": [
+        "./src/*"
+      ]
     },
     "skipLibCheck": true,
     "strict": true,
     "target": "ES2023",
-    "types": ["@cloudflare/workers-types", "vitest/globals"]
+    "types": [
+      "@cloudflare/workers-types",
+      "vitest/globals"
+    ]
   },
-  "include": ["src", "tests", "vite.config.ts", "drizzle.config.ts"]
+  "include": [
+    "src",
+    "tests",
+    "vite.config.ts",
+    "vitest.config.ts",
+    "drizzle.config.ts"
+  ]
 }

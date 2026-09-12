@@ -1,6 +1,6 @@
+import { CreateOpportunitySchema, IntakeInputSchema } from '@/domain/schemas';
 import { Schema } from 'effect';
 import { describe, expect, test } from 'vitest';
-import { CreateOpportunitySchema, IntakeInputSchema } from '@/domain/schemas';
 
 describe('intake contract', () => {
   test('decodes a valid public form submission', async () => {
@@ -22,13 +22,13 @@ describe('intake contract', () => {
     ).rejects.toThrow();
   });
 
-  test("decodes a manual opportunity for an existing contact", async () => {
+  test('decodes a manual opportunity for an existing contact', async () => {
     const input = await Schema.decodeUnknownPromise(CreateOpportunitySchema)({
-      contactId: "01ARZ3NDEKTSV4RRFFQ69G5FAY",
-      name: "New service inquiry",
-      source: "Manual entry",
+      contactId: '01ARZ3NDEKTSV4RRFFQ69G5FAY',
+      name: 'New service inquiry',
+      source: 'Manual entry',
     });
-    expect(input.contactId).toBe("01ARZ3NDEKTSV4RRFFQ69G5FAY");
-    expect(input.name).toContain("service");
+    expect(input.contactId).toBe('01ARZ3NDEKTSV4RRFFQ69G5FAY');
+    expect(input.name).toContain('service');
   });
 });

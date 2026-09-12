@@ -1,23 +1,13 @@
 {
-  "name": "cloudflare-lead-desk",
-  "version": "0.1.0-alpha.0",
-  "description": "A Cloudflare-native, self-hosted CRM for inbound lead teams.",
-  "license": "Apache-2.0",
-  "private": false,
-  "type": "module",
-  "packageManager": "pnpm@10.34.5",
-  "scripts": {
-    "build": "vite build",
-    "check": "pnpm run typecheck && pnpm run test",
-    "db:generate": "drizzle-kit generate",
-    "db:migrate:local": "wrangler d1 migrations apply DB --local",
-    "db:migrate:remote": "wrangler d1 migrations apply DB --remote",
-    "deploy": "pnpm run build && wrangler d1 migrations apply DB --remote && wrangler deploy",
-    "dev": "vite",
-    "dev:worker": "pnpm run build && wrangler dev",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "typecheck": "tsc --noEmit"
+  "cloudflare": {
+    "bindings": {
+      "ACCESS_AUD": {
+        "description": "The audience (AUD) tag of your Cloudflare Access application protecting this worker. Found in Zero Trust → Access → Applications."
+      },
+      "ACCESS_TEAM_DOMAIN": {
+        "description": "Your Cloudflare Zero Trust team domain, e.g. `your-team.cloudflareaccess.com`."
+      }
+    }
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",
@@ -42,6 +32,7 @@
     "tailwind-merge": "^3.4.0",
     "wouter": "^3.7.1"
   },
+  "description": "A Cloudflare-native, self-hosted CRM for inbound lead teams.",
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.22.0",
     "@cloudflare/workers-types": "^4.20260130.0",
@@ -51,25 +42,39 @@
     "@types/react-dom": "^19.2.4",
     "@vitejs/plugin-react": "^5.1.1",
     "drizzle-kit": "^0.31.8",
+    "esbuild": "0.28.1",
+    "eslint": "^9.39.5",
+    "eslint-config-canonical": "^47.4.2",
+    "eslint-import-resolver-typescript": "^4.4.5",
+    "miniflare": "5.20260815.0-alpha",
     "tailwindcss": "^4.1.18",
     "typescript": "^5.9.3",
     "vite": "^7.3.1",
     "vitest": "^4.0.16",
-    "wrangler": "^4.61.1",
-    "esbuild": "0.28.1",
-    "miniflare": "5.20260815.0-alpha"
+    "wrangler": "^4.61.1"
   },
   "engines": {
     "node": ">=24.20.0 <25"
   },
-  "cloudflare": {
-    "bindings": {
-      "ACCESS_AUD": {
-        "description": "The audience (AUD) tag of your Cloudflare Access application protecting this worker. Found in Zero Trust → Access → Applications."
-      },
-      "ACCESS_TEAM_DOMAIN": {
-        "description": "Your Cloudflare Zero Trust team domain, e.g. `your-team.cloudflareaccess.com`."
-      }
-    }
-  }
+  "license": "Apache-2.0",
+  "name": "cloudflare-lead-desk",
+  "packageManager": "pnpm@10.34.5",
+  "private": false,
+  "scripts": {
+    "build": "vite build",
+    "check": "pnpm run lint && pnpm run typecheck && pnpm run test",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate:local": "wrangler d1 migrations apply DB --local",
+    "db:migrate:remote": "wrangler d1 migrations apply DB --remote",
+    "deploy": "pnpm run build && wrangler d1 migrations apply DB --remote && wrangler deploy",
+    "dev": "vite",
+    "dev:worker": "pnpm run build && wrangler dev",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "type": "module",
+  "version": "0.1.0-alpha.0"
 }
