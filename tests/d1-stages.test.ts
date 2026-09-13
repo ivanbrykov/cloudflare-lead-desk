@@ -71,12 +71,15 @@ type StageFixture = {
 };
 
 /**
- * Fresh fixture applying drizzle/ migrations in order. `preLastMigration`
- * runs after every migration except the last, mirroring a database that
- * accumulated data (e.g. duplicate stage positions) before 0002 shipped.
+ * Fresh fixture applying drizzle/ migrations in order. `beforeStageUniqueness`
+ * runs immediately before migration 0002, which adds the unique
+ * (pipeline_id, position) index, mirroring a database that accumulated data
+ * (e.g. duplicate stage positions) before 0002 shipped.
  */
 const startFixture = async (
-  options: { preLastMigration?: (database: D1Database) => Promise<void> } = {},
+  options: {
+    beforeStageUniqueness?: (database: D1Database) => Promise<void>;
+  } = {},
 ): Promise<StageFixture> => {
   const script = await bundleWorker();
   const mf = new Miniflare(
@@ -109,15 +112,12 @@ const startFixture = async (
     const names = (await readdir(join(repoRoot, 'drizzle')))
       .filter((name) => name.endsWith('.sql'))
       .toSorted();
-    for (let index = 0; index < names.length; index += 1) {
-      if (options.preLastMigration && index === names.length - 1) {
-        await options.preLastMigration(database);
+    for (const name of names) {
+      if (options.beforeStageUniqueness && name.startsWith('0002_')) {
+        await options.beforeStageUniqueness(database);
       }
 
-      const sql = await readFile(
-        join(repoRoot, 'drizzle', names[index]),
-        'utf8',
-      );
+      const sql = await readFile(join(repoRoot, 'drizzle', name), 'utf8');
       for (const statement of sql
         .split('--> statement-breakpoint')
         .map((chunk) => chunk.trim())
@@ -217,7 +217,7 @@ test('bootstrap rows come from the migration and requests never resurrect them',
 
 test('the migration renumbers duplicate positions deterministically before enforcing uniqueness', async () => {
   const fx = await startFixture({
-    preLastMigration: async (database) => {
+    beforeStageUniqueness: async (database) => {
       // A pre-0002 database: same workspace id, a second pipeline whose
       // stages all share position 0 (legal before the unique index).
       await database

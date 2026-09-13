@@ -16,6 +16,8 @@
     }
   ],
   "vars": {
+    // Set to "true" after creating the first account to close registration.
+    "DISABLE_SIGN_UP": "false",
     "ENVIRONMENT": "production"
   }
 }

@@ -27,11 +27,16 @@ import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
 
 export type Env = {
-  ACCESS_AUD: string;
-  ACCESS_TEAM_DOMAIN: string;
   ASSETS: Fetcher;
+  BETTER_AUTH_SECRET: string;
+  // Optional canonical origin for auth callbacks/redirects. When unset the
+  // origin is derived from the incoming request (any host is accepted).
+  BETTER_AUTH_URL?: string;
   DB: D1Database;
+  // Development/test-only identity bypass. Never honored in production.
   DEV_ADMIN_EMAIL?: string;
+  // Set to "true" to close email/password registration after the first account.
+  DISABLE_SIGN_UP?: string;
   ENVIRONMENT: 'development' | 'production' | 'test';
 };
 

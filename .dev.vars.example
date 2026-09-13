@@ -1,4 +1,3 @@
-# Cloudflare Access application audience (AUD) tag for this deployment.
-ACCESS_AUD=development-audience
-# Cloudflare Zero Trust team domain, e.g. your-team.cloudflareaccess.com.
-ACCESS_TEAM_DOMAIN=example.cloudflareaccess.com
+# Secret used to sign Better Auth session cookies. Generate a fresh value with:
+#   openssl rand -base64 32
+BETTER_AUTH_SECRET=replace-with-openssl-rand-base64-32

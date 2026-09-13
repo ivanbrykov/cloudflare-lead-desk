@@ -1,5 +1,5 @@
+import { type Auth } from '@/auth';
 import { type Env } from '@/db/repository';
-import { createRemoteJWKSet, jwtVerify } from 'jose';
 
 export class UnauthorizedError extends Error {
   constructor(message = 'Authentication is required.') {
@@ -7,44 +7,23 @@ export class UnauthorizedError extends Error {
   }
 }
 
-const HTTPS_PREFIX = /^https:\/\//u;
-
-const jwtSetFor = (teamDomain: string) =>
-  createRemoteJWKSet(
-    new URL(
-      `https://${teamDomain.replace(HTTPS_PREFIX, '')}/cdn-cgi/access/certs`,
-    ),
-  );
-
-export const requireAccessIdentity = async (
+export const requireSessionIdentity = async (
   request: Request,
+  auth: Auth,
   environment: Env,
 ): Promise<string> => {
+  // Development/test-only bypass so local runs and the Miniflare D1 suites do
+  // not need a real session. Production always requires a Better Auth session.
   if (environment.ENVIRONMENT !== 'production' && environment.DEV_ADMIN_EMAIL) {
     return environment.DEV_ADMIN_EMAIL;
   }
 
-  if (!environment.ACCESS_AUD || !environment.ACCESS_TEAM_DOMAIN) {
-    throw new UnauthorizedError('Cloudflare Access is not configured.');
-  }
-
-  const assertion = request.headers.get('Cf-Access-Jwt-Assertion');
-  if (!assertion) {
+  const session = await auth.api.getSession({ headers: request.headers });
+  if (!session) {
     throw new UnauthorizedError();
   }
 
-  const teamDomain = environment.ACCESS_TEAM_DOMAIN.replace(HTTPS_PREFIX, '');
-  const { payload } = await jwtVerify(assertion, jwtSetFor(teamDomain), {
-    audience: environment.ACCESS_AUD,
-    issuer: `https://${teamDomain}`,
-  });
-  if (typeof payload.email !== 'string' || payload.email.length === 0) {
-    throw new UnauthorizedError(
-      'Cloudflare Access did not provide an email identity.',
-    );
-  }
-
-  return payload.email;
+  return session.user.email;
 };
 
 export const bearerToken = (request: Request): null | string => {
