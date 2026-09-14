@@ -3,6 +3,15 @@
     "bindings": {
       "BETTER_AUTH_SECRET": {
         "description": "Secret used to sign Better Auth session cookies. Generate with `openssl rand -base64 32`."
+      },
+      "BETTER_AUTH_URL": {
+        "description": "Public origin (URL) of your deployed Worker, for example `https://my-crm.example.workers.dev`. Required in production."
+      },
+      "SETUP_TOKEN": {
+        "description": "Invite token required to create a staff account. Generate with `openssl rand -hex 32`. Rotate it in the dashboard if it leaks."
+      },
+      "STAFF_EMAILS": {
+        "description": "Comma-separated staff emails allowed to sign in, for example `you@company.com,teammate@company.com`. Change it later in the dashboard without redeploying."
       }
     }
   },

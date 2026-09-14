@@ -9,8 +9,10 @@ import { expect, test } from 'vitest';
  *
  * The worker runs in Miniflare in PRODUCTION mode (no DEV_ADMIN_EMAIL
  * bypass), so every protected route resolves a Better Auth session from the
- * request cookie. The fixture applies the real drizzle/ migrations, including
- * the generated Better Auth tables, against in-memory D1.
+ * request cookie. Registration is invite-gated (X-Setup-Token must match the
+ * SETUP_TOKEN binding) and access is allowlist-gated (STAFF_EMAILS). The
+ * fixture applies the real drizzle/ migrations, including the generated
+ * Better Auth tables, against in-memory D1.
  */
 
 const repoRoot = process.cwd();
@@ -28,6 +30,7 @@ const assertRepoRoot = async () => {
 // Better Auth requires a sufficiently long secret; any fixed test value works.
 const SECRET = 'test-secret-test-secret-test-secret-12';
 const ORIGIN = 'https://auth-test.example';
+const SETUP_TOKEN = 'test-invite-token';
 
 const workerScripts = new Map<string, string>();
 
@@ -64,6 +67,13 @@ type AuthFixture = {
   ) => Promise<RawResult>;
 };
 
+type FixtureOptions = {
+  // null removes the binding from the fixture entirely.
+  betterAuthUrl?: null | string;
+  setupToken?: null | string;
+  staffEmails?: null | string;
+};
+
 type RawResult = {
   cookie: string;
   json: Record<string, unknown>;
@@ -71,14 +81,25 @@ type RawResult = {
 };
 
 const startFixture = async (
-  options: { disableSignUp?: boolean } = {},
+  options: FixtureOptions = {},
 ): Promise<AuthFixture> => {
   const script = await bundleWorker();
   const bindings: Record<string, string> = {
     BETTER_AUTH_SECRET: SECRET,
     ENVIRONMENT: 'production',
-    ...(options.disableSignUp ? { DISABLE_SIGN_UP: 'true' } : {}),
   };
+  if (options.betterAuthUrl !== null) {
+    bindings.BETTER_AUTH_URL = options.betterAuthUrl ?? ORIGIN;
+  }
+
+  if (options.setupToken !== null) {
+    bindings.SETUP_TOKEN = options.setupToken ?? SETUP_TOKEN;
+  }
+
+  if (options.staffEmails !== null) {
+    bindings.STAFF_EMAILS = options.staffEmails ?? 'admin@example.test';
+  }
+
   const mf = new Miniflare(
     convertV4MiniflareOptions({
       bindings,
@@ -157,15 +178,38 @@ const expectUnauthorized = (result: RawResult, label: string) => {
   );
 };
 
+const expectRejectedSignUp = (result: RawResult, label: string) => {
+  expect(result.status, `${label}: ${JSON.stringify(result)}`).toBe(403);
+  expect(result.json.code, `${label}: ${JSON.stringify(result)}`).toBe(
+    'invite_token_required',
+  );
+  expect(result.cookie, `${label}: ${JSON.stringify(result)}`).toBe('');
+};
+
+const userCount = async (fx: AuthFixture): Promise<number> => {
+  const row = await fx.db
+    .prepare('SELECT count(*) AS count FROM user')
+    .first<{ count: number }>();
+  return row?.count ?? 0;
+};
+
 const signUp = async (
   fx: AuthFixture,
   email = 'admin@example.test',
+  token: null | string = SETUP_TOKEN,
 ): Promise<string> => {
-  const result = await fx.raw('/api/auth/sign-up/email', 'POST', {
-    email,
-    name: 'Test Admin',
-    password: 'correct-horse-battery',
-  });
+  const result = await fx.raw(
+    '/api/auth/sign-up/email',
+    'POST',
+    {
+      email,
+      name: 'Test Admin',
+      password: 'correct-horse-battery',
+    },
+    {
+      ...(token === null ? {} : { 'X-Setup-Token': token }),
+    },
+  );
   expect(result.status, JSON.stringify(result)).toBe(200);
   expect(result.cookie).not.toBe('');
   return result.cookie;
@@ -180,13 +224,119 @@ test('an unauthenticated request is rejected with 401', async () => {
   }
 });
 
-test('sign-up creates a session cookie that grants access', async () => {
+test('sign-up without an invite token is rejected and grants no access', async () => {
+  const fx = await startFixture();
+  try {
+    const result = await fx.raw('/api/auth/sign-up/email', 'POST', {
+      email: 'admin@example.test',
+      name: 'Test Admin',
+      password: 'correct-horse-battery',
+    });
+    expectRejectedSignUp(result, 'sign-up without token');
+    expect(await userCount(fx), 'no user row may be written').toBe(0);
+    expectUnauthorized(await fx.raw('/v1/contacts'), 'no token, no access');
+  } finally {
+    await fx.dispose();
+  }
+});
+
+test('sign-up rejects a wrong invite token', async () => {
+  const fx = await startFixture();
+  try {
+    const result = await fx.raw(
+      '/api/auth/sign-up/email',
+      'POST',
+      {
+        email: 'admin@example.test',
+        name: 'Test Admin',
+        password: 'correct-horse-battery',
+      },
+      { 'X-Setup-Token': 'not-the-invite-token' },
+    );
+    expectRejectedSignUp(result, 'sign-up with wrong token');
+    expect(await userCount(fx), 'no user row may be written').toBe(0);
+  } finally {
+    await fx.dispose();
+  }
+});
+
+test('sign-up is rejected when SETUP_TOKEN is not configured', async () => {
+  const fx = await startFixture({ setupToken: null });
+  try {
+    const result = await fx.raw(
+      '/api/auth/sign-up/email',
+      'POST',
+      {
+        email: 'admin@example.test',
+        name: 'Test Admin',
+        password: 'correct-horse-battery',
+      },
+      { 'X-Setup-Token': 'any-token' },
+    );
+    expectRejectedSignUp(result, 'sign-up without SETUP_TOKEN binding');
+    expect(await userCount(fx), 'no user row may be written').toBe(0);
+  } finally {
+    await fx.dispose();
+  }
+});
+
+test('sign-up with the invite token grants access for an allowlisted email', async () => {
   const fx = await startFixture();
   try {
     const cookie = await signUp(fx);
     const contacts = await fx.raw('/v1/contacts', 'GET', undefined, { cookie });
     expect(contacts.status, JSON.stringify(contacts)).toBe(200);
     expect(Array.isArray(contacts.json.data)).toBe(true);
+  } finally {
+    await fx.dispose();
+  }
+});
+
+test('a token holder whose email is not allowlisted is denied on /v1/contacts', async () => {
+  const fx = await startFixture();
+  try {
+    const cookie = await signUp(fx, 'contractor@example.test');
+    expect(await userCount(fx), 'the account itself is allowed').toBe(1);
+    const contacts = await fx.raw('/v1/contacts', 'GET', undefined, { cookie });
+    expectUnauthorized(contacts, 'non-allowlisted email');
+  } finally {
+    await fx.dispose();
+  }
+});
+
+test('an empty STAFF_EMAILS deny-lists every session in production', async () => {
+  const fx = await startFixture({ staffEmails: '' });
+  try {
+    const cookie = await signUp(fx);
+    expectUnauthorized(
+      await fx.raw('/v1/contacts', 'GET', undefined, { cookie }),
+      'empty allowlist',
+    );
+  } finally {
+    await fx.dispose();
+  }
+});
+
+test('production without BETTER_AUTH_URL fails closed', async () => {
+  const fx = await startFixture({ betterAuthUrl: null });
+  try {
+    const result = await fx.raw(
+      '/api/auth/sign-up/email',
+      'POST',
+      {
+        email: 'admin@example.test',
+        name: 'Test Admin',
+        password: 'correct-horse-battery',
+      },
+      { 'X-Setup-Token': SETUP_TOKEN },
+    );
+    expect(result.status, JSON.stringify(result)).toBe(503);
+    expect(result.json.code, JSON.stringify(result)).toBe(
+      'authentication_not_configured',
+    );
+    expect(result.cookie).toBe('');
+    expect(await userCount(fx), 'no user row may be written').toBe(0);
+    expectUnauthorized(await fx.raw('/v1/contacts'), 'no session possible');
   } finally {
     await fx.dispose();
   }
@@ -208,20 +358,6 @@ test('sign-in rejects a wrong password and accepts the right one', async () => {
     });
     expect(right.status, JSON.stringify(right)).toBe(200);
     expect(right.cookie).not.toBe('');
-  } finally {
-    await fx.dispose();
-  }
-});
-
-test('DISABLE_SIGN_UP closes registration', async () => {
-  const fx = await startFixture({ disableSignUp: true });
-  try {
-    const result = await fx.raw('/api/auth/sign-up/email', 'POST', {
-      email: 'late@example.test',
-      name: 'Late Arrival',
-      password: 'correct-horse-battery',
-    });
-    expect(result.status, JSON.stringify(result)).toBeGreaterThanOrEqual(400);
   } finally {
     await fx.dispose();
   }

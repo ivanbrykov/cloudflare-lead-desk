@@ -1826,6 +1826,7 @@ const LoginPage = () => {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [inviteToken, setInviteToken] = useState('');
   const [error, setError] = useState<null | string>(null);
   const [pending, setPending] = useState(false);
   const submit = async (event: React.FormEvent) => {
@@ -1834,7 +1835,14 @@ const LoginPage = () => {
     setPending(true);
     const result =
       mode === 'sign-up'
-        ? await signUp.email({ email, name, password })
+        ? await signUp.email({
+            email,
+            fetchOptions: {
+              headers: { 'X-Setup-Token': inviteToken.trim() },
+            },
+            name,
+            password,
+          })
         : await signIn.email({ email, password });
     setPending(false);
     if (result.error) {
@@ -1892,6 +1900,19 @@ const LoginPage = () => {
               value={password}
             />
           </label>
+          {mode === 'sign-up' && (
+            <label className="grid gap-1 text-sm text-slate-300">
+              Invite token
+              <input
+                onChange={(event) => {
+                  setInviteToken(event.target.value);
+                }}
+                placeholder="Shared with you by a staff member"
+                required
+                value={inviteToken}
+              />
+            </label>
+          )}
           {error && (
             <p className="rounded-md border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-100">
               {error}
@@ -1914,7 +1935,7 @@ const LoginPage = () => {
         >
           {mode === 'sign-up'
             ? 'Already have an account? Sign in'
-            : 'First time here? Create an account'}
+            : 'First time here? Create an account (invite only)'}
         </button>
       </div>
     </div>

@@ -7,6 +7,26 @@ export class UnauthorizedError extends Error {
   }
 }
 
+const parseStaffAllowlist = (allowlist: string | undefined): string[] =>
+  (allowlist ?? '')
+    .split(',')
+    .map((entry) => entry.trim().toLowerCase())
+    .filter((entry) => entry !== '');
+
+/**
+ * The single staff allowlist check: an email is staff when it matches an
+ * entry of STAFF_EMAILS after trimming whitespace and ignoring case.
+ */
+export const isStaffEmail = (
+  email: string,
+  allowlist: string | undefined,
+): boolean => {
+  const normalized = email.trim().toLowerCase();
+  return (
+    normalized !== '' && parseStaffAllowlist(allowlist).includes(normalized)
+  );
+};
+
 export const requireSessionIdentity = async (
   request: Request,
   auth: Auth,
@@ -23,7 +43,20 @@ export const requireSessionIdentity = async (
     throw new UnauthorizedError();
   }
 
-  return session.user.email;
+  const email = session.user.email;
+  // The allowlist is the staff gate: in production a session is only
+  // honored for an allowlisted email, and an unset/empty allowlist fails
+  // closed instead of letting every session through.
+  if (
+    environment.ENVIRONMENT === 'production' &&
+    !isStaffEmail(email, environment.STAFF_EMAILS)
+  ) {
+    throw new UnauthorizedError(
+      'This account is not authorized to use this deployment.',
+    );
+  }
+
+  return email;
 };
 
 export const bearerToken = (request: Request): null | string => {

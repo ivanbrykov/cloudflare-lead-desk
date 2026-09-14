@@ -29,15 +29,19 @@ import { drizzle } from 'drizzle-orm/d1';
 export type Env = {
   ASSETS: Fetcher;
   BETTER_AUTH_SECRET: string;
-  // Optional canonical origin for auth callbacks/redirects. When unset the
-  // origin is derived from the incoming request (any host is accepted).
+  // Canonical public origin of the deployment. Required in production:
+  // without it Better Auth fails closed (503 on every auth endpoint).
   BETTER_AUTH_URL?: string;
   DB: D1Database;
   // Development/test-only identity bypass. Never honored in production.
   DEV_ADMIN_EMAIL?: string;
-  // Set to "true" to close email/password registration after the first account.
-  DISABLE_SIGN_UP?: string;
   ENVIRONMENT: 'development' | 'production' | 'test';
+  // Invite token required to create a staff account (X-Setup-Token header on
+  // POST /api/auth/sign-up/email). Unset or empty rejects every sign-up.
+  SETUP_TOKEN?: string;
+  // Comma-separated staff emails. The only emails authorized on protected
+  // /v1 routes; unset or empty denies every session in production.
+  STAFF_EMAILS?: string;
 };
 
 export const DEFAULT_WORKSPACE_ID = '01ARZ3NDEKTSV4RRFFQ69G5FAV';
