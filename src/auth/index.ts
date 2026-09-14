@@ -1,3 +1,4 @@
+import { isStaffEmail } from './access';
 import { type Env } from '@/db/repository';
 import * as schema from '@/db/schema';
 import { drizzleAdapter } from '@better-auth/drizzle-adapter';
@@ -91,6 +92,22 @@ export const createAuth = (environment: Env) => {
             code: 'invite_token_required',
             message:
               'Registration is invite-only. A valid invite token is required.',
+          });
+        }
+
+        // The allowlist also gates account creation, so a leaked invite token
+        // cannot create accounts for arbitrary emails. isStaffEmail is false
+        // for an empty allowlist, so production fails closed here too.
+        const email = context.body?.email;
+        if (
+          environment.ENVIRONMENT === 'production' &&
+          (typeof email !== 'string' ||
+            !isStaffEmail(email, environment.STAFF_EMAILS))
+        ) {
+          throw APIError.from('FORBIDDEN', {
+            code: 'email_not_authorized',
+            message:
+              'This email is not authorized to create an account on this deployment.',
           });
         }
       }),

@@ -21,7 +21,7 @@ Every deployment is independent: the repo carries no account-specific values.
 
 The button clones this repository into your own GitHub or GitLab account, provisions a fresh D1 database in your Cloudflare account, prompts for the secrets listed in `.dev.vars.example` (`BETTER_AUTH_URL`, `BETTER_AUTH_SECRET`, `STAFF_EMAILS`, `SETUP_TOKEN`), runs the migrations as part of `pnpm run deploy`, and connects Workers Builds so every push to your copy deploys automatically.
 
-After the first deploy, open the app, switch to sign-up, and create the first account using the invite token (`SETUP_TOKEN`). Registration is invite-gated by design — every sign-up must present the token, so there is no separate "close registration" step. To add staff later, add their email to `STAFF_EMAILS` in the dashboard and share the invite token. Only emails in `STAFF_EMAILS` get data access: a token holder whose email is not allowlisted can create an account but sees no data.
+After the first deploy, open the app, switch to sign-up, and create the first account using the invite token (`SETUP_TOKEN`). Registration is invite-gated by design — every sign-up must present the token and use an email in `STAFF_EMAILS`, so there is no separate "close registration" step. To add staff later, add their email to `STAFF_EMAILS` in the dashboard and share the invite token. Only emails in `STAFF_EMAILS` can create an account or reach data.
 
 ### Manual install
 

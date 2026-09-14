@@ -292,26 +292,43 @@ test('sign-up with the invite token grants access for an allowlisted email', asy
   }
 });
 
-test('a token holder whose email is not allowlisted is denied on /v1/contacts', async () => {
+test('a token holder whose email is not allowlisted cannot create an account', async () => {
   const fx = await startFixture();
   try {
-    const cookie = await signUp(fx, 'contractor@example.test');
-    expect(await userCount(fx), 'the account itself is allowed').toBe(1);
-    const contacts = await fx.raw('/v1/contacts', 'GET', undefined, { cookie });
-    expectUnauthorized(contacts, 'non-allowlisted email');
+    const result = await fx.raw(
+      '/api/auth/sign-up/email',
+      'POST',
+      {
+        email: 'contractor@example.test',
+        name: 'Contractor',
+        password: 'correct-horse-battery',
+      },
+      { 'X-Setup-Token': SETUP_TOKEN },
+    );
+    expect(result.status, JSON.stringify(result)).toBe(403);
+    expect(result.cookie).toBe('');
+    expect(await userCount(fx), 'no user row is created').toBe(0);
   } finally {
     await fx.dispose();
   }
 });
 
-test('an empty STAFF_EMAILS deny-lists every session in production', async () => {
+test('an empty STAFF_EMAILS rejects sign-up in production', async () => {
   const fx = await startFixture({ staffEmails: '' });
   try {
-    const cookie = await signUp(fx);
-    expectUnauthorized(
-      await fx.raw('/v1/contacts', 'GET', undefined, { cookie }),
-      'empty allowlist',
+    const result = await fx.raw(
+      '/api/auth/sign-up/email',
+      'POST',
+      {
+        email: 'admin@example.test',
+        name: 'Test Admin',
+        password: 'correct-horse-battery',
+      },
+      { 'X-Setup-Token': SETUP_TOKEN },
     );
+    expect(result.status, JSON.stringify(result)).toBe(403);
+    expect(result.cookie).toBe('');
+    expect(await userCount(fx), 'no user row is created').toBe(0);
   } finally {
     await fx.dispose();
   }
