@@ -19,7 +19,7 @@ Every deployment is independent: the repo carries no account-specific values.
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/ivanbrykov/cloudflare-lead-desk)
 
-The button clones this repository into your own GitHub or GitLab account, provisions a fresh D1 database in your Cloudflare account, prompts for the secrets listed in `.dev.vars.example` (`BETTER_AUTH_URL`, `BETTER_AUTH_SECRET`, `STAFF_EMAILS`, `SETUP_TOKEN`), runs the migrations as part of `pnpm run deploy`, and connects Workers Builds so every push to your copy deploys automatically.
+The button clones this repository into your own GitHub or GitLab account, lets you choose the Worker name and the D1 database name on the setup page, prompts for the secrets listed in `.dev.vars.example` (`BETTER_AUTH_URL`, `BETTER_AUTH_SECRET`, `STAFF_EMAILS`, `SETUP_TOKEN`), provisions the database in your Cloudflare account, runs the migrations as part of `pnpm run deploy`, and connects Workers Builds so every push to your copy deploys automatically.
 
 After the first deploy, open the app, switch to sign-up, and create the first account using the invite token (`SETUP_TOKEN`). Registration is invite-gated by design — every sign-up must present the token and use an email in `STAFF_EMAILS`, so there is no separate "close registration" step. To add staff later, add their email to `STAFF_EMAILS` in the dashboard and share the invite token. Only emails in `STAFF_EMAILS` can create an account or reach data.
 
@@ -28,7 +28,7 @@ After the first deploy, open the app, switch to sign-up, and create the first ac
 Prerequisites: a Cloudflare account, Node.js 24.20.0 (see `.node-version`) and pnpm 10.34.5. Install the pinned pnpm version using `npm install --global pnpm@10.34.5` if needed.
 
 1. Install dependencies: `pnpm install --frozen-lockfile`.
-2. Create the D1 database in your account: `pnpm exec wrangler d1 create cloudflare-lead-desk`.
+2. Create the D1 database in your account with any name you like — it does not need to match the Worker, for example `pnpm exec wrangler d1 create lead-desk-db`. Copy the `database_id` it prints into the `d1_databases` entry in `wrangler.jsonc` (replacing the empty string) and set `database_name` to the same name you used.
 3. Set the session secret: `openssl rand -base64 32 | pnpm exec wrangler secret put BETTER_AUTH_SECRET`.
 4. In the dashboard (Workers → Settings), set `BETTER_AUTH_URL` to the Worker's public origin (for example `https://cloudflare-lead-desk.<your-account>.workers.dev` — required in production, where authentication fails closed without it), `STAFF_EMAILS` to the comma-separated emails of the staff who may sign in, and `SETUP_TOKEN` to an invite token (`openssl rand -hex 32`).
 5. Deploy: `pnpm run deploy` (set `CLOUDFLARE_ACCOUNT_ID` if your wrangler login spans multiple accounts). The deploy script builds, applies the D1 migrations, and deploys. The migration also bootstraps the default workspace, pipeline, and stage rows (fixed ids, `INSERT OR IGNORE`) and makes stage positions unique per pipeline — the app itself never seeds data per request, so deleted bootstrap rows are not resurrected. Migration commands reference the `DB` binding rather than a database name, so renamed databases keep working.

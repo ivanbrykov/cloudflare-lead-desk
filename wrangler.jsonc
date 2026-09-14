@@ -14,7 +14,11 @@
   "d1_databases": [
     {
       "binding": "DB",
+      // Default name for the provisioned database. The empty database_id marks
+      // this as a resource the one-click install should create; the install
+      // writes the real id (and can name the database) in the cloned repo.
       "database_name": "cloudflare-lead-desk",
+      "database_id": "",
       "migrations_dir": "drizzle"
     }
   ],
