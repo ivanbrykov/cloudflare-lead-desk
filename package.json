@@ -7,6 +7,9 @@
       "BETTER_AUTH_URL": {
         "description": "Public origin (URL) of your deployed Worker, for example `https://my-crm.example.workers.dev`. Required in production."
       },
+      "DB": {
+        "description": "D1 database that stores all Lead Desk data. Name it whatever you like during install - migrations run against the `DB` binding, so renaming the database is safe."
+      },
       "SETUP_TOKEN": {
         "description": "Invite token required to create a staff account. Generate with `openssl rand -hex 32`. Rotate it in the dashboard if it leaks."
       },
