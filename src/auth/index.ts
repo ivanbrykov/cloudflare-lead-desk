@@ -8,6 +8,99 @@ import { drizzle } from 'drizzle-orm/d1';
 
 const encoder = new TextEncoder();
 
+const PRODUCTION_PLACEHOLDER_SECRETS = new Set([
+  'replace-with-openssl-rand-base64-32',
+  'replace-with-openssl-rand-hex-32',
+]);
+
+export class AuthConfigurationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'AuthConfigurationError';
+  }
+}
+
+export const authenticationNotConfiguredResponse = () =>
+  Response.json(
+    {
+      code: 'authentication_not_configured',
+      message: 'Authentication is not configured on this deployment.',
+    },
+    { status: 503 },
+  );
+
+const isProduction = (environment: Env) =>
+  environment.ENVIRONMENT === 'production';
+
+const configuredValue = (value: string | undefined): string | undefined => {
+  const trimmed = value?.trim();
+  return trimmed || undefined;
+};
+
+/**
+ * Resolves the public origin without consulting request headers. On Workers,
+ * request.url is produced by the incoming route, whereas Host and forwarded
+ * headers are client-controlled inputs to this application.
+ */
+const resolveAuthOrigin = (environment: Env, request: Request): string => {
+  const override = configuredValue(environment.BETTER_AUTH_URL);
+  const candidate = override ?? request.url;
+  let url: URL;
+  try {
+    url = new URL(candidate);
+  } catch {
+    throw new AuthConfigurationError(
+      override
+        ? 'BETTER_AUTH_URL must be an absolute origin URL.'
+        : 'The request URL does not contain a valid origin.',
+    );
+  }
+
+  if (
+    (url.protocol !== 'http:' && url.protocol !== 'https:') ||
+    url.host.includes('*') ||
+    url.host.includes('?') ||
+    (override &&
+      (url.username ||
+        url.password ||
+        url.pathname !== '/' ||
+        url.search ||
+        url.hash)) ||
+    url.origin === 'null'
+  ) {
+    throw new AuthConfigurationError(
+      override
+        ? 'BETTER_AUTH_URL must be an absolute origin without a path, query, or fragment.'
+        : 'The request URL does not contain a valid HTTP origin.',
+    );
+  }
+
+  if (isProduction(environment) && url.protocol !== 'https:') {
+    throw new AuthConfigurationError(
+      'Authentication requires an HTTPS origin in production.',
+    );
+  }
+
+  return url.origin;
+};
+
+const assertProductionSecrets = (environment: Env) => {
+  if (!isProduction(environment)) {
+    return;
+  }
+
+  const secret = configuredValue(environment.BETTER_AUTH_SECRET);
+  if (
+    !secret ||
+    secret.length < 32 ||
+    PRODUCTION_PLACEHOLDER_SECRETS.has(secret)
+  ) {
+    throw new AuthConfigurationError(
+      'BETTER_AUTH_SECRET must be a non-placeholder secret of at least 32 characters in production.',
+    );
+  }
+};
+
 /**
  * Timing-safe comparison for the invite token. workerd extends WebCrypto
  * with `crypto.subtle.timingSafeEqual` (synchronous, throws on length
@@ -36,29 +129,23 @@ const tokenMatches = (provided: string, expected: string): boolean => {
   return difference === 0;
 };
 
-// Built per app instance because the D1 binding only exists on the request
-// environment. The Better Auth CLI loads ./cli.ts instead (no bindings are
-// available there), so keep the options below in sync with that file.
-export const createAuth = (environment: Env) => {
-  // Production pins the origin to BETTER_AUTH_URL. Without it the wildcard
-  // host allowlist must not be used, so authConfigured stays false and every
-  // auth endpoint fails closed (503) instead of minting sessions.
-  const authConfigured =
-    environment.ENVIRONMENT !== 'production' ||
-    Boolean(environment.BETTER_AUTH_URL);
-  if (!authConfigured) {
-    // eslint-disable-next-line no-console -- misconfiguration must be visible in Worker logs
-    console.error(
-      'BETTER_AUTH_URL is not set: Better Auth fails closed in production. Set BETTER_AUTH_URL to the public origin of this Worker.',
-    );
-  }
+// Constructed for each authentication operation. The Worker module can keep
+// the Elysia app compiled globally, but it must never retain a request-derived
+// Better Auth origin across requests. The CLI loads ./cli.ts instead (no
+// bindings are available there), so keep the options below in sync with it.
+export const createAuth = (environment: Env, request: Request) => {
+  const origin = resolveAuthOrigin(environment, request);
+  assertProductionSecrets(environment);
 
   return betterAuth({
-    baseURL:
-      environment.BETTER_AUTH_URL ??
-      (environment.ENVIRONMENT === 'production'
-        ? undefined
-        : { allowedHosts: ['*'] }),
+    advanced: {
+      // Keep this explicit: the resolved origin above is intentionally the
+      // only authority; x-forwarded-host and x-forwarded-proto stay ignored.
+      trustedProxyHeaders: false,
+    },
+    // Both Better Auth's base URL and its CSRF allowlist contain one exact
+    // origin. Do not use allowedHosts: it resolves Host / forwarded headers.
+    baseURL: origin,
     database: drizzleAdapter(drizzle(environment.DB, { schema }), {
       provider: 'sqlite',
       schema,
@@ -68,14 +155,6 @@ export const createAuth = (environment: Env) => {
     },
     hooks: {
       before: createAuthMiddleware(async (context) => {
-        if (!authConfigured) {
-          throw APIError.fromStatus(503, {
-            code: 'authentication_not_configured',
-            message:
-              'Authentication is not configured on this deployment. Set BETTER_AUTH_URL.',
-          });
-        }
-
         if (context.path !== '/sign-up/email') {
           return;
         }
@@ -86,6 +165,10 @@ export const createAuth = (environment: Env) => {
         const provided = context.getHeader('x-setup-token') ?? '';
         if (
           !environment.SETUP_TOKEN ||
+          (isProduction(environment) &&
+            PRODUCTION_PLACEHOLDER_SECRETS.has(
+              environment.SETUP_TOKEN.trim(),
+            )) ||
           !tokenMatches(provided, environment.SETUP_TOKEN)
         ) {
           throw APIError.from('FORBIDDEN', {

@@ -2,10 +2,7 @@
   "cloudflare": {
     "bindings": {
       "BETTER_AUTH_SECRET": {
-        "description": "Secret used to sign Better Auth session cookies. Generate with `openssl rand -base64 32`."
-      },
-      "BETTER_AUTH_URL": {
-        "description": "Public origin (URL) of your deployed Worker, for example `https://my-crm.example.workers.dev`. Required in production."
+        "description": "Secret used to sign Better Auth session cookies. Generate once per installation with `openssl rand -base64 32`; keep it across redeployments."
       },
       "DB": {
         "description": "D1 database that stores all Lead Desk data. Name it whatever you like during install - migrations run against the `DB` binding, so renaming the database is safe."

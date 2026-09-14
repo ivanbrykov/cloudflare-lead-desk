@@ -15,7 +15,12 @@ import {
   updateOpportunityCommand,
 } from '@/application/commands';
 import { type DomainError, type PersistenceError } from '@/application/errors';
-import { type Auth, createAuth } from '@/auth';
+import {
+  type Auth,
+  AuthConfigurationError,
+  authenticationNotConfiguredResponse,
+  createAuth,
+} from '@/auth';
 import {
   bearerToken,
   requireSessionIdentity,
@@ -146,12 +151,26 @@ const parse = async <A, I>(
   }
 };
 
-const requireAdmin = async (request: Request, auth: Auth, environment: Env) => {
+type AuthForRequest = (request: Request) => Auth;
+
+const requireAdmin = async (
+  request: Request,
+  getAuth: AuthForRequest,
+  environment: Env,
+) => {
   try {
     return {
-      email: await requireSessionIdentity(request, auth, environment),
+      email: await requireSessionIdentity(
+        request,
+        getAuth(request),
+        environment,
+      ),
     } as const;
   } catch (error) {
+    if (error instanceof AuthConfigurationError) {
+      return { error: authenticationNotConfiguredResponse() } as const;
+    }
+
     return {
       error: errorResponse(
         401,
@@ -164,19 +183,27 @@ const requireAdmin = async (request: Request, auth: Auth, environment: Env) => {
   }
 };
 
-const createAppWithAuth = (environment: Env, auth: Auth) =>
+const createAppWithAuth = (environment: Env, getAuth: AuthForRequest) =>
   new Elysia({ adapter: CloudflareAdapter, name: 'cloudflare-lead-desk-api' })
     // Elysia's mount() strips the mount prefix before forwarding. Better Auth
     // expects its full basePath, so re-add the prefix to the cloned request.
     .mount('/api/auth', (request: Request) => {
-      const url = new URL(request.url);
-      url.pathname = `/api/auth${url.pathname}`;
-      return auth.handler(new Request(url, request));
+      try {
+        const url = new URL(request.url);
+        url.pathname = `/api/auth${url.pathname}`;
+        return getAuth(request).handler(new Request(url, request));
+      } catch (error) {
+        if (error instanceof AuthConfigurationError) {
+          return authenticationNotConfiguredResponse();
+        }
+
+        throw error;
+      }
     })
     .get('/health', () => ({ ok: true }))
     .get('/openapi', () => Response.json(openApiSpecification))
     .get('/v1/contacts', async ({ query, request }) => {
-      const admin = await requireAdmin(request, auth, environment);
+      const admin = await requireAdmin(request, getAuth, environment);
       if ('error' in admin) {
         return admin.error;
       }
@@ -213,7 +240,7 @@ const createAppWithAuth = (environment: Env, auth: Auth) =>
       return { data: page.contacts, nextCursor: page.nextCursor };
     })
     .post('/v1/contacts', async ({ body, request }) => {
-      const admin = await requireAdmin(request, auth, environment);
+      const admin = await requireAdmin(request, getAuth, environment);
       if ('error' in admin) {
         return admin.error;
       }
@@ -232,7 +259,7 @@ const createAppWithAuth = (environment: Env, auth: Auth) =>
         : Response.json({ data: result.data }, { status: 201 });
     })
     .get('/v1/contacts/:id', async ({ params, request }) => {
-      const admin = await requireAdmin(request, auth, environment);
+      const admin = await requireAdmin(request, getAuth, environment);
       if ('error' in admin) {
         return admin.error;
       }
@@ -243,7 +270,7 @@ const createAppWithAuth = (environment: Env, auth: Auth) =>
         : errorResponse(404, 'not_found', 'Contact not found.');
     })
     .put('/v1/contacts/:id', async ({ body, params, request }) => {
-      const admin = await requireAdmin(request, auth, environment);
+      const admin = await requireAdmin(request, getAuth, environment);
       if ('error' in admin) {
         return admin.error;
       }
@@ -266,7 +293,7 @@ const createAppWithAuth = (environment: Env, auth: Auth) =>
         : errorResponse(404, 'not_found', 'Contact not found.');
     })
     .delete('/v1/contacts/:id', async ({ params, request }) => {
-      const admin = await requireAdmin(request, auth, environment);
+      const admin = await requireAdmin(request, getAuth, environment);
       if ('error' in admin) {
         return admin.error;
       }
@@ -294,7 +321,7 @@ const createAppWithAuth = (environment: Env, auth: Auth) =>
       return errorResponse(404, 'not_found', 'Contact not found.');
     })
     .post('/v1/opportunities', async ({ body, request }) => {
-      const admin = await requireAdmin(request, auth, environment);
+      const admin = await requireAdmin(request, getAuth, environment);
       if ('error' in admin) {
         return admin.error;
       }
@@ -327,7 +354,7 @@ const createAppWithAuth = (environment: Env, auth: Auth) =>
       return Response.json({ data: result.data }, { status: 201 });
     })
     .get('/v1/opportunities', async ({ query, request }) => {
-      const admin = await requireAdmin(request, auth, environment);
+      const admin = await requireAdmin(request, getAuth, environment);
       if ('error' in admin) {
         return admin.error;
       }
@@ -352,7 +379,7 @@ const createAppWithAuth = (environment: Env, auth: Auth) =>
       return { data: await listOpportunities(environment, pipelineId) };
     })
     .get('/v1/opportunities/:id', async ({ params, request }) => {
-      const admin = await requireAdmin(request, auth, environment);
+      const admin = await requireAdmin(request, getAuth, environment);
       if ('error' in admin) {
         return admin.error;
       }
@@ -363,7 +390,7 @@ const createAppWithAuth = (environment: Env, auth: Auth) =>
         : errorResponse(404, 'not_found', 'Opportunity not found.');
     })
     .patch('/v1/opportunities/:id', async ({ body, params, request }) => {
-      const admin = await requireAdmin(request, auth, environment);
+      const admin = await requireAdmin(request, getAuth, environment);
       if ('error' in admin) {
         return admin.error;
       }
@@ -386,7 +413,7 @@ const createAppWithAuth = (environment: Env, auth: Auth) =>
         : errorResponse(404, 'not_found', 'Opportunity not found.');
     })
     .post('/v1/opportunities/:id/move', async ({ body, params, request }) => {
-      const admin = await requireAdmin(request, auth, environment);
+      const admin = await requireAdmin(request, getAuth, environment);
       if ('error' in admin) {
         return admin.error;
       }
@@ -414,7 +441,7 @@ const createAppWithAuth = (environment: Env, auth: Auth) =>
         : errorResponse(404, 'not_found', 'Opportunity not found.');
     })
     .get('/v1/opportunities/:id/activities', async ({ params, request }) => {
-      const admin = await requireAdmin(request, auth, environment);
+      const admin = await requireAdmin(request, getAuth, environment);
       if ('error' in admin) {
         return admin.error;
       }
@@ -424,7 +451,7 @@ const createAppWithAuth = (environment: Env, auth: Auth) =>
     .post(
       '/v1/opportunities/:id/activities',
       async ({ body, params, request }) => {
-        const admin = await requireAdmin(request, auth, environment);
+        const admin = await requireAdmin(request, getAuth, environment);
         if ('error' in admin) {
           return admin.error;
         }
@@ -454,7 +481,7 @@ const createAppWithAuth = (environment: Env, auth: Auth) =>
       },
     )
     .get('/v1/pipelines', async ({ request }) => {
-      const admin = await requireAdmin(request, auth, environment);
+      const admin = await requireAdmin(request, getAuth, environment);
       if ('error' in admin) {
         return admin.error;
       }
@@ -462,7 +489,7 @@ const createAppWithAuth = (environment: Env, auth: Auth) =>
       return { data: await listPipelines(environment) };
     })
     .post('/v1/pipelines', async ({ body, request }) => {
-      const admin = await requireAdmin(request, auth, environment);
+      const admin = await requireAdmin(request, getAuth, environment);
       if ('error' in admin) {
         return admin.error;
       }
@@ -481,7 +508,7 @@ const createAppWithAuth = (environment: Env, auth: Auth) =>
         : Response.json({ data: result.data }, { status: 201 });
     })
     .post('/v1/pipelines/:id/stages', async ({ body, params, request }) => {
-      const admin = await requireAdmin(request, auth, environment);
+      const admin = await requireAdmin(request, getAuth, environment);
       if ('error' in admin) {
         return admin.error;
       }
@@ -500,7 +527,7 @@ const createAppWithAuth = (environment: Env, auth: Auth) =>
         : Response.json({ data: result.data }, { status: 201 });
     })
     .get('/v1/custom-fields', async ({ query, request }) => {
-      const admin = await requireAdmin(request, auth, environment);
+      const admin = await requireAdmin(request, getAuth, environment);
       if ('error' in admin) {
         return admin.error;
       }
@@ -519,7 +546,7 @@ const createAppWithAuth = (environment: Env, auth: Auth) =>
       return { data: await getFieldDefinitions(environment, query.entityType) };
     })
     .post('/v1/custom-fields', async ({ body, request }) => {
-      const admin = await requireAdmin(request, auth, environment);
+      const admin = await requireAdmin(request, getAuth, environment);
       if ('error' in admin) {
         return admin.error;
       }
@@ -549,7 +576,7 @@ const createAppWithAuth = (environment: Env, auth: Auth) =>
         : Response.json({ data: result.data }, { status: 201 });
     })
     .delete('/v1/custom-fields/:id', async ({ params, request }) => {
-      const admin = await requireAdmin(request, auth, environment);
+      const admin = await requireAdmin(request, getAuth, environment);
       if ('error' in admin) {
         return admin.error;
       }
@@ -559,7 +586,7 @@ const createAppWithAuth = (environment: Env, auth: Auth) =>
         : errorResponse(404, 'not_found', 'Custom field not found.');
     })
     .get('/v1/tokens', async ({ request }) => {
-      const admin = await requireAdmin(request, auth, environment);
+      const admin = await requireAdmin(request, getAuth, environment);
       if ('error' in admin) {
         return admin.error;
       }
@@ -567,7 +594,7 @@ const createAppWithAuth = (environment: Env, auth: Auth) =>
       return { data: await listApiTokens(environment) };
     })
     .post('/v1/tokens', async ({ body, request }) => {
-      const admin = await requireAdmin(request, auth, environment);
+      const admin = await requireAdmin(request, getAuth, environment);
       if ('error' in admin) {
         return admin.error;
       }
@@ -583,7 +610,7 @@ const createAppWithAuth = (environment: Env, auth: Auth) =>
       );
     })
     .delete('/v1/tokens/:id', async ({ params, request }) => {
-      const admin = await requireAdmin(request, auth, environment);
+      const admin = await requireAdmin(request, getAuth, environment);
       if ('error' in admin) {
         return admin.error;
       }
@@ -681,4 +708,4 @@ const createAppWithAuth = (environment: Env, auth: Auth) =>
     );
 
 export const createApp = (environment: Env) =>
-  createAppWithAuth(environment, createAuth(environment));
+  createAppWithAuth(environment, (request) => createAuth(environment, request));
