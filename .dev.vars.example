@@ -1,4 +1,16 @@
-# Cloudflare Access application audience (AUD) tag for this deployment.
-ACCESS_AUD=development-audience
-# Cloudflare Zero Trust team domain, e.g. your-team.cloudflareaccess.com.
-ACCESS_TEAM_DOMAIN=example.cloudflareaccess.com
+# Public origin (URL) of your deployed Worker, for example
+# https://my-crm.example.workers.dev. Required in production: without it
+# authentication fails closed (503) on every auth endpoint.
+BETTER_AUTH_URL=https://your-worker.example.workers.dev
+# Secret used to sign Better Auth session cookies. Generate a fresh value with:
+#   openssl rand -base64 32
+BETTER_AUTH_SECRET=replace-with-openssl-rand-base64-32
+# Comma-separated staff emails allowed to sign in, for example
+# you@company.com,teammate@company.com. Change it later in the dashboard
+# without redeploying. In production an empty list authorizes no one.
+STAFF_EMAILS=you@company.com
+# Invite token required to create a staff account (sent as the X-Setup-Token
+# header on the sign-up screen). Generate with:
+#   openssl rand -hex 32
+# Rotate it in the dashboard if it leaks.
+SETUP_TOKEN=replace-with-openssl-rand-hex-32

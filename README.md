@@ -6,7 +6,7 @@ A self-hosted, Cloudflare-native CRM for teams handling inbound opportunities. I
 
 - Contacts, opportunities, pipelines, stages, notes, and a Kanban work queue.
 - Configurable fields for contacts and opportunities.
-- Cloudflare Access staff authentication and displayed-once `intake:write` tokens.
+- Email + password staff authentication (Better Auth, D1-backed sessions) and displayed-once `intake:write` tokens.
 - Idempotent, atomic `POST /v1/intakes` capture for websites and other trusted systems.
 
 Companies, tasks, email sync, imports, reporting, workflows, custom objects, and multi-tenancy are deliberately not included yet.
@@ -19,25 +19,32 @@ Every deployment is independent: the repo carries no account-specific values.
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/ivanbrykov/cloudflare-lead-desk)
 
-The button clones this repository into your own GitHub or GitLab account, provisions a fresh D1 database in your Cloudflare account, prompts for the secrets listed in `.dev.vars.example`, runs the migrations as part of `pnpm run deploy`, and connects Workers Builds so every push to your copy deploys automatically.
+The button clones this repository into your own GitHub or GitLab account, provisions a fresh D1 database in your Cloudflare account, prompts for the secrets listed in `.dev.vars.example` (`BETTER_AUTH_URL`, `BETTER_AUTH_SECRET`, `STAFF_EMAILS`, `SETUP_TOKEN`), runs the migrations as part of `pnpm run deploy`, and connects Workers Builds so every push to your copy deploys automatically.
 
-After the first deploy, create a Cloudflare Access application for the worker's hostname in your Zero Trust team and set its audience and team domain as the `ACCESS_AUD` and `ACCESS_TEAM_DOMAIN` secrets. Until these are set, staff routes return 401.
+After the first deploy, open the app, switch to sign-up, and create the first account using the invite token (`SETUP_TOKEN`). Registration is invite-gated by design — every sign-up must present the token and use an email in `STAFF_EMAILS`, so there is no separate "close registration" step. To add staff later, add their email to `STAFF_EMAILS` in the dashboard and share the invite token. Only emails in `STAFF_EMAILS` can create an account or reach data.
 
 ### Manual install
 
-Prerequisites: a Cloudflare account, Node.js 24.20.0 (see `.node-version`) and pnpm 10.34.5, and a Cloudflare Zero Trust team. Install the pinned pnpm version using `npm install --global pnpm@10.34.5` if needed.
+Prerequisites: a Cloudflare account, Node.js 24.20.0 (see `.node-version`) and pnpm 10.34.5. Install the pinned pnpm version using `npm install --global pnpm@10.34.5` if needed.
 
 1. Install dependencies: `pnpm install --frozen-lockfile`.
 2. Create the D1 database in your account: `pnpm exec wrangler d1 create cloudflare-lead-desk`.
-3. Configure a Cloudflare Access application for the deployed hostname in your Zero Trust team, then set its audience and team hostname as worker secrets: `pnpm exec wrangler secret put ACCESS_AUD` and `pnpm exec wrangler secret put ACCESS_TEAM_DOMAIN`.
-4. Deploy: `pnpm run deploy` (set `CLOUDFLARE_ACCOUNT_ID` if your wrangler login spans multiple accounts). The deploy script builds, applies the D1 migrations, and deploys. The migration also bootstraps the default workspace, pipeline, and stage rows (fixed ids, `INSERT OR IGNORE`) and makes stage positions unique per pipeline — the app itself never seeds data per request, so deleted bootstrap rows are not resurrected. Migration commands reference the `DB` binding rather than a database name, so renamed databases keep working.
+3. Set the session secret: `openssl rand -base64 32 | pnpm exec wrangler secret put BETTER_AUTH_SECRET`.
+4. In the dashboard (Workers → Settings), set `BETTER_AUTH_URL` to the Worker's public origin (for example `https://cloudflare-lead-desk.<your-account>.workers.dev` — required in production, where authentication fails closed without it), `STAFF_EMAILS` to the comma-separated emails of the staff who may sign in, and `SETUP_TOKEN` to an invite token (`openssl rand -hex 32`).
+5. Deploy: `pnpm run deploy` (set `CLOUDFLARE_ACCOUNT_ID` if your wrangler login spans multiple accounts). The deploy script builds, applies the D1 migrations, and deploys. The migration also bootstraps the default workspace, pipeline, and stage rows (fixed ids, `INSERT OR IGNORE`) and makes stage positions unique per pipeline — the app itself never seeds data per request, so deleted bootstrap rows are not resurrected. Migration commands reference the `DB` binding rather than a database name, so renamed databases keep working.
 
 You can also connect the repository in the dashboard under Workers → Settings → Builds, with the deploy command set to `pnpm run deploy`.
+
+Open the deployed app, switch to sign-up, and create the first account using
+the `SETUP_TOKEN` invite token. Registration stays invite-gated — every
+sign-up must present the token — so there is no follow-up step to close it.
+Adding staff means adding their email to `STAFF_EMAILS` and sharing the
+invite token; only allowlisted emails get data access.
 
 Both `src/worker-global.ts` (the configured deployment entry) and the compatibility
 entry `src/worker.ts` use the same app compiled at module scope.
 
-For local development, copy `.dev.vars.example` to `.dev.vars` and add `ENVIRONMENT=development` and a `DEV_ADMIN_EMAIL`, then run `pnpm run dev:worker` and `pnpm run dev`. `DEV_ADMIN_EMAIL` is honored only outside production, and deployments always set `ENVIRONMENT=production`, so the two dev-only values are deliberately absent from `.dev.vars.example` (its entries become prompted secrets in the one-click install flow).
+For local development, copy `.dev.vars.example` to `.dev.vars` and set `BETTER_AUTH_SECRET` (`openssl rand -base64 32`) and `SETUP_TOKEN` (`openssl rand -hex 32`), then run `pnpm run dev:worker` and `pnpm run dev`. Enter the invite token on the sign-up screen to create a throwaway account; sessions are stored in local D1. Optionally add `ENVIRONMENT=development` and a `DEV_ADMIN_EMAIL` to bypass the session check locally — `DEV_ADMIN_EMAIL` is honored only outside production, and deployments always set `ENVIRONMENT=production`, so those dev-only values are deliberately absent from `.dev.vars.example` (its entries become prompted secrets in the one-click install flow).
 
 ## Integration API
 
@@ -173,7 +180,7 @@ existing opportunity. It accepts `{ name?, estimatedValue? }`:
 - `estimatedValue` must be a non-negative finite number. An explicit `null`
   clears the stored value; omitting the field keeps it. Negative or
   non-finite values return `422 validation_error`.
-- Unknown ids return `404 not_found`. Cloudflare Access authentication is
+- Unknown ids return `404 not_found`. Staff authentication is
   required; missing or invalid identities return `401 unauthorized`.
 
 The workbench exposes the endpoint as a minimal "Edit details" form on the

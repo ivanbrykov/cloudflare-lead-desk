@@ -5,6 +5,9 @@
   "compatibility_date": "2026-08-23",
   "compatibility_flags": ["nodejs_compat"],
   "assets": {
+    // The Worker forwards non-API requests (including SPA deep links) to the
+    // assets binding, so it must be exposed as `env.ASSETS`.
+    "binding": "ASSETS",
     "directory": "./dist",
     "not_found_handling": "single-page-application"
   },

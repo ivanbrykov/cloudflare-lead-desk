@@ -6,6 +6,7 @@ import {
   type CreateCustomField,
   CreateCustomFieldSchema,
 } from './domain/schemas';
+import { signIn, signOut, signUp, useSession } from './lib/auth-client';
 import {
   customFieldsForCreate,
   customFieldsForUpdate,
@@ -25,6 +26,7 @@ import {
   ContactRound,
   KeyRound,
   LayoutList,
+  LogOut,
   PanelsTopLeft,
   Plus,
   Settings2,
@@ -292,8 +294,20 @@ const Shell = ({ children }: { readonly children: React.ReactNode }) => {
             );
           })}
         </nav>
-        <div className="mt-6 border-t border-slate-800 pt-4 text-xs leading-relaxed text-slate-500">
-          Cloudflare-native CRM alpha
+        <div className="mt-6 border-t border-slate-800 pt-4">
+          <button
+            className="flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium text-slate-400 transition hover:bg-slate-800/70 hover:text-slate-100"
+            onClick={() => {
+              void signOut();
+            }}
+            type="button"
+          >
+            <LogOut size={16} />
+            Sign out
+          </button>
+          <p className="mt-2 px-3 text-xs leading-relaxed text-slate-500">
+            Cloudflare-native CRM alpha
+          </p>
         </div>
       </aside>
       <main className="min-w-0">{children}</main>
@@ -1807,27 +1821,163 @@ const TokensPage = () => {
   );
 };
 
-export const App = () => (
-  <Shell>
-    <Switch>
-      <Route path="/opportunities/:id">
-        {(parameters) => <OpportunityDetail id={parameters.id} />}
-      </Route>
-      <Route path="/opportunities">
-        <OpportunitiesPage />
-      </Route>
-      <Route path="/contacts">
-        <ContactsPage />
-      </Route>
-      <Route path="/settings/fields">
-        <FieldsPage />
-      </Route>
-      <Route path="/settings/tokens">
-        <TokensPage />
-      </Route>
-      <Route>
-        <OpportunitiesPage />
-      </Route>
-    </Switch>
-  </Shell>
-);
+const LoginPage = () => {
+  const [mode, setMode] = useState<'sign-in' | 'sign-up'>('sign-in');
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [inviteToken, setInviteToken] = useState('');
+  const [error, setError] = useState<null | string>(null);
+  const [pending, setPending] = useState(false);
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setError(null);
+    setPending(true);
+    const result =
+      mode === 'sign-up'
+        ? await signUp.email({
+            email,
+            fetchOptions: {
+              headers: { 'X-Setup-Token': inviteToken.trim() },
+            },
+            name,
+            password,
+          })
+        : await signIn.email({ email, password });
+    setPending(false);
+    if (result.error) {
+      setError(result.error.message ?? 'Authentication failed.');
+    }
+  };
+
+  return (
+    <div className="grid min-h-screen place-items-center bg-slate-950 p-4 text-slate-100">
+      <div className="w-full max-w-sm rounded-xl border border-slate-800 bg-slate-900/70 p-6">
+        <div className="mb-6 flex items-center gap-2 text-sm font-bold tracking-tight text-white">
+          <span className="grid size-7 place-items-center rounded-md bg-cyan-400 text-slate-950">
+            <PanelsTopLeft size={16} />
+          </span>
+          Lead Desk
+        </div>
+        <form
+          className="grid gap-4"
+          onSubmit={submit}
+        >
+          {mode === 'sign-up' && (
+            <label className="grid gap-1 text-sm text-slate-300">
+              Name
+              <input
+                onChange={(event) => {
+                  setName(event.target.value);
+                }}
+                placeholder="Ada Lovelace"
+                required
+                value={name}
+              />
+            </label>
+          )}
+          <label className="grid gap-1 text-sm text-slate-300">
+            Email
+            <input
+              onChange={(event) => {
+                setEmail(event.target.value);
+              }}
+              placeholder="you@example.com"
+              required
+              type="email"
+              value={email}
+            />
+          </label>
+          <label className="grid gap-1 text-sm text-slate-300">
+            Password
+            <input
+              minLength={8}
+              onChange={(event) => {
+                setPassword(event.target.value);
+              }}
+              required
+              type="password"
+              value={password}
+            />
+          </label>
+          {mode === 'sign-up' && (
+            <label className="grid gap-1 text-sm text-slate-300">
+              Invite token
+              <input
+                onChange={(event) => {
+                  setInviteToken(event.target.value);
+                }}
+                placeholder="Shared with you by a staff member"
+                required
+                value={inviteToken}
+              />
+            </label>
+          )}
+          {error && (
+            <p className="rounded-md border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-100">
+              {error}
+            </p>
+          )}
+          <Button
+            disabled={pending}
+            type="submit"
+          >
+            {mode === 'sign-up' ? 'Create account' : 'Sign in'}
+          </Button>
+        </form>
+        <button
+          className="mt-4 text-sm text-cyan-300 hover:text-cyan-200"
+          onClick={() => {
+            setMode(mode === 'sign-up' ? 'sign-in' : 'sign-up');
+            setError(null);
+          }}
+          type="button"
+        >
+          {mode === 'sign-up'
+            ? 'Already have an account? Sign in'
+            : 'First time here? Create an account (invite only)'}
+        </button>
+      </div>
+    </div>
+  );
+};
+
+export const App = () => {
+  const { data: session, isPending } = useSession();
+  if (isPending) {
+    return (
+      <div className="grid min-h-screen place-items-center bg-slate-950 text-sm text-slate-400">
+        Loading…
+      </div>
+    );
+  }
+
+  if (!session) {
+    return <LoginPage />;
+  }
+
+  return (
+    <Shell>
+      <Switch>
+        <Route path="/opportunities/:id">
+          {(parameters) => <OpportunityDetail id={parameters.id} />}
+        </Route>
+        <Route path="/opportunities">
+          <OpportunitiesPage />
+        </Route>
+        <Route path="/contacts">
+          <ContactsPage />
+        </Route>
+        <Route path="/settings/fields">
+          <FieldsPage />
+        </Route>
+        <Route path="/settings/tokens">
+          <TokensPage />
+        </Route>
+        <Route>
+          <OpportunitiesPage />
+        </Route>
+      </Switch>
+    </Shell>
+  );
+};
