@@ -8,7 +8,7 @@
         "description": "D1 database that stores all Lead Desk data. Name it whatever you like during install - migrations run against the `DB` binding, so renaming the database is safe."
       },
       "SETUP_TOKEN": {
-        "description": "Invite token required to create a staff account. Generate with `openssl rand -hex 32`. Rotate it in the dashboard if it leaks."
+        "description": "Invite token required to create a staff account (at least 32 characters in production). Generate with `openssl rand -hex 32`. Rotate it in the dashboard if it leaks."
       },
       "STAFF_EMAILS": {
         "description": "Comma-separated staff emails allowed to sign in, for example `you@company.com,teammate@company.com`. Change it later in the dashboard without redeploying."

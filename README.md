@@ -48,7 +48,9 @@ entry `src/worker.ts` use the same app compiled at module scope.
 
 Missing or old template-placeholder session secrets fail authentication closed.
 An empty `STAFF_EMAILS` authorizes nobody in production, and an empty
-`SETUP_TOKEN` disables new registrations. The invite token is reusable; rotate it
+`SETUP_TOKEN` disables new registrations. Production also rejects invite tokens
+shorter than 32 characters after trimming whitespace; this does not disable
+existing accounts or sign-in. The invite token is reusable; rotate it
 if it leaks.
 
 ### Optional auth URL override

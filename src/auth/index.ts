@@ -163,13 +163,13 @@ export const createAuth = (environment: Env, request: Request) => {
         // token in X-Setup-Token, compared against SETUP_TOKEN in constant
         // time. A missing/unset SETUP_TOKEN rejects every sign-up.
         const provided = context.getHeader('x-setup-token') ?? '';
+        const setupToken = environment.SETUP_TOKEN;
         if (
-          !environment.SETUP_TOKEN ||
+          !setupToken ||
           (isProduction(environment) &&
-            PRODUCTION_PLACEHOLDER_SECRETS.has(
-              environment.SETUP_TOKEN.trim(),
-            )) ||
-          !tokenMatches(provided, environment.SETUP_TOKEN)
+            (setupToken.trim().length < 32 ||
+              PRODUCTION_PLACEHOLDER_SECRETS.has(setupToken.trim()))) ||
+          !tokenMatches(provided, setupToken)
         ) {
           throw APIError.from('FORBIDDEN', {
             code: 'invite_token_required',

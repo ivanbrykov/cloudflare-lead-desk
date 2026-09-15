@@ -30,7 +30,7 @@ const assertRepoRoot = async () => {
 // Better Auth requires a sufficiently long secret; any fixed test value works.
 const SECRET = 'test-secret-test-secret-test-secret-12';
 const ORIGIN = 'https://auth-test.example';
-const SETUP_TOKEN = 'test-invite-token';
+const SETUP_TOKEN = 'test-invite-token'.padEnd(32, '!');
 
 const workerScripts = new Map<string, string>();
 
@@ -541,6 +541,58 @@ test.each([
     }
   },
 );
+
+test.each(['x'.repeat(31), ` ${'x'.repeat(31)} `])(
+  'production rejects a setup token below 32 trimmed characters: %j',
+  async (setupToken) => {
+    const fx = await startFixture({ setupToken });
+    try {
+      const result = await fx.raw(
+        '/api/auth/sign-up/email',
+        'POST',
+        {
+          email: 'admin@example.test',
+          name: 'Test Admin',
+          password: 'correct-horse-battery',
+        },
+        { 'X-Setup-Token': setupToken },
+      );
+      expectRejectedSignUp(result, 'short invite token');
+      expect(await userCount(fx)).toBe(0);
+      // A weak invite token closes registration, not the other auth endpoints.
+      const signIn = await fx.raw('/api/auth/sign-in/email', 'POST', {
+        email: 'admin@example.test',
+        password: 'correct-horse-battery',
+      });
+      expect(signIn.status).toBe(401);
+      expect(signIn.json.code).toBe('INVALID_EMAIL_OR_PASSWORD');
+      expect((await fx.raw('/api/auth/get-session')).status).toBe(200);
+    } finally {
+      await fx.dispose();
+    }
+  },
+);
+
+test('production still requires an exact match for a 32-character setup token', async () => {
+  const fx = await startFixture();
+  try {
+    const result = await fx.raw(
+      '/api/auth/sign-up/email',
+      'POST',
+      {
+        email: 'admin@example.test',
+        name: 'Test Admin',
+        password: 'correct-horse-battery',
+      },
+      { 'X-Setup-Token': 'x'.repeat(32) },
+    );
+    expectRejectedSignUp(result, 'different 32-character invite token');
+    expect(await userCount(fx)).toBe(0);
+    await signUp(fx);
+  } finally {
+    await fx.dispose();
+  }
+});
 
 test('the documented SETUP_TOKEN placeholder cannot register an account in production', async () => {
   const fx = await startFixture({
