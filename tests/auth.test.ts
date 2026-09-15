@@ -30,7 +30,7 @@ const assertRepoRoot = async () => {
 // Better Auth requires a sufficiently long secret; any fixed test value works.
 const SECRET = 'test-secret-test-secret-test-secret-12';
 const ORIGIN = 'https://auth-test.example';
-const SETUP_TOKEN = 'test-invite-token';
+const SETUP_TOKEN = 'test-invite-token'.padEnd(32, '!');
 
 const workerScripts = new Map<string, string>();
 
@@ -64,11 +64,13 @@ type AuthFixture = {
     method?: string,
     body?: unknown,
     headers?: Record<string, string>,
+    origin?: string,
   ) => Promise<RawResult>;
 };
 
 type FixtureOptions = {
   // null removes the binding from the fixture entirely.
+  betterAuthSecret?: null | string;
   betterAuthUrl?: null | string;
   setupToken?: null | string;
   staffEmails?: null | string;
@@ -85,11 +87,14 @@ const startFixture = async (
 ): Promise<AuthFixture> => {
   const script = await bundleWorker();
   const bindings: Record<string, string> = {
-    BETTER_AUTH_SECRET: SECRET,
     ENVIRONMENT: 'production',
   };
-  if (options.betterAuthUrl !== null) {
-    bindings.BETTER_AUTH_URL = options.betterAuthUrl ?? ORIGIN;
+  if (options.betterAuthSecret !== null) {
+    bindings.BETTER_AUTH_SECRET = options.betterAuthSecret ?? SECRET;
+  }
+
+  if (options.betterAuthUrl !== null && options.betterAuthUrl !== undefined) {
+    bindings.BETTER_AUTH_URL = options.betterAuthUrl;
   }
 
   if (options.setupToken !== null) {
@@ -140,11 +145,12 @@ const startFixture = async (
       method = 'GET',
       body?: unknown,
       headers: Record<string, string> = {},
+      origin = ORIGIN,
     ): Promise<RawResult> => {
-      const response = await mf.dispatchFetch(`${ORIGIN}${path}`, {
+      const response = await mf.dispatchFetch(`${origin}${path}`, {
         headers: {
           'Content-Type': 'application/json',
-          Origin: ORIGIN,
+          Origin: origin,
           ...headers,
         },
         method,
@@ -334,8 +340,122 @@ test('an empty STAFF_EMAILS rejects sign-up in production', async () => {
   }
 });
 
-test('production without BETTER_AUTH_URL fails closed', async () => {
-  const fx = await startFixture({ betterAuthUrl: null });
+test('production infers the request origin for sign-up, sign-in, sessions, and API access', async () => {
+  const fx = await startFixture({ betterAuthUrl: '   ' });
+  try {
+    const cookie = await signUp(fx);
+    const signIn = await fx.raw('/api/auth/sign-in/email', 'POST', {
+      email: 'admin@example.test',
+      password: 'correct-horse-battery',
+    });
+    expect(signIn.status, JSON.stringify(signIn)).toBe(200);
+    const session = await fx.raw('/api/auth/get-session', 'GET', undefined, {
+      cookie,
+    });
+    expect(session.status, JSON.stringify(session)).toBe(200);
+    expect(session.json.user).toMatchObject({ email: 'admin@example.test' });
+    expect(
+      (await fx.raw('/v1/contacts', 'GET', undefined, { cookie })).status,
+    ).toBe(200);
+  } finally {
+    await fx.dispose();
+  }
+});
+
+test('uses request.url instead of Origin, Host, or forwarded headers', async () => {
+  const fx = await startFixture({
+    staffEmails: 'admin@example.test,second@example.test',
+  });
+  try {
+    const forwarded = await fx.raw(
+      '/api/auth/sign-up/email',
+      'POST',
+      {
+        email: 'admin@example.test',
+        name: 'Test Admin',
+        password: 'correct-horse-battery',
+      },
+      {
+        Host: 'attacker.example',
+        'X-Forwarded-Host': 'attacker.example',
+        'X-Forwarded-Proto': 'http',
+        'X-Setup-Token': SETUP_TOKEN,
+      },
+    );
+    expect(forwarded.status, JSON.stringify(forwarded)).toBe(200);
+
+    const maliciousOrigin = await fx.raw(
+      '/api/auth/sign-out',
+      'POST',
+      {},
+      { cookie: forwarded.cookie, Origin: 'https://attacker.example' },
+    );
+    expect(maliciousOrigin.status, JSON.stringify(maliciousOrigin)).toBe(403);
+
+    const maliciousCallback = await fx.raw(
+      '/api/auth/sign-up/email',
+      'POST',
+      {
+        callbackURL: 'https://attacker.example/steal-session',
+        email: 'second@example.test',
+        name: 'Second Admin',
+        password: 'correct-horse-battery',
+      },
+      { 'X-Setup-Token': SETUP_TOKEN },
+    );
+    expect(maliciousCallback.status, JSON.stringify(maliciousCallback)).toBe(
+      403,
+    );
+    expect(maliciousCallback.json.code).toBe('INVALID_CALLBACK_URL');
+    expect(await userCount(fx)).toBe(1);
+  } finally {
+    await fx.dispose();
+  }
+});
+
+test('does not retain an inferred origin between sequential requests', async () => {
+  const fx = await startFixture();
+  const firstOrigin = 'https://first-origin.example';
+  const secondOrigin = 'https://second-origin.example';
+  try {
+    const first = await fx.raw(
+      '/api/auth/sign-up/email',
+      'POST',
+      {
+        email: 'admin@example.test',
+        name: 'Test Admin',
+        password: 'correct-horse-battery',
+      },
+      { 'X-Setup-Token': SETUP_TOKEN },
+      firstOrigin,
+    );
+    expect(first.status, JSON.stringify(first)).toBe(200);
+
+    const second = await fx.raw(
+      '/api/auth/sign-in/email',
+      'POST',
+      { email: 'admin@example.test', password: 'correct-horse-battery' },
+      {},
+      secondOrigin,
+    );
+    expect(second.status, JSON.stringify(second)).toBe(200);
+
+    const staleOrigin = await fx.raw(
+      '/api/auth/sign-in/email',
+      'POST',
+      { email: 'admin@example.test', password: 'correct-horse-battery' },
+      { Origin: firstOrigin },
+      secondOrigin,
+    );
+    expect(staleOrigin.status, JSON.stringify(staleOrigin)).toBe(403);
+  } finally {
+    await fx.dispose();
+  }
+});
+
+test('uses a valid BETTER_AUTH_URL override as the exact trusted origin', async () => {
+  const override = 'https://canonical-auth.example';
+  const fx = await startFixture({ betterAuthUrl: override });
   try {
     const result = await fx.raw(
       '/api/auth/sign-up/email',
@@ -345,15 +465,152 @@ test('production without BETTER_AUTH_URL fails closed', async () => {
         name: 'Test Admin',
         password: 'correct-horse-battery',
       },
-      { 'X-Setup-Token': SETUP_TOKEN },
+      { Origin: override, 'X-Setup-Token': SETUP_TOKEN },
+      'https://routed-worker.example',
     );
-    expect(result.status, JSON.stringify(result)).toBe(503);
-    expect(result.json.code, JSON.stringify(result)).toBe(
-      'authentication_not_configured',
+    expect(result.status, JSON.stringify(result)).toBe(200);
+
+    const inferredOrigin = await fx.raw(
+      '/api/auth/sign-in/email',
+      'POST',
+      { email: 'admin@example.test', password: 'correct-horse-battery' },
+      {},
+      'https://routed-worker.example',
     );
-    expect(result.cookie).toBe('');
-    expect(await userCount(fx), 'no user row may be written').toBe(0);
-    expectUnauthorized(await fx.raw('/v1/contacts'), 'no session possible');
+    expect(inferredOrigin.status, JSON.stringify(inferredOrigin)).toBe(403);
+  } finally {
+    await fx.dispose();
+  }
+});
+
+test.each([
+  [
+    'invalid override',
+    { betterAuthUrl: 'https://worker.example/not-an-origin' },
+  ],
+  ['HTTP request origin', {}],
+  ['missing secret', { betterAuthSecret: null }],
+  ['short secret', { betterAuthSecret: 'too-short' }],
+  [
+    'placeholder secret',
+    { betterAuthSecret: 'replace-with-openssl-rand-base64-32' },
+  ],
+])(
+  'production %s fails closed for auth and session API calls',
+  async (_, options) => {
+    const fx = await startFixture(options);
+    const origin =
+      _ === 'HTTP request origin' ? 'http://worker.example' : ORIGIN;
+    try {
+      const signUpResult = await fx.raw(
+        '/api/auth/sign-up/email',
+        'POST',
+        {
+          email: 'admin@example.test',
+          name: 'Test Admin',
+          password: 'correct-horse-battery',
+        },
+        { 'X-Setup-Token': SETUP_TOKEN },
+        origin,
+      );
+      const signIn = await fx.raw(
+        '/api/auth/sign-in/email',
+        'POST',
+        { email: 'admin@example.test', password: 'correct-horse-battery' },
+        {},
+        origin,
+      );
+      const session = await fx.raw(
+        '/api/auth/get-session',
+        'GET',
+        undefined,
+        {},
+        origin,
+      );
+      const api = await fx.raw('/v1/contacts', 'GET', undefined, {}, origin);
+      for (const result of [signUpResult, signIn, session, api]) {
+        expect(result.status, JSON.stringify(result)).toBe(503);
+        expect(result.json.code, JSON.stringify(result)).toBe(
+          'authentication_not_configured',
+        );
+      }
+
+      expect(await userCount(fx)).toBe(0);
+    } finally {
+      await fx.dispose();
+    }
+  },
+);
+
+test.each(['x'.repeat(31), ` ${'x'.repeat(31)} `])(
+  'production rejects a setup token below 32 trimmed characters: %j',
+  async (setupToken) => {
+    const fx = await startFixture({ setupToken });
+    try {
+      const result = await fx.raw(
+        '/api/auth/sign-up/email',
+        'POST',
+        {
+          email: 'admin@example.test',
+          name: 'Test Admin',
+          password: 'correct-horse-battery',
+        },
+        { 'X-Setup-Token': setupToken },
+      );
+      expectRejectedSignUp(result, 'short invite token');
+      expect(await userCount(fx)).toBe(0);
+      // A weak invite token closes registration, not the other auth endpoints.
+      const signIn = await fx.raw('/api/auth/sign-in/email', 'POST', {
+        email: 'admin@example.test',
+        password: 'correct-horse-battery',
+      });
+      expect(signIn.status).toBe(401);
+      expect(signIn.json.code).toBe('INVALID_EMAIL_OR_PASSWORD');
+      expect((await fx.raw('/api/auth/get-session')).status).toBe(200);
+    } finally {
+      await fx.dispose();
+    }
+  },
+);
+
+test('production still requires an exact match for a 32-character setup token', async () => {
+  const fx = await startFixture();
+  try {
+    const result = await fx.raw(
+      '/api/auth/sign-up/email',
+      'POST',
+      {
+        email: 'admin@example.test',
+        name: 'Test Admin',
+        password: 'correct-horse-battery',
+      },
+      { 'X-Setup-Token': 'x'.repeat(32) },
+    );
+    expectRejectedSignUp(result, 'different 32-character invite token');
+    expect(await userCount(fx)).toBe(0);
+    await signUp(fx);
+  } finally {
+    await fx.dispose();
+  }
+});
+
+test('the documented SETUP_TOKEN placeholder cannot register an account in production', async () => {
+  const fx = await startFixture({
+    setupToken: 'replace-with-openssl-rand-hex-32',
+  });
+  try {
+    const result = await fx.raw(
+      '/api/auth/sign-up/email',
+      'POST',
+      {
+        email: 'admin@example.test',
+        name: 'Test Admin',
+        password: 'correct-horse-battery',
+      },
+      { 'X-Setup-Token': 'replace-with-openssl-rand-hex-32' },
+    );
+    expectRejectedSignUp(result, 'placeholder invite token');
+    expect(await userCount(fx)).toBe(0);
   } finally {
     await fx.dispose();
   }

@@ -29,8 +29,8 @@ import { drizzle } from 'drizzle-orm/d1';
 export type Env = {
   ASSETS: Fetcher;
   BETTER_AUTH_SECRET: string;
-  // Canonical public origin of the deployment. Required in production:
-  // without it Better Auth fails closed (503 on every auth endpoint).
+  // Optional canonical origin override. When absent or blank, authentication
+  // uses the incoming request URL's origin; production requires HTTPS.
   BETTER_AUTH_URL?: string;
   DB: D1Database;
   // Development/test-only identity bypass. Never honored in production.

@@ -19,7 +19,9 @@ Every deployment is independent: the repo carries no account-specific values.
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/ivanbrykov/cloudflare-lead-desk)
 
-The button clones this repository into your own GitHub or GitLab account, lets you choose the Worker name and the D1 database name on the setup page, prompts for the secrets listed in `.dev.vars.example` (`BETTER_AUTH_URL`, `BETTER_AUTH_SECRET`, `STAFF_EMAILS`, `SETUP_TOKEN`), provisions the database in your Cloudflare account, runs the migrations as part of `pnpm run deploy`, and connects Workers Builds so every push to your copy deploys automatically.
+The button clones this repository into your own GitHub or GitLab account, lets you choose the Worker name and the D1 database name on the setup page, prompts for the secrets listed in `.dev.vars.example` (`BETTER_AUTH_SECRET`, `STAFF_EMAILS`, `SETUP_TOKEN`), provisions the database in your Cloudflare account, runs the migrations as part of `pnpm run deploy`, and connects Workers Builds so every push to your copy deploys automatically.
+
+The template supplies empty secret values. Enter your staff emails and generate separate random values for `BETTER_AUTH_SECRET` (`openssl rand -base64 32`) and `SETUP_TOKEN` (`openssl rand -hex 32`). Generate these once per installation and keep them across redeployments. The auth URL is detected automatically from the incoming request; there is no URL field to fill in.
 
 After the first deploy, open the app, switch to sign-up, and create the first account using the invite token (`SETUP_TOKEN`). Registration is invite-gated by design — every sign-up must present the token and use an email in `STAFF_EMAILS`, so there is no separate "close registration" step. To add staff later, add their email to `STAFF_EMAILS` in the dashboard and share the invite token. Only emails in `STAFF_EMAILS` can create an account or reach data.
 
@@ -30,7 +32,7 @@ Prerequisites: a Cloudflare account, Node.js 24.20.0 (see `.node-version`) and p
 1. Install dependencies: `pnpm install --frozen-lockfile`.
 2. Create the D1 database in your account with any name you like — it does not need to match the Worker, for example `pnpm exec wrangler d1 create lead-desk-db`. Copy the `database_id` it prints into the `d1_databases` entry in `wrangler.jsonc` (replacing the empty string) and set `database_name` to the same name you used.
 3. Set the session secret: `openssl rand -base64 32 | pnpm exec wrangler secret put BETTER_AUTH_SECRET`.
-4. In the dashboard (Workers → Settings), set `BETTER_AUTH_URL` to the Worker's public origin (for example `https://cloudflare-lead-desk.<your-account>.workers.dev` — required in production, where authentication fails closed without it), `STAFF_EMAILS` to the comma-separated emails of the staff who may sign in, and `SETUP_TOKEN` to an invite token (`openssl rand -hex 32`).
+4. Set `STAFF_EMAILS` to the comma-separated staff emails with `pnpm exec wrangler secret put STAFF_EMAILS`, and set the invite token with `openssl rand -hex 32 | pnpm exec wrangler secret put SETUP_TOKEN`. Keep these secrets across redeployments.
 5. Deploy: `pnpm run deploy` (set `CLOUDFLARE_ACCOUNT_ID` if your wrangler login spans multiple accounts). The deploy script builds, applies the D1 migrations, and deploys. The migration also bootstraps the default workspace, pipeline, and stage rows (fixed ids, `INSERT OR IGNORE`) and makes stage positions unique per pipeline — the app itself never seeds data per request, so deleted bootstrap rows are not resurrected. Migration commands reference the `DB` binding rather than a database name, so renamed databases keep working.
 
 You can also connect the repository in the dashboard under Workers → Settings → Builds, with the deploy command set to `pnpm run deploy`.
@@ -44,7 +46,41 @@ invite token; only allowlisted emails get data access.
 Both `src/worker-global.ts` (the configured deployment entry) and the compatibility
 entry `src/worker.ts` use the same app compiled at module scope.
 
-For local development, copy `.dev.vars.example` to `.dev.vars` and set `BETTER_AUTH_SECRET` (`openssl rand -base64 32`) and `SETUP_TOKEN` (`openssl rand -hex 32`), then run `pnpm run dev:worker` and `pnpm run dev`. Enter the invite token on the sign-up screen to create a throwaway account; sessions are stored in local D1. Optionally add `ENVIRONMENT=development` and a `DEV_ADMIN_EMAIL` to bypass the session check locally — `DEV_ADMIN_EMAIL` is honored only outside production, and deployments always set `ENVIRONMENT=production`, so those dev-only values are deliberately absent from `.dev.vars.example` (its entries become prompted secrets in the one-click install flow).
+Missing or old template-placeholder session secrets fail authentication closed.
+An empty `STAFF_EMAILS` authorizes nobody in production, and an empty
+`SETUP_TOKEN` disables new registrations. Production also rejects invite tokens
+shorter than 32 characters after trimming whitespace; this does not disable
+existing accounts or sign-in. The invite token is reusable; rotate it
+if it leaks.
+
+### Optional auth URL override
+
+By default, authentication uses the origin of each incoming Worker request, so a
+new `workers.dev` address or a directly connected custom domain needs no extra
+configuration. Production requires HTTPS. Only the resolved origin is trusted;
+forwarded host/protocol headers do not change it. This assumes Cloudflare routes
+the public request directly to the Worker.
+
+To pin a canonical origin, or if a proxy rewrites the request URL, set the optional
+`BETTER_AUTH_URL` variable to an absolute origin such as `https://crm.example.com`
+(no path, query, or fragment). Add it to `vars` in your fork's `wrangler.jsonc` and
+deploy. It is not a secret and is deliberately absent from the installer prompts.
+When set, it takes precedence over request inference; use the app at that origin.
+An invalid override fails authentication closed instead of falling back. Existing
+installations with `BETTER_AUTH_URL` stored as a secret can keep it, or remove it
+to enable automatic detection.
+
+### Local development
+
+Copy `.dev.vars.example` to `.dev.vars`, fill in `BETTER_AUTH_SECRET` and
+`SETUP_TOKEN` using the generation commands above, and add
+`ENVIRONMENT=development` to `.dev.vars` to allow local HTTP. Run
+`pnpm run db:migrate:local`, then `pnpm run dev:worker` and open the URL it prints.
+Enter the invite token on the sign-up screen to create a throwaway account;
+sessions are stored in local D1. The staff allowlist is enforced in production.
+Optionally add `DEV_ADMIN_EMAIL` to bypass the session check locally. Development
+settings are deliberately absent from `.dev.vars.example`, whose entries become
+installer prompts. Deployed configuration stays `ENVIRONMENT=production`.
 
 ## Integration API
 
