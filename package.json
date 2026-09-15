@@ -11,7 +11,7 @@
         "description": "Invite token required to create a staff account (at least 32 characters in production). Generate with `openssl rand -hex 32`. Rotate it in the dashboard if it leaks."
       },
       "STAFF_EMAILS": {
-        "description": "Comma-separated staff emails allowed to sign in, for example `you@company.com,teammate@company.com`. Change it later in the dashboard without redeploying."
+        "description": "Comma-separated staff emails allowed to sign in, for example `you@company.com,teammate@company.com`. Update `vars.STAFF_EMAILS` in your fork's `wrangler.jsonc` and redeploy to change the list."
       }
     }
   },

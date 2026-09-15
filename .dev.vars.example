@@ -1,10 +1,6 @@
 # Secret used to sign Better Auth session cookies. Generate a fresh value with:
 #   openssl rand -base64 32
 BETTER_AUTH_SECRET=
-# Comma-separated staff emails allowed to sign in, for example
-# you@company.com,teammate@company.com. Change it later in the dashboard
-# without redeploying. In production an empty list authorizes no one.
-STAFF_EMAILS=
 # Invite token required to create a staff account (sent as the X-Setup-Token
 # header on the sign-up screen). Generate with:
 #   openssl rand -hex 32
