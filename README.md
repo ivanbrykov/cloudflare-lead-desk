@@ -53,6 +53,17 @@ shorter than 32 characters after trimming whitespace; this does not disable
 existing accounts or sign-in. The invite token is reusable; rotate it
 if it leaks.
 
+### Preview URLs
+
+Version preview URLs are enabled by default through `preview_urls: true` in
+`wrangler.jsonc`. To disable them, set it to `false` and redeploy; keep the
+configuration in sync with dashboard changes so later deployments preserve your
+choice. See [Cloudflare's Preview URLs documentation](https://developers.cloudflare.com/workers/versions-and-deployments/preview-urls/).
+
+These URLs serve a Worker version with its configured bindings; they do not
+create a separate test database. Automatic auth-origin detection supports the
+preview hostname. If you pin `BETTER_AUTH_URL`, that override still applies.
+
 ### Updating staff emails
 
 `STAFF_EMAILS` is a plain-text variable, so its value is readable and stored in
