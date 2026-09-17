@@ -142,6 +142,37 @@ export const CreateTokenSchema = Schema.Struct({
   name: NonEmptyString,
 });
 
+// A future UTC ISO-8601 date (optional time, offset, or Z) for invitation
+// expiry overrides.
+const FutureIsoDateSchema = Schema.String.pipe(
+  Schema.pattern(
+    /^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:\d{2})?)?$/u,
+  ),
+
+  Schema.filter((value) => {
+    const time = Date.parse(value);
+    return Number.isFinite(time) && time > Date.now();
+  }),
+);
+
+export const CreateInviteSchema = Schema.Struct({
+  expiresAt: Schema.optional(FutureIsoDateSchema),
+  name: NonEmptyString,
+}).annotations({
+  description: 'Creates a single-use staff invitation (7 days by default).',
+});
+export type CreateInviteInput = Schema.Schema.Type<typeof CreateInviteSchema>;
+
+export const ValidateInviteSchema = Schema.Struct({
+  token: Schema.String,
+}).annotations({
+  description:
+    'Checks a registration grant without consuming it. Any token is an input; only 200 vs 403 differ.',
+});
+export type ValidateInviteInput = Schema.Schema.Type<
+  typeof ValidateInviteSchema
+>;
+
 export const PaginationSchema = Schema.Struct({
   cursor: Schema.optional(RecordIdSchema),
   limit: Schema.optional(

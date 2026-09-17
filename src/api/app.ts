@@ -20,6 +20,8 @@ import {
   AuthConfigurationError,
   authenticationNotConfiguredResponse,
   createAuth,
+  matchesBootstrapToken,
+  resolveAuthOrigin,
 } from '@/auth';
 import {
   bearerToken,
@@ -28,19 +30,24 @@ import {
 } from '@/auth/access';
 import {
   archiveFieldDefinition,
+  checkStaffInviteAvailability,
   createApiToken,
+  createStaffInvite,
   type Env,
   getContact,
   getFieldDefinitions,
   getOpportunity,
   getPipeline,
+  isBootstrapGrantAvailable,
   isIntakeToken,
   listActivities,
   listApiTokens,
   listContacts,
   listOpportunities,
   listPipelines,
+  listStaffInvites,
   revokeApiToken,
+  revokeStaffInvite,
 } from '@/db/repository';
 import { isIntakeKey } from '@/domain/intake';
 import {
@@ -52,6 +59,7 @@ import {
   ContactInputSchema,
   CreateActivitySchema,
   CreateCustomFieldSchema,
+  CreateInviteSchema,
   CreateOpportunitySchema,
   CreatePipelineSchema,
   CreateStageSchema,
@@ -59,6 +67,7 @@ import {
   IntakeInputSchema,
   MoveOpportunitySchema,
   UpdateOpportunitySchema,
+  ValidateInviteSchema,
 } from '@/domain/schemas';
 import { Effect, Either, Schema } from 'effect';
 import { Elysia } from 'elysia';
@@ -619,6 +628,55 @@ const createAppWithAuth = (environment: Env, getAuth: AuthForRequest) =>
         ? new Response(null, { status: 204 })
         : errorResponse(404, 'not_found', 'Token not found.');
     })
+    .get('/v1/invites', async ({ request }) => {
+      const admin = await requireAdmin(request, getAuth, environment);
+      if ('error' in admin) {
+        return admin.error;
+      }
+
+      return { data: await listStaffInvites(environment) };
+    })
+    .post('/v1/invites', async ({ body, request }) => {
+      const admin = await requireAdmin(request, getAuth, environment);
+      if ('error' in admin) {
+        return admin.error;
+      }
+
+      const parsed = await parse(CreateInviteSchema, body);
+      if ('error' in parsed) {
+        return parsed.error;
+      }
+
+      const invite = await createStaffInvite(
+        environment,
+        parsed.data.name,
+        parsed.data.expiresAt,
+      );
+      return Response.json(
+        {
+          data: {
+            createdAt: invite.createdAt,
+            expiresAt: invite.expiresAt,
+            id: invite.id,
+            name: invite.name,
+            prefix: invite.prefix,
+            // The raw token is returned exactly once, at creation.
+            token: invite.token,
+          },
+        },
+        { status: 201 },
+      );
+    })
+    .delete('/v1/invites/:id', async ({ params, request }) => {
+      const admin = await requireAdmin(request, getAuth, environment);
+      if ('error' in admin) {
+        return admin.error;
+      }
+
+      return (await revokeStaffInvite(environment, params.id))
+        ? new Response(null, { status: 204 })
+        : errorResponse(404, 'not_found', 'Invitation not found.');
+    })
     .post(
       '/v1/intakes',
       async ({ body, request }) => {
@@ -705,7 +763,52 @@ const createAppWithAuth = (environment: Env, getAuth: AuthForRequest) =>
         // to the existing 413 payload_too_large response by the error hook.
         parse: parseIntakeBody,
       },
-    );
+    )
+    .post('/api/invites/validate', async ({ body, request }) => {
+      // Trusted-origin check for hostile browser Origin headers: compare
+      // against BETTER_AUTH_URL or, when unset, the incoming request.url
+      // origin. Forwarded headers are never consulted; a missing Origin
+      // (non-browser clients) is allowed, consistent with the auth routes.
+      const origin = request.headers.get('Origin');
+      if (origin !== null) {
+        let trusted: string;
+        try {
+          trusted = resolveAuthOrigin(environment, request);
+        } catch (error) {
+          if (error instanceof AuthConfigurationError) {
+            return authenticationNotConfiguredResponse();
+          }
+
+          throw error;
+        }
+
+        if (origin !== trusted) {
+          return errorResponse(
+            403,
+            'forbidden',
+            'The request origin is not trusted.',
+          );
+        }
+      }
+
+      const parsed = await parse(ValidateInviteSchema, body);
+      if ('error' in parsed) {
+        return parsed.error;
+      }
+
+      // Non-consuming: a valid grant is reported without touching
+      // used_at or any other column.
+      const valid = matchesBootstrapToken(environment, parsed.data.token)
+        ? await isBootstrapGrantAvailable(environment)
+        : await checkStaffInviteAvailability(environment, parsed.data.token);
+      return valid
+        ? { valid: true }
+        : errorResponse(
+            403,
+            'invite_unavailable',
+            'Invitation is unavailable.',
+          );
+    });
 
 export const createApp = (environment: Env) =>
   createAppWithAuth(environment, (request) => createAuth(environment, request));

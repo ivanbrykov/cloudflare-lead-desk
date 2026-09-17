@@ -42,7 +42,10 @@ const configuredValue = (value: string | undefined): string | undefined => {
  * request.url is produced by the incoming route, whereas Host and forwarded
  * headers are client-controlled inputs to this application.
  */
-const resolveAuthOrigin = (environment: Env, request: Request): string => {
+export const resolveAuthOrigin = (
+  environment: Env,
+  request: Request,
+): string => {
   const override = configuredValue(environment.BETTER_AUTH_URL);
   const candidate = override ?? request.url;
   let url: URL;
@@ -129,6 +132,41 @@ const tokenMatches = (provided: string, expected: string): boolean => {
   return difference === 0;
 };
 
+/**
+ * The bootstrap invite token for this deployment, if a usable one is
+ * configured: SETUP_TOKEN must be set, and in production it must be at
+ * least 32 characters after trimming and not a documented placeholder.
+ */
+export const bootstrapToken = (environment: Env): string | undefined => {
+  const setupToken = environment.SETUP_TOKEN;
+  if (!setupToken) {
+    return undefined;
+  }
+
+  if (
+    isProduction(environment) &&
+    (setupToken.trim().length < 32 ||
+      PRODUCTION_PLACEHOLDER_SECRETS.has(setupToken.trim()))
+  ) {
+    return undefined;
+  }
+
+  return setupToken;
+};
+
+/**
+ * Constant-time check of a provided value against the deployment's
+ * bootstrap token (SETUP_TOKEN). False whenever no usable bootstrap token
+ * is configured.
+ */
+export const matchesBootstrapToken = (
+  environment: Env,
+  provided: string,
+): boolean => {
+  const expected = bootstrapToken(environment);
+  return expected !== undefined && tokenMatches(provided, expected);
+};
+
 // Constructed for each authentication operation. The Worker module can keep
 // the Elysia app compiled globally, but it must never retain a request-derived
 // Better Auth origin across requests. The CLI loads ./cli.ts instead (no
@@ -159,18 +197,12 @@ export const createAuth = (environment: Env, request: Request) => {
           return;
         }
 
-        // Registration is invite-only: the request must carry the invite
+        // Registration is invite-gated: the request must carry the invite
         // token in X-Setup-Token, compared against SETUP_TOKEN in constant
         // time. A missing/unset SETUP_TOKEN rejects every sign-up.
         const provided = context.getHeader('x-setup-token') ?? '';
-        const setupToken = environment.SETUP_TOKEN;
-        if (
-          !setupToken ||
-          (isProduction(environment) &&
-            (setupToken.trim().length < 32 ||
-              PRODUCTION_PLACEHOLDER_SECRETS.has(setupToken.trim()))) ||
-          !tokenMatches(provided, setupToken)
-        ) {
+        const expected = bootstrapToken(environment);
+        if (expected === undefined || !tokenMatches(provided, expected)) {
           throw APIError.from('FORBIDDEN', {
             code: 'invite_token_required',
             message:
@@ -178,12 +210,15 @@ export const createAuth = (environment: Env, request: Request) => {
           });
         }
 
-        // The allowlist also gates account creation, so a leaked invite token
-        // cannot create accounts for arbitrary emails. isStaffEmail is false
-        // for an empty allowlist, so production fails closed here too.
+        // A configured allowlist (even an explicitly empty one) also gates
+        // account creation, so a leaked invite token cannot create accounts
+        // for arbitrary emails; an empty allowlist fails closed. An UNSET
+        // allowlist is bootstrap mode: SETUP_TOKEN is the only registration
+        // gate.
         const email = context.body?.email;
         if (
           environment.ENVIRONMENT === 'production' &&
+          environment.STAFF_EMAILS !== undefined &&
           (typeof email !== 'string' ||
             !isStaffEmail(email, environment.STAFF_EMAILS))
         ) {
