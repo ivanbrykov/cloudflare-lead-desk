@@ -8,6 +8,7 @@ import {
   idempotencyKeys,
   opportunities,
   pipelines,
+  session,
   staffInvites,
   stages,
   user,
@@ -27,7 +28,16 @@ import {
   type IntakeInput,
   normalizeEmail,
 } from '@/domain/schemas';
-import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  inArray,
+  isNotNull,
+  isNull,
+  sql,
+} from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
 
 export type Env = {
@@ -1200,6 +1210,168 @@ export const isBootstrapGrantAvailable = async (
     account === undefined &&
     bootstrap.expiresAt > now()
   );
+};
+
+export type StaffAccountRecord = {
+  disabledAt: Date | null;
+  email: string;
+  id: string;
+  name: string;
+};
+
+const staffAccountColumns = {
+  disabledAt: user.disabledAt,
+  email: user.email,
+  id: user.id,
+  name: user.name,
+} as const;
+
+/**
+ * Lists every staff account (every account is staff) with the public
+ * projection: id, name, email, and the durable disabled state.
+ */
+export const listStaffAccounts = async (
+  environment: Env,
+): Promise<StaffAccountRecord[]> =>
+  getDatabase(environment)
+    .select(staffAccountColumns)
+    .from(user)
+    .orderBy(asc(user.email), asc(user.id));
+
+/**
+ * Resolves a normalized (lowercase) email to its staff-account record.
+ */
+export const getStaffAccountByEmail = async (
+  environment: Env,
+  email: string,
+): Promise<StaffAccountRecord | undefined> =>
+  getDatabase(environment)
+    .select(staffAccountColumns)
+    .from(user)
+    .where(eq(user.email, email))
+    .get();
+
+export type SetStaffDisabledOutcome =
+  | { kind: 'last-enabled' }
+  | { kind: 'not-found' }
+  | { kind: 'self' }
+  | { kind: 'updated'; record: StaffAccountRecord };
+
+/**
+ * Durable staff revocation (stage s5). Disabling writes the flag and
+ * deletes every session of the account in ONE D1 batch (single
+ * transaction): a disabled account can never hold a live session. The
+ * session DELETE is scoped to rows whose owner is disabled after the
+ * UPDATE, so a concurrently no-op update can never revoke a
+ * still-enabled account's sessions. Re-enabling clears the flag only:
+ * deleted session rows are never restored, so the account keeps its
+ * credentials but must sign in again.
+ *
+ * `actorEmail` identifies the signed-in admin performing the change and
+ * enforces the self-disable protection; the enabled-count guard enforces
+ * the last-enabled-account protection atomically with the UPDATE.
+ */
+export const setStaffAccountDisabled = async (
+  environment: Env,
+  userId: string,
+  disabled: boolean,
+  actorEmail: string,
+): Promise<SetStaffDisabledOutcome> => {
+  const database = getDatabase(environment);
+  const target = await database
+    .select(staffAccountColumns)
+    .from(user)
+    .where(eq(user.id, userId))
+    .get();
+  if (target === undefined) {
+    return { kind: 'not-found' };
+  }
+
+  const isDisabled = target.disabledAt !== null;
+  if (disabled === isDisabled) {
+    // Idempotent: the requested state already holds.
+    return { kind: 'updated', record: target };
+  }
+
+  if (disabled) {
+    if (target.email === actorEmail.toLowerCase()) {
+      return { kind: 'self' };
+    }
+
+    const enabled = await database
+      .select({ count: sql<number>`count(*)` })
+      .from(user)
+      .where(isNull(user.disabledAt))
+      .get();
+    if (Number(enabled?.count ?? 0) <= 1) {
+      return { kind: 'last-enabled' };
+    }
+
+    const timestamp = new Date();
+    const [result] = await database.batch([
+      database
+        .update(user)
+        .set({ disabledAt: timestamp, updatedAt: timestamp })
+        .where(
+          and(
+            eq(user.id, userId),
+            isNull(user.disabledAt),
+            sql`(select count(*) from user where disabled_at is null) >= 2`,
+          ),
+        ),
+      database
+        .delete(session)
+        .where(
+          and(
+            eq(session.userId, userId),
+            sql`(select disabled_at from user where id = ${userId}) is not null`,
+          ),
+        ),
+    ]);
+    if (result.meta.changes === 0) {
+      // Lost a concurrent race; re-derive the outcome from the committed
+      // state instead of guessing.
+      const current = await database
+        .select(staffAccountColumns)
+        .from(user)
+        .where(eq(user.id, userId))
+        .get();
+      if (current === undefined) {
+        return { kind: 'not-found' };
+      }
+
+      if (current.disabledAt === null) {
+        return { kind: 'last-enabled' };
+      }
+
+      return { kind: 'updated', record: current };
+    }
+
+    return { kind: 'updated', record: { ...target, disabledAt: timestamp } };
+  }
+
+  const [updated] = await database.batch([
+    database
+      .update(user)
+      .set({ disabledAt: null, updatedAt: new Date() })
+      .where(and(eq(user.id, userId), isNotNull(user.disabledAt))),
+  ]);
+  if (updated.meta.changes === 0) {
+    // A concurrent enable already cleared the flag; re-read the committed
+    // state.
+    const current = await database
+      .select(staffAccountColumns)
+      .from(user)
+      .where(eq(user.id, userId))
+      .get();
+    if (current === undefined) {
+      return { kind: 'not-found' };
+    }
+
+    return { kind: 'updated', record: current };
+  }
+
+  return { kind: 'updated', record: { ...target, disabledAt: null } };
 };
 
 export const isIntakeToken = async (

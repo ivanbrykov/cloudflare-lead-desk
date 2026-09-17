@@ -1,5 +1,5 @@
 import { type Auth } from '@/auth';
-import { type Env } from '@/db/repository';
+import { type Env, getStaffAccountByEmail } from '@/db/repository';
 
 export class UnauthorizedError extends Error {
   constructor(message = 'Authentication is required.') {
@@ -25,6 +25,18 @@ export const requireSessionIdentity = async (
 
   // Stage s4: registration is invitation-only, so every enabled Better Auth
   // account belongs to staff. There is no email allowlist to enforce.
+  // Stage s5: durable revocation. The session row is deleted when an
+  // account is disabled, but protected routes also consult the DB account
+  // state directly, so a stale session can never authorize a disabled
+  // account even if the row were momentarily still observable.
+  const account = await getStaffAccountByEmail(
+    environment,
+    session.user.email.toLowerCase(),
+  );
+  if (account === undefined || account.disabledAt !== null) {
+    throw new UnauthorizedError();
+  }
+
   return session.user.email;
 };
 
