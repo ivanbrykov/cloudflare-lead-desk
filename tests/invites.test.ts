@@ -71,27 +71,19 @@ type Fixture = {
   ) => Promise<RawResult>;
 };
 
-type FixtureOptions = {
-  // null removes the binding from the fixture entirely (bootstrap mode).
-  staffEmails?: null | string;
-};
-
 type RawResult = {
   cookie: string;
   json: Record<string, unknown>;
   status: number;
 };
 
-const startFixture = async (options: FixtureOptions = {}): Promise<Fixture> => {
+const startFixture = async (): Promise<Fixture> => {
   const script = await bundleWorker();
   const bindings: Record<string, string> = {
     BETTER_AUTH_SECRET: SECRET,
     ENVIRONMENT: 'production',
     SETUP_TOKEN,
   };
-  if (options.staffEmails !== null) {
-    bindings.STAFF_EMAILS = options.staffEmails ?? 'admin@example.test';
-  }
 
   const mf = new Miniflare(
     convertV4MiniflareOptions({
@@ -399,8 +391,8 @@ test('create rejects past or invalid expiry overrides', async () => {
   }
 });
 
-test('bootstrap mode: an unset STAFF_EMAILS gates sign-up by SETUP_TOKEN only', async () => {
-  const fx = await startFixture({ staffEmails: null });
+test('the bootstrap grant gates sign-up until the first account exists', async () => {
+  const fx = await startFixture();
   try {
     // A fresh deployment accepts the bootstrap grant without consuming it.
     const grant = await fx.raw('/api/invites/validate', 'POST', {
@@ -409,7 +401,7 @@ test('bootstrap mode: an unset STAFF_EMAILS gates sign-up by SETUP_TOKEN only', 
     expect(grant.status, JSON.stringify(grant)).toBe(200);
     expect(grant.json).toEqual({ valid: true });
 
-    // Sign-up succeeds without any allowlist entry.
+    // Sign-up succeeds without any further configuration.
     const cookie = await signUp(fx);
 
     // Once an account exists, the bootstrap grant is no longer available.
@@ -418,31 +410,12 @@ test('bootstrap mode: an unset STAFF_EMAILS gates sign-up by SETUP_TOKEN only', 
       'bootstrap grant after first account',
     );
 
-    // A bootstrap-mode session reaches the invite management API.
+    // The first session reaches the invite management API.
     const list = await fx.raw('/v1/invites', 'GET', undefined, {
       Cookie: cookie,
     });
     expect(list.status).toBe(200);
     expect(list.json.data).toEqual([]);
-  } finally {
-    await fx.dispose();
-  }
-});
-
-test('an explicitly empty STAFF_EMAILS still fails closed', async () => {
-  const fx = await startFixture({ staffEmails: '' });
-  try {
-    const result = await fx.raw(
-      '/api/auth/sign-up/email',
-      'POST',
-      {
-        email: 'admin@example.test',
-        name: 'Test Admin',
-        password: 'correct-horse-battery',
-      },
-      { 'X-Setup-Token': SETUP_TOKEN },
-    );
-    expect(result.status, JSON.stringify(result)).toBe(403);
   } finally {
     await fx.dispose();
   }

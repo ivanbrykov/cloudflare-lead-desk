@@ -1,4 +1,3 @@
-import { isStaffEmail } from './access';
 import { type Env } from '@/db/repository';
 import * as schema from '@/db/schema';
 import { drizzleAdapter } from '@better-auth/drizzle-adapter';
@@ -197,37 +196,15 @@ export const createAuth = (environment: Env, request: Request) => {
           return;
         }
 
-        // Registration is invite-gated: the request must carry the invite
-        // token in X-Setup-Token, compared against SETUP_TOKEN in constant
-        // time. A missing/unset SETUP_TOKEN rejects every sign-up.
-        const provided = context.getHeader('x-setup-token') ?? '';
-        const expected = bootstrapToken(environment);
-        if (expected === undefined || !tokenMatches(provided, expected)) {
-          throw APIError.from('FORBIDDEN', {
-            code: 'invite_token_required',
-            message:
-              'Registration is invite-only. A valid invite token is required.',
-          });
-        }
-
-        // A configured allowlist (even an explicitly empty one) also gates
-        // account creation, so a leaked invite token cannot create accounts
-        // for arbitrary emails; an empty allowlist fails closed. An UNSET
-        // allowlist is bootstrap mode: SETUP_TOKEN is the only registration
-        // gate.
-        const email = context.body?.email;
-        if (
-          environment.ENVIRONMENT === 'production' &&
-          environment.STAFF_EMAILS !== undefined &&
-          (typeof email !== 'string' ||
-            !isStaffEmail(email, environment.STAFF_EMAILS))
-        ) {
-          throw APIError.from('FORBIDDEN', {
-            code: 'email_not_authorized',
-            message:
-              'This email is not authorized to create an account on this deployment.',
-          });
-        }
+        // Defense in depth: the invitation-only boundary (see
+        // src/api/app.ts) intercepts POST /api/auth/sign-up/email before
+        // it reaches Better Auth. Any sign-up that reaches this handler
+        // anyway (for example through a path alias) must still be
+        // rejected: this deployment has no open sign-up.
+        throw APIError.from('FORBIDDEN', {
+          code: 'invite_unavailable',
+          message: 'Registration requires an available invitation.',
+        });
       }),
     },
     secret: environment.BETTER_AUTH_SECRET,

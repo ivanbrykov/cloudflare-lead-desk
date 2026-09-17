@@ -28,6 +28,7 @@ import {
   requireSessionIdentity,
   UnauthorizedError,
 } from '@/auth/access';
+import { handleInvitationSignUp } from '@/auth/invitation-sign-up';
 import {
   archiveFieldDefinition,
   checkStaffInviteAvailability,
@@ -194,11 +195,19 @@ const requireAdmin = async (
 
 const createAppWithAuth = (environment: Env, getAuth: AuthForRequest) =>
   new Elysia({ adapter: CloudflareAdapter, name: 'cloudflare-lead-desk-api' })
-    // Elysia's mount() strips the mount prefix before forwarding. Better Auth
-    // expects its full basePath, so re-add the prefix to the cloned request.
     .mount('/api/auth', (request: Request) => {
+      // Elysia's mount() strips the mount prefix before forwarding.
+      const url = new URL(request.url);
+      // The invitation-only boundary intercepts the canonical sign-up path
+      // before Better Auth can register anyone; every other auth path (in
+      // particular path aliases such as a trailing slash, which Better Auth
+      // rejects with 404 because trailing slashes do not match routes) is
+      // delegated to Better Auth with its full basePath restored.
+      if (request.method === 'POST' && url.pathname === '/sign-up/email') {
+        return handleInvitationSignUp(environment, request, getAuth);
+      }
+
       try {
-        const url = new URL(request.url);
         url.pathname = `/api/auth${url.pathname}`;
         return getAuth(request).handler(new Request(url, request));
       } catch (error) {
