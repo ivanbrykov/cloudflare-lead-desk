@@ -29,6 +29,13 @@
       "when": 1789268509967,
       "tag": "0003_red_inertia",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1789540092867,
+      "tag": "0004_invitation_foundation",
+      "breakpoints": true
     }
   ]
 }
