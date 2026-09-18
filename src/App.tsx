@@ -14,6 +14,11 @@ import {
 } from './lib/custom-field-form';
 import { request } from './lib/http';
 import { quietFetch } from './lib/quiet-fetch';
+import {
+  initialRegistrationState,
+  registrationReducer,
+  type SignUpFailure,
+} from './lib/registration-flow';
 import { cn } from './lib/styles';
 import {
   DndContext,
@@ -33,7 +38,7 @@ import {
   Settings2,
   SlidersHorizontal,
 } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useReducer, useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { Link, Route, Switch, useLocation } from 'wouter';
 
@@ -1824,48 +1829,45 @@ const TokensPage = () => {
 
 const LoginPage = () => {
   const [mode, setMode] = useState<'sign-in' | 'sign-up'>('sign-in');
-  const [step, setStep] = useState<1 | 2>(1);
-  const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [inviteToken, setInviteToken] = useState('');
-  const [error, setError] = useState<null | string>(null);
-  const [pending, setPending] = useState(false);
+  const [signInEmail, setSignInEmail] = useState('');
+  const [signInError, setSignInError] = useState<null | string>(null);
+  const [signInPassword, setSignInPassword] = useState('');
+  const [signInPending, setSignInPending] = useState(false);
+  const [registration, dispatch] = useReducer(
+    registrationReducer,
+    undefined,
+    initialRegistrationState,
+  );
+  // Synchronous guard so a fast double submit cannot start a second
+  // request before the reducer's busy flag has re-rendered.
   const registrationBusy = useRef(false);
+
+  const releaseRegistration = () => {
+    registrationBusy.current = false;
+  };
+
+  const { busy: pending, error, fields, step } = registration;
 
   const startRegistration = () => {
     setMode('sign-up');
-    setStep(1);
-    setError(null);
+    dispatch({ type: 'begin-registration' });
   };
 
   const backToSignIn = () => {
     setMode('sign-in');
-    setError(null);
-  };
-
-  const backToTokenStep = () => {
-    setInviteToken('');
-    setName('');
-    setEmail('');
-    setPassword('');
-    setStep(1);
-    setError(null);
-  };
-
-  const releaseRegistration = () => {
-    registrationBusy.current = false;
-    setPending(false);
   };
 
   const submitSignIn = async (event: React.FormEvent) => {
     event.preventDefault();
-    setError(null);
-    setPending(true);
-    const result = await signIn.email({ email, password });
-    setPending(false);
+    setSignInError(null);
+    setSignInPending(true);
+    const result = await signIn.email({
+      email: signInEmail,
+      password: signInPassword,
+    });
+    setSignInPending(false);
     if (result.error) {
-      setError(result.error.message ?? 'Authentication failed.');
+      setSignInError(result.error.message ?? 'Authentication failed.');
     }
   };
 
@@ -1876,27 +1878,19 @@ const LoginPage = () => {
     }
 
     registrationBusy.current = true;
-    setError(null);
-    setPending(true);
+    dispatch({ type: 'token-submit' });
     try {
       const response = await quietFetch('/api/invites/validate', {
-        body: JSON.stringify({ token: inviteToken.trim() }),
+        body: JSON.stringify({ token: fields.inviteToken.trim() }),
         headers: {
           Accept: 'application/json',
           'Content-Type': 'application/json',
         },
         method: 'POST',
       });
-      if (response.ok) {
-        setStep(2);
-        return;
-      }
-
-      // The grant may be unknown, used, revoked, or expired; keep the
-      // message generic so the UI never reveals which state applies.
-      setError('Invitation is unavailable.');
+      dispatch({ ok: response.ok, type: 'token-result' });
     } catch {
-      setError('Invitation is unavailable.');
+      dispatch({ ok: false, type: 'token-result' });
     } finally {
       releaseRegistration();
     }
@@ -1909,35 +1903,20 @@ const LoginPage = () => {
     }
 
     registrationBusy.current = true;
-    setError(null);
-    setPending(true);
+    dispatch({ type: 'details-submit' });
     const result = await signUp.email({
-      email,
+      email: fields.email,
       fetchOptions: {
-        headers: { 'X-Setup-Token': inviteToken.trim() },
+        headers: { 'X-Setup-Token': fields.inviteToken.trim() },
       },
-      name,
-      password,
+      name: fields.name,
+      password: fields.password,
+    });
+    dispatch({
+      error: (result.error ?? null) as null | SignUpFailure,
+      type: 'details-result',
     });
     releaseRegistration();
-    if (!result.error) {
-      return;
-    }
-
-    const failure = result.error as {
-      code?: string;
-      message?: string;
-      status?: number;
-    };
-    if (failure.code === 'invite_unavailable' && failure.status === 403) {
-      // The grant was used or expired while the details were being typed;
-      // restart from the token step without keeping the grant.
-      backToTokenStep();
-      setError(failure.message ?? 'Invitation is unavailable.');
-      return;
-    }
-
-    setError(failure.message ?? 'Authentication failed.');
   };
 
   return (
@@ -1958,12 +1937,12 @@ const LoginPage = () => {
               Email
               <input
                 onChange={(event) => {
-                  setEmail(event.target.value);
+                  setSignInEmail(event.target.value);
                 }}
                 placeholder="you@example.com"
                 required
                 type="email"
-                value={email}
+                value={signInEmail}
               />
             </label>
             <label className="grid gap-1 text-sm text-slate-300">
@@ -1971,23 +1950,23 @@ const LoginPage = () => {
               <input
                 minLength={8}
                 onChange={(event) => {
-                  setPassword(event.target.value);
+                  setSignInPassword(event.target.value);
                 }}
                 required
                 type="password"
-                value={password}
+                value={signInPassword}
               />
             </label>
-            {error && (
+            {signInError && (
               <p
                 className="rounded-md border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-100"
                 role="alert"
               >
-                {error}
+                {signInError}
               </p>
             )}
             <Button
-              disabled={pending}
+              disabled={signInPending}
               type="submit"
             >
               Sign in
@@ -2002,11 +1981,15 @@ const LoginPage = () => {
               Invite token
               <input
                 onChange={(event) => {
-                  setInviteToken(event.target.value);
+                  dispatch({
+                    name: 'inviteToken',
+                    type: 'field-change',
+                    value: event.target.value,
+                  });
                 }}
                 placeholder="Shared with you by a staff member"
                 required
-                value={inviteToken}
+                value={fields.inviteToken}
               />
             </label>
             {error && (
@@ -2033,23 +2016,31 @@ const LoginPage = () => {
               Name
               <input
                 onChange={(event) => {
-                  setName(event.target.value);
+                  dispatch({
+                    name: 'name',
+                    type: 'field-change',
+                    value: event.target.value,
+                  });
                 }}
                 placeholder="Ada Lovelace"
                 required
-                value={name}
+                value={fields.name}
               />
             </label>
             <label className="grid gap-1 text-sm text-slate-300">
               Email
               <input
                 onChange={(event) => {
-                  setEmail(event.target.value);
+                  dispatch({
+                    name: 'email',
+                    type: 'field-change',
+                    value: event.target.value,
+                  });
                 }}
                 placeholder="you@example.com"
                 required
                 type="email"
-                value={email}
+                value={fields.email}
               />
             </label>
             <label className="grid gap-1 text-sm text-slate-300">
@@ -2057,11 +2048,15 @@ const LoginPage = () => {
               <input
                 minLength={8}
                 onChange={(event) => {
-                  setPassword(event.target.value);
+                  dispatch({
+                    name: 'password',
+                    type: 'field-change',
+                    value: event.target.value,
+                  });
                 }}
                 required
                 type="password"
-                value={password}
+                value={fields.password}
               />
             </label>
             {error && (
@@ -2074,7 +2069,7 @@ const LoginPage = () => {
             )}
             <Button
               disabled={pending}
-              onClick={backToTokenStep}
+              onClick={() => dispatch({ type: 'back-to-token' })}
               tone="secondary"
               type="button"
             >
