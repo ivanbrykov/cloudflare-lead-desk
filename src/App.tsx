@@ -81,6 +81,7 @@ type Pipeline = {
 type Stage = { color: string; id: string; name: string; position: number };
 type Token = {
   createdAt: string;
+  expiresAt: null | string;
   id: string;
   name: string;
   prefix: string;
@@ -115,6 +116,10 @@ const appQuery = {
   pipelines: () => ({
     queryFn: () => request<Pipeline[]>('/v1/pipelines'),
     queryKey: ['pipelines'],
+  }),
+  tokens: () => ({
+    queryFn: () => request<Token[]>('/v1/tokens'),
+    queryKey: ['tokens'],
   }),
 };
 
@@ -1739,25 +1744,225 @@ const FieldsPage = () => {
   );
 };
 
-const TokensPage = () => {
+const TOKEN_DEFAULT_TTL_MS = 90 * 86_400_000;
+
+// datetime-local inputs only carry local wall-clock time, so shift the
+// instant into local parts before handing it to the input element.
+const toLocalInputValue = (date: Date) =>
+  new Date(date.getTime() - date.getTimezoneOffset() * 60_000)
+    .toISOString()
+    .slice(0, 16);
+
+const localTimezoneLabel = () => {
+  const offsetMinutes = -new Date().getTimezoneOffset();
+  const absolute = Math.abs(offsetMinutes);
+  const offset = `UTC${offsetMinutes < 0 ? '-' : '+'}${String(
+    Math.floor(absolute / 60),
+  ).padStart(2, '0')}:${String(absolute % 60).padStart(2, '0')}`;
+  return `${Intl.DateTimeFormat().resolvedOptions().timeZone ?? 'local'} (${offset})`;
+};
+
+const tokenStatus = (token: Token): 'active' | 'expired' | 'legacy' | 'revoked' => {
+  if (token.revokedAt) {
+    return 'revoked';
+  }
+
+  if (!token.expiresAt) {
+    return 'legacy';
+  }
+
+  if (new Date(token.expiresAt).getTime() <= Date.now()) {
+    return 'expired';
+  }
+
+  return 'active';
+};
+
+const statusTone = {
+  active: 'text-emerald-300',
+  expired: 'text-amber-300',
+  legacy: 'text-sky-300',
+  revoked: 'text-rose-300',
+} as const;
+
+const CreateTokenDialog = ({
+  defaultExpiration,
+  onOpenChange,
+  open,
+}: {
+  readonly defaultExpiration: string;
+  readonly onOpenChange: (value: boolean) => void;
+  readonly open: boolean;
+}) => {
   const queryClient = useQueryClient();
-  const [name, setName] = useState('Website form intake');
-  const [newToken, setNewToken] = useState<null | string>(null);
-  const tokens = useQuery({
-    queryFn: () => request<Token[]>('/v1/tokens'),
-    queryKey: ['tokens'],
-  });
+  const [copyFailed, setCopyFailed] = useState(false);
+  const [formError, setFormError] = useState<null | string>(null);
+  const [name, setName] = useState('');
+  const [rawToken, setRawToken] = useState<null | string>(null);
+  // The parent remounts this dialog (via its key) on every open, so state is
+  // always fresh: empty form, 90-day default matching the backend, no raw
+  // token, and an idle create mutation.
+  const [expiration, setExpiration] = useState(defaultExpiration);
   const create = useMutation({
-    mutationFn: () =>
+    mutationFn: (input: { expiresAt?: string; name: string }) =>
       request<Token & { token: string }>('/v1/tokens', {
-        body: JSON.stringify({ name }),
+        body: JSON.stringify(input),
         method: 'POST',
       }),
-    onSuccess: (token) => {
-      setNewToken(token.token);
+    onSuccess: (created) => {
+      // Keep the dialog open: the raw token is shown once and must stay
+      // visible until the staff member explicitly dismisses it.
+      setFormError(null);
+      setRawToken(created.token);
       queryClient.invalidateQueries({ queryKey: ['tokens'] });
     },
   });
+
+  // Escape, backdrop, and the close control all route through here. While a
+  // create is in flight, dismissal is ignored so a generated token can never
+  // be lost behind a closed dialog.
+  const handleOpenChange = (value: boolean) => {
+    if (!value && create.isPending) {
+      return;
+    }
+
+    onOpenChange(value);
+  };
+
+  const submit = () => {
+    const trimmedName = name.trim();
+    if (!trimmedName) {
+      setFormError('Enter a token name.');
+      return;
+    }
+
+    // The input value is local wall-clock time; new Date parses it as local
+    // time and toISOString converts it to the UTC ISO string the API expects.
+    const parsedExpiration = expiration ? new Date(expiration) : undefined;
+    if (
+      parsedExpiration &&
+      (!Number.isFinite(parsedExpiration.getTime()) ||
+        parsedExpiration.getTime() <= Date.now())
+    ) {
+      setFormError('Expiration must be in the future.');
+      return;
+    }
+
+    setFormError(null);
+    create.mutate({
+      expiresAt: parsedExpiration?.toISOString(),
+      name: trimmedName,
+    });
+  };
+
+  const copyToken = async () => {
+    if (!rawToken) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(rawToken);
+      setCopyFailed(false);
+    } catch {
+      // Clipboard access can be denied; the raw text stays visible and
+      // selectable instead of being replaced by a "copied" state.
+      setCopyFailed(true);
+    }
+  };
+
+  return (
+    <Dialog
+      onOpenChange={handleOpenChange}
+      open={open}
+      title="Create token"
+    >
+      {rawToken ? (
+        <div className="grid gap-4">
+          <p className="text-sm text-slate-300">
+            Token created. It will not be shown again.
+          </p>
+          <code className="block break-all rounded-md border border-slate-700 bg-slate-950 p-3 font-mono text-xs text-slate-100">
+            {rawToken}
+          </code>
+          {copyFailed && (
+            <p className="text-sm text-amber-300">
+              Clipboard unavailable — select the text above to copy it.
+            </p>
+          )}
+          <div className="flex justify-end gap-2">
+            <Button
+              onClick={() => {
+                void copyToken();
+              }}
+            >
+              Copy token
+            </Button>
+            <Button
+              onClick={() => handleOpenChange(false)}
+              tone="secondary"
+            >
+              Done
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <form
+          className="grid gap-4"
+          onSubmit={(event) => {
+            event.preventDefault();
+            submit();
+          }}
+        >
+          <label className="grid gap-1 text-sm text-slate-300">
+            Token name
+            <input
+              onChange={(event) => setName(event.target.value)}
+              placeholder="Website form intake"
+              value={name}
+            />
+          </label>
+          <div className="grid gap-1">
+            <label className="grid gap-1 text-sm text-slate-300">
+              Expiration
+              <input
+                onChange={(event) => setExpiration(event.target.value)}
+                type="datetime-local"
+                value={expiration}
+              />
+            </label>
+            <p className="text-xs text-slate-500">
+              Local time ({localTimezoneLabel()})
+            </p>
+          </div>
+          {formError && <p className="text-sm text-rose-300">{formError}</p>}
+          {create.error && <ErrorState error={create.error} />}
+          <div className="flex justify-end gap-2">
+            <Button
+              disabled={create.isPending}
+              onClick={() => handleOpenChange(false)}
+              tone="secondary"
+            >
+              Cancel
+            </Button>
+            <Button
+              disabled={create.isPending || !name.trim()}
+              type="submit"
+            >
+              Create token
+            </Button>
+          </div>
+        </form>
+      )}
+    </Dialog>
+  );
+};
+
+const TokensPage = () => {
+  const queryClient = useQueryClient();
+  const [createNonce, setCreateNonce] = useState(0);
+  const [defaultExpiration, setDefaultExpiration] = useState('');
+  const [showCreateDialog, setShowCreateDialog] = useState(false);
+  const tokens = useQuery(appQuery.tokens());
   const revoke = useMutation({
     mutationFn: (id: string) =>
       request(`/v1/tokens/${id}`, { method: 'DELETE' }),
@@ -1766,63 +1971,106 @@ const TokensPage = () => {
   return (
     <>
       <Header
+        action={
+          <Button
+            onClick={() => {
+              setCreateNonce((value) => value + 1);
+              setDefaultExpiration(
+                toLocalInputValue(new Date(Date.now() + TOKEN_DEFAULT_TTL_MS)),
+              );
+              setShowCreateDialog(true);
+            }}
+          >
+            <Plus size={16} /> Create token
+          </Button>
+        }
         eyebrow="Integrations"
         title="API tokens"
       />
-      <div className="grid gap-6 p-5 sm:p-8 lg:grid-cols-[22rem_1fr]">
-        <section className="rounded-xl border border-slate-800 bg-slate-900/40 p-5">
-          <label className="grid gap-1 text-sm">
-            Token name
-            <input
-              onChange={(event) => setName(event.target.value)}
-              value={name}
-            />
-          </label>
-          <Button
-            className="mt-3"
-            disabled={!name || create.isPending}
-            onClick={() => create.mutate()}
-          >
-            <Plus size={16} /> Create intake token
-          </Button>
-          {newToken && (
-            <div className="mt-4 rounded-md border border-amber-400/40 bg-amber-400/10 p-3 text-sm text-amber-100">
-              <p className="font-semibold">
-                Copy this now — it will not be shown again.
-              </p>
-              <code className="mt-2 block break-all text-xs">{newToken}</code>
-            </div>
-          )}
-        </section>
-        <section className="rounded-xl border border-slate-800 bg-slate-900/40 p-5">
-          <h2 className="font-semibold text-white">
-            Active and revoked tokens
-          </h2>
-          <div className="mt-4 grid gap-2">
-            {tokens.data?.map((token) => (
-              <div
-                className="flex items-center justify-between gap-4 rounded-md border border-slate-800 p-3"
-                key={token.id}
-              >
-                <div>
-                  <p className="font-medium">{token.name}</p>
-                  <p className="text-xs text-slate-500">
-                    {token.prefix}… {token.revokedAt ? '· revoked' : ''}
-                  </p>
-                </div>
-                {!token.revokedAt && (
-                  <Button
-                    onClick={() => revoke.mutate(token.id)}
-                    tone="danger"
+      <div className="p-5 sm:p-8">
+        {tokens.isPending ? (
+          <p className="text-slate-400">Loading tokens…</p>
+        ) : tokens.error ? (
+          <ErrorState error={tokens.error} />
+        ) : tokens.data?.length ? (
+          <div className="overflow-x-auto rounded-xl border border-slate-800">
+            <table className="w-full text-left text-sm">
+              <thead className="bg-slate-900 text-xs uppercase tracking-wider text-slate-400">
+                <tr>
+                  <th className="px-4 py-3">Name</th>
+                  <th className="px-4 py-3">Created</th>
+                  <th className="px-4 py-3">Expires</th>
+                  <th className="px-4 py-3">Status</th>
+                  <th className="px-4 py-3 text-right">Revoke</th>
+                </tr>
+              </thead>
+              <tbody>
+                {tokens.data.map((token) => (
+                  <tr
+                    className="border-t border-slate-800"
+                    key={token.id}
                   >
-                    Revoke
-                  </Button>
-                )}
-              </div>
-            ))}
+                    <td className="px-4 py-3">
+                      <p className="font-medium text-slate-100">{token.name}</p>
+                      <code className="font-mono text-xs text-slate-500">
+                        {token.prefix}…
+                      </code>
+                    </td>
+                    <td className="px-4 py-3 text-slate-500">
+                      {new Date(token.createdAt).toLocaleDateString()}
+                    </td>
+                    <td className="px-4 py-3 text-slate-400">
+                      {token.expiresAt
+                        ? new Date(token.expiresAt).toLocaleDateString()
+                        : 'No expiry (legacy)'}
+                    </td>
+                    <td
+                      className={cn(
+                        'px-4 py-3',
+                        statusTone[tokenStatus(token)],
+                      )}
+                    >
+                      {tokenStatus(token)}
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex justify-end">
+                        {!token.revokedAt && (
+                          <Button
+                            disabled={revoke.isPending}
+                            onClick={() => revoke.mutate(token.id)}
+                            tone="danger"
+                          >
+                            Revoke
+                          </Button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-        </section>
+        ) : (
+          <p className="text-sm text-slate-400">No API tokens yet.</p>
+        )}
+        {revoke.error && (
+          <div className="mt-4">
+            <ErrorState error={revoke.error} />
+          </div>
+        )}
       </div>
+      {showCreateDialog ? (
+        <CreateTokenDialog
+          defaultExpiration={defaultExpiration}
+          key={createNonce}
+          onOpenChange={(value) => {
+            if (!value) {
+              setShowCreateDialog(false);
+            }
+          }}
+          open={showCreateDialog}
+        />
+      ) : null}
     </>
   );
 };

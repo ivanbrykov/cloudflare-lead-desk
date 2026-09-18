@@ -82,7 +82,9 @@ export const quietFetch = (
   init?: RequestInit,
 ): Promise<Response> =>
   new Promise<Response>((resolve, reject) => {
-    const body = init?.body;
+    // better-fetch passes `body: null` for bodyless requests (e.g. GET); the
+    // fetch spec treats a null body as "no body", so normalize it here.
+    const body = init?.body ?? undefined;
     if (body !== undefined && typeof body !== 'string') {
       reject(new Error('quietFetch supports string request bodies only'));
       return;
