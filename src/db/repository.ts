@@ -33,9 +33,11 @@ import {
   asc,
   desc,
   eq,
+  gt,
   inArray,
   isNotNull,
   isNull,
+  or,
   sql,
 } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
@@ -1024,13 +1026,21 @@ const hashToken = async (token: string): Promise<string> => {
     .join('');
 };
 
-export const createApiToken = async (environment: Env, name: string) => {
+const TOKEN_DEFAULT_TTL_MS = 90 * 86_400_000;
+
+export const createApiToken = async (
+  environment: Env,
+  name: string,
+  expiresAt?: string,
+) => {
   const raw = `cld_${crypto
     .getRandomValues(new Uint8Array(32))
     .reduce((text, byte) => text + byte.toString(16).padStart(2, '0'), '')}`;
   const tokenHash = await hashToken(raw);
   const record = {
     createdAt: now(),
+    expiresAt:
+      expiresAt ?? new Date(Date.now() + TOKEN_DEFAULT_TTL_MS).toISOString(),
     id: id(),
     name,
     prefix: raw.slice(0, 12),
@@ -1046,6 +1056,7 @@ export const listApiTokens = async (environment: Env) =>
   getDatabase(environment)
     .select({
       createdAt: apiTokens.createdAt,
+      expiresAt: apiTokens.expiresAt,
       id: apiTokens.id,
       lastUsedAt: apiTokens.lastUsedAt,
       name: apiTokens.name,
@@ -1374,6 +1385,13 @@ export const setStaffAccountDisabled = async (
   return { kind: 'updated', record: { ...target, disabledAt: null } };
 };
 
+/**
+ * Intake authorization gate. A token is usable only while unrevoked,
+ * scoped to intake:write, and unexpired: legacy rows with a NULL expiry
+ * stay valid, and a row whose expiresAt is NOT strictly after the current
+ * instant is rejected (expiresAt <= now means expired). The check runs
+ * before any idempotency or domain write in the intake route.
+ */
 export const isIntakeToken = async (
   environment: Env,
   token: string,
@@ -1387,6 +1405,7 @@ export const isIntakeToken = async (
         eq(apiTokens.tokenHash, tokenHash),
         eq(apiTokens.scope, 'intake:write'),
         isNull(apiTokens.revokedAt),
+        or(isNull(apiTokens.expiresAt), gt(apiTokens.expiresAt, now())),
       ),
     )
     .get();

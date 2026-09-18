@@ -630,7 +630,13 @@ const createAppWithAuth = (environment: Env, getAuth: AuthForRequest) =>
       }
 
       return Response.json(
-        { data: await createApiToken(environment, parsed.data.name) },
+        {
+          data: await createApiToken(
+            environment,
+            parsed.data.name,
+            parsed.data.expiresAt,
+          ),
+        },
         { status: 201 },
       );
     })

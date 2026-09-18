@@ -138,12 +138,8 @@ export type CreateCustomField = Schema.Schema.Type<
   typeof CreateCustomFieldSchema
 >;
 
-export const CreateTokenSchema = Schema.Struct({
-  name: NonEmptyString,
-});
-
-// A future UTC ISO-8601 date (optional time, offset, or Z) for invitation
-// expiry overrides.
+// A future UTC ISO-8601 date (optional time, offset, or Z) for expiry
+// overrides on API tokens and staff invitations.
 const FutureIsoDateSchema = Schema.String.pipe(
   Schema.pattern(
     /^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:\d{2})?)?$/u,
@@ -154,6 +150,13 @@ const FutureIsoDateSchema = Schema.String.pipe(
     return Number.isFinite(time) && time > Date.now();
   }),
 );
+
+export const CreateTokenSchema = Schema.Struct({
+  expiresAt: Schema.optional(FutureIsoDateSchema),
+  name: NonEmptyString,
+}).annotations({
+  description: 'Creates an intake token (90 days by default).',
+});
 
 export const CreateInviteSchema = Schema.Struct({
   expiresAt: Schema.optional(FutureIsoDateSchema),
