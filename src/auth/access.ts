@@ -44,11 +44,15 @@ export const requireSessionIdentity = async (
   }
 
   const email = session.user.email;
-  // The allowlist is the staff gate: in production a session is only
-  // honored for an allowlisted email, and an unset/empty allowlist fails
-  // closed instead of letting every session through.
+  // A configured allowlist is the staff gate: in production a session is
+  // honored only for an allowlisted email, and an explicitly empty
+  // allowlist fails closed instead of letting every session through. An
+  // UNSET allowlist is bootstrap mode: the deployment has no staff roster
+  // yet, so every authenticated session belongs to staff (registration
+  // stays gated by SETUP_TOKEN).
   if (
     environment.ENVIRONMENT === 'production' &&
+    environment.STAFF_EMAILS !== undefined &&
     !isStaffEmail(email, environment.STAFF_EMAILS)
   ) {
     throw new UnauthorizedError(

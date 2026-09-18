@@ -1,13 +1,16 @@
 import {
   activities,
   apiTokens,
+  bootstrapState,
   contacts,
   customFieldDefinitions,
   customFieldValues,
   idempotencyKeys,
   opportunities,
   pipelines,
+  staffInvites,
   stages,
+  user,
 } from './schema';
 import {
   type CustomFieldWrite,
@@ -39,8 +42,12 @@ export type Env = {
   // Invite token required to create a staff account (X-Setup-Token header on
   // POST /api/auth/sign-up/email). Unset or empty rejects every sign-up.
   SETUP_TOKEN?: string;
-  // Comma-separated staff emails. The only emails authorized on protected
-  // /v1 routes; unset or empty denies every session in production.
+  // Comma-separated staff emails. When the binding is SET (even to an empty
+  // string) this is the staff allowlist: the only emails authorized to
+  // register and to reach protected /v1 routes; empty denies everyone in
+  // production. When UNSET the deployment is in bootstrap mode: the
+  // SETUP_TOKEN gate is the only registration gate and every authenticated
+  // session belongs to staff.
   STAFF_EMAILS?: string;
 };
 
@@ -1058,6 +1065,128 @@ export const revokeApiToken = async (environment: Env, tokenId: string) => {
     )
     .run();
   return result.meta.changes > 0;
+};
+
+// --- Single-use staff invitations ----------------------------------------
+//
+// The raw token exists only in the create response; persistence is the
+// SHA-256 hash only. The validate endpoint never consumes an invitation;
+// redemption happens at registration.
+
+const INVITE_DEFAULT_TTL_MS = 7 * 86_400_000;
+
+export type InviteRecord = {
+  createdAt: string;
+  expiresAt: string;
+  id: string;
+  name: string;
+  prefix: string;
+  revokedAt: null | string;
+  usedAt: null | string;
+};
+
+export const createStaffInvite = async (
+  environment: Env,
+  name: string,
+  expiresAt?: string,
+): Promise<InviteRecord & { token: string }> => {
+  const raw = `cld_${crypto
+    .getRandomValues(new Uint8Array(32))
+    .reduce((text, byte) => text + byte.toString(16).padStart(2, '0'), '')}`;
+  const tokenHash = await hashToken(raw);
+  const record: InviteRecord = {
+    createdAt: now(),
+    expiresAt:
+      expiresAt ?? new Date(Date.now() + INVITE_DEFAULT_TTL_MS).toISOString(),
+    id: id(),
+    name,
+    prefix: raw.slice(0, 12),
+    revokedAt: null,
+    usedAt: null,
+  };
+  await getDatabase(environment)
+    .insert(staffInvites)
+    .values({
+      ...record,
+      tokenHash,
+    });
+  return { ...record, token: raw };
+};
+
+export const listStaffInvites = async (environment: Env) =>
+  getDatabase(environment)
+    .select({
+      createdAt: staffInvites.createdAt,
+      expiresAt: staffInvites.expiresAt,
+      id: staffInvites.id,
+      name: staffInvites.name,
+      prefix: staffInvites.prefix,
+      revokedAt: staffInvites.revokedAt,
+      usedAt: staffInvites.usedAt,
+    })
+    .from(staffInvites)
+    .orderBy(desc(staffInvites.createdAt));
+
+export const revokeStaffInvite = async (
+  environment: Env,
+  inviteId: string,
+): Promise<boolean> => {
+  const result = await getDatabase(environment)
+    .update(staffInvites)
+    .set({ revokedAt: now() })
+    .where(eq(staffInvites.id, inviteId))
+    .run();
+  return result.meta.changes > 0;
+};
+
+/**
+ * Non-consuming invitation check: SHA-256 hash lookup; the invitation is
+ * available only while unrevoked, unused, and unexpired.
+ */
+export const checkStaffInviteAvailability = async (
+  environment: Env,
+  token: string,
+): Promise<boolean> => {
+  const tokenHash = await hashToken(token);
+  const record = await getDatabase(environment)
+    .select()
+    .from(staffInvites)
+    .where(eq(staffInvites.tokenHash, tokenHash))
+    .get();
+  return (
+    record !== undefined &&
+    record.revokedAt === null &&
+    record.usedAt === null &&
+    record.expiresAt > now()
+  );
+};
+
+/**
+ * Bootstrap grant availability: the seeded singleton must be unconsumed and
+ * unexpired, and no account may exist yet (the current-account rule of
+ * registration redemption).
+ */
+export const isBootstrapGrantAvailable = async (
+  environment: Env,
+): Promise<boolean> => {
+  const database = getDatabase(environment);
+  const [bootstrap, account] = await Promise.all([
+    database
+      .select({
+        consumedAt: bootstrapState.consumedAt,
+        expiresAt: bootstrapState.expiresAt,
+      })
+      .from(bootstrapState)
+      .where(eq(bootstrapState.id, 'default'))
+      .get(),
+    database.select({ id: user.id }).from(user).limit(1).get(),
+  ]);
+  return (
+    bootstrap !== undefined &&
+    bootstrap.consumedAt === null &&
+    account === undefined &&
+    bootstrap.expiresAt > now()
+  );
 };
 
 export const isIntakeToken = async (

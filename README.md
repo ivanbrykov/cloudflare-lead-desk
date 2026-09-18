@@ -53,6 +53,11 @@ shorter than 32 characters after trimming whitespace; this does not disable
 existing accounts or sign-in. The invite token is reusable; rotate it
 if it leaks.
 
+A deployment that has never set `STAFF_EMAILS` operates in bootstrap mode:
+sign-up is gated by `SETUP_TOKEN` alone and every authenticated session is
+treated as staff; setting the variable (even to an empty string) switches it
+to the allowlist rules above.
+
 ### Updating staff emails
 
 `STAFF_EMAILS` is a plain-text variable, so its value is readable and stored in
