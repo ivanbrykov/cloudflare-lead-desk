@@ -1,3 +1,4 @@
+import { isStaffEmail } from './access';
 import { type Env } from '@/db/repository';
 import * as schema from '@/db/schema';
 import { drizzleAdapter } from '@better-auth/drizzle-adapter';
@@ -41,10 +42,7 @@ const configuredValue = (value: string | undefined): string | undefined => {
  * request.url is produced by the incoming route, whereas Host and forwarded
  * headers are client-controlled inputs to this application.
  */
-export const resolveAuthOrigin = (
-  environment: Env,
-  request: Request,
-): string => {
+const resolveAuthOrigin = (environment: Env, request: Request): string => {
   const override = configuredValue(environment.BETTER_AUTH_URL);
   const candidate = override ?? request.url;
   let url: URL;
@@ -131,41 +129,6 @@ const tokenMatches = (provided: string, expected: string): boolean => {
   return difference === 0;
 };
 
-/**
- * The bootstrap invite token for this deployment, if a usable one is
- * configured: SETUP_TOKEN must be set, and in production it must be at
- * least 32 characters after trimming and not a documented placeholder.
- */
-export const bootstrapToken = (environment: Env): string | undefined => {
-  const setupToken = environment.SETUP_TOKEN;
-  if (!setupToken) {
-    return undefined;
-  }
-
-  if (
-    isProduction(environment) &&
-    (setupToken.trim().length < 32 ||
-      PRODUCTION_PLACEHOLDER_SECRETS.has(setupToken.trim()))
-  ) {
-    return undefined;
-  }
-
-  return setupToken;
-};
-
-/**
- * Constant-time check of a provided value against the deployment's
- * bootstrap token (SETUP_TOKEN). False whenever no usable bootstrap token
- * is configured.
- */
-export const matchesBootstrapToken = (
-  environment: Env,
-  provided: string,
-): boolean => {
-  const expected = bootstrapToken(environment);
-  return expected !== undefined && tokenMatches(provided, expected);
-};
-
 // Constructed for each authentication operation. The Worker module can keep
 // the Elysia app compiled globally, but it must never retain a request-derived
 // Better Auth origin across requests. The CLI loads ./cli.ts instead (no
@@ -196,15 +159,40 @@ export const createAuth = (environment: Env, request: Request) => {
           return;
         }
 
-        // Defense in depth: the invitation-only boundary (see
-        // src/api/app.ts) intercepts POST /api/auth/sign-up/email before
-        // it reaches Better Auth. Any sign-up that reaches this handler
-        // anyway (for example through a path alias) must still be
-        // rejected: this deployment has no open sign-up.
-        throw APIError.from('FORBIDDEN', {
-          code: 'invite_unavailable',
-          message: 'Registration requires an available invitation.',
-        });
+        // Registration is invite-only: the request must carry the invite
+        // token in X-Setup-Token, compared against SETUP_TOKEN in constant
+        // time. A missing/unset SETUP_TOKEN rejects every sign-up.
+        const provided = context.getHeader('x-setup-token') ?? '';
+        const setupToken = environment.SETUP_TOKEN;
+        if (
+          !setupToken ||
+          (isProduction(environment) &&
+            (setupToken.trim().length < 32 ||
+              PRODUCTION_PLACEHOLDER_SECRETS.has(setupToken.trim()))) ||
+          !tokenMatches(provided, setupToken)
+        ) {
+          throw APIError.from('FORBIDDEN', {
+            code: 'invite_token_required',
+            message:
+              'Registration is invite-only. A valid invite token is required.',
+          });
+        }
+
+        // The allowlist also gates account creation, so a leaked invite token
+        // cannot create accounts for arbitrary emails. isStaffEmail is false
+        // for an empty allowlist, so production fails closed here too.
+        const email = context.body?.email;
+        if (
+          environment.ENVIRONMENT === 'production' &&
+          (typeof email !== 'string' ||
+            !isStaffEmail(email, environment.STAFF_EMAILS))
+        ) {
+          throw APIError.from('FORBIDDEN', {
+            code: 'email_not_authorized',
+            message:
+              'This email is not authorized to create an account on this deployment.',
+          });
+        }
       }),
     },
     secret: environment.BETTER_AUTH_SECRET,

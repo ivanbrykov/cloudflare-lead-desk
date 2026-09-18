@@ -20,38 +20,27 @@ import {
   AuthConfigurationError,
   authenticationNotConfiguredResponse,
   createAuth,
-  matchesBootstrapToken,
-  resolveAuthOrigin,
 } from '@/auth';
 import {
   bearerToken,
   requireSessionIdentity,
   UnauthorizedError,
 } from '@/auth/access';
-import { handleInvitationSignUp } from '@/auth/invitation-sign-up';
-import { handleDisabledAccountSignIn } from '@/auth/sign-in-guard';
 import {
   archiveFieldDefinition,
-  checkStaffInviteAvailability,
   createApiToken,
-  createStaffInvite,
   type Env,
   getContact,
   getFieldDefinitions,
   getOpportunity,
   getPipeline,
-  isBootstrapGrantAvailable,
   isIntakeToken,
   listActivities,
   listApiTokens,
   listContacts,
   listOpportunities,
   listPipelines,
-  listStaffAccounts,
-  listStaffInvites,
   revokeApiToken,
-  revokeStaffInvite,
-  setStaffAccountDisabled,
 } from '@/db/repository';
 import { isIntakeKey } from '@/domain/intake';
 import {
@@ -63,16 +52,13 @@ import {
   ContactInputSchema,
   CreateActivitySchema,
   CreateCustomFieldSchema,
-  CreateInviteSchema,
   CreateOpportunitySchema,
   CreatePipelineSchema,
   CreateStageSchema,
   CreateTokenSchema,
   IntakeInputSchema,
   MoveOpportunitySchema,
-  SetStaffDisabledSchema,
   UpdateOpportunitySchema,
-  ValidateInviteSchema,
 } from '@/domain/schemas';
 import { Effect, Either, Schema } from 'effect';
 import { Elysia } from 'elysia';
@@ -201,20 +187,9 @@ const createAppWithAuth = (environment: Env, getAuth: AuthForRequest) =>
   new Elysia({ adapter: CloudflareAdapter, name: 'cloudflare-lead-desk-api' })
     // Elysia's mount() strips the mount prefix before forwarding. Better Auth
     // expects its full basePath, so re-add the prefix to the cloned request.
-    // POST /sign-up/email is the invitation boundary: it resolves the grant
-    // before any account write and re-issues the session through Better
-    // Auth's sign-in endpoint.
     .mount('/api/auth', (request: Request) => {
       try {
         const url = new URL(request.url);
-        if (request.method === 'POST' && url.pathname === '/sign-up/email') {
-          return handleInvitationSignUp(environment, request, getAuth);
-        }
-
-        if (request.method === 'POST' && url.pathname === '/sign-in/email') {
-          return handleDisabledAccountSignIn(environment, request, getAuth);
-        }
-
         url.pathname = `/api/auth${url.pathname}`;
         return getAuth(request).handler(new Request(url, request));
       } catch (error) {
@@ -644,102 +619,6 @@ const createAppWithAuth = (environment: Env, getAuth: AuthForRequest) =>
         ? new Response(null, { status: 204 })
         : errorResponse(404, 'not_found', 'Token not found.');
     })
-    .get('/v1/invites', async ({ request }) => {
-      const admin = await requireAdmin(request, getAuth, environment);
-      if ('error' in admin) {
-        return admin.error;
-      }
-
-      return { data: await listStaffInvites(environment) };
-    })
-    .post('/v1/invites', async ({ body, request }) => {
-      const admin = await requireAdmin(request, getAuth, environment);
-      if ('error' in admin) {
-        return admin.error;
-      }
-
-      const parsed = await parse(CreateInviteSchema, body);
-      if ('error' in parsed) {
-        return parsed.error;
-      }
-
-      const invite = await createStaffInvite(
-        environment,
-        parsed.data.name,
-        parsed.data.expiresAt,
-      );
-      return Response.json(
-        {
-          data: {
-            createdAt: invite.createdAt,
-            expiresAt: invite.expiresAt,
-            id: invite.id,
-            name: invite.name,
-            prefix: invite.prefix,
-            // The raw token is returned exactly once, at creation.
-            token: invite.token,
-          },
-        },
-        { status: 201 },
-      );
-    })
-    .delete('/v1/invites/:id', async ({ params, request }) => {
-      const admin = await requireAdmin(request, getAuth, environment);
-      if ('error' in admin) {
-        return admin.error;
-      }
-
-      return (await revokeStaffInvite(environment, params.id))
-        ? new Response(null, { status: 204 })
-        : errorResponse(404, 'not_found', 'Invitation not found.');
-    })
-    .get('/v1/staff', async ({ request }) => {
-      const admin = await requireAdmin(request, getAuth, environment);
-      if ('error' in admin) {
-        return admin.error;
-      }
-
-      return { data: await listStaffAccounts(environment) };
-    })
-    .patch('/v1/staff/:id', async ({ body, params, request }) => {
-      const admin = await requireAdmin(request, getAuth, environment);
-      if ('error' in admin) {
-        return admin.error;
-      }
-
-      const parsed = await parse(SetStaffDisabledSchema, body);
-      if ('error' in parsed) {
-        return parsed.error;
-      }
-
-      const outcome = await setStaffAccountDisabled(
-        environment,
-        params.id,
-        parsed.data.disabled,
-        admin.email,
-      );
-      if (outcome.kind === 'not-found') {
-        return errorResponse(404, 'not_found', 'Staff account not found.');
-      }
-
-      if (outcome.kind === 'self') {
-        return errorResponse(
-          409,
-          'conflict',
-          'An account cannot disable itself.',
-        );
-      }
-
-      if (outcome.kind === 'last-enabled') {
-        return errorResponse(
-          409,
-          'conflict',
-          'The last enabled staff account cannot be disabled.',
-        );
-      }
-
-      return { data: outcome.record };
-    })
     .post(
       '/v1/intakes',
       async ({ body, request }) => {
@@ -826,52 +705,7 @@ const createAppWithAuth = (environment: Env, getAuth: AuthForRequest) =>
         // to the existing 413 payload_too_large response by the error hook.
         parse: parseIntakeBody,
       },
-    )
-    .post('/api/invites/validate', async ({ body, request }) => {
-      // Trusted-origin check for hostile browser Origin headers: compare
-      // against BETTER_AUTH_URL or, when unset, the incoming request.url
-      // origin. Forwarded headers are never consulted; a missing Origin
-      // (non-browser clients) is allowed, consistent with the auth routes.
-      const origin = request.headers.get('Origin');
-      if (origin !== null) {
-        let trusted: string;
-        try {
-          trusted = resolveAuthOrigin(environment, request);
-        } catch (error) {
-          if (error instanceof AuthConfigurationError) {
-            return authenticationNotConfiguredResponse();
-          }
-
-          throw error;
-        }
-
-        if (origin !== trusted) {
-          return errorResponse(
-            403,
-            'forbidden',
-            'The request origin is not trusted.',
-          );
-        }
-      }
-
-      const parsed = await parse(ValidateInviteSchema, body);
-      if ('error' in parsed) {
-        return parsed.error;
-      }
-
-      // Non-consuming: a valid grant is reported without touching
-      // used_at or any other column.
-      const valid = matchesBootstrapToken(environment, parsed.data.token)
-        ? await isBootstrapGrantAvailable(environment)
-        : await checkStaffInviteAvailability(environment, parsed.data.token);
-      return valid
-        ? { valid: true }
-        : errorResponse(
-            403,
-            'invite_unavailable',
-            'Invitation is unavailable.',
-          );
-    });
+    );
 
 export const createApp = (environment: Env) =>
   createAppWithAuth(environment, (request) => createAuth(environment, request));

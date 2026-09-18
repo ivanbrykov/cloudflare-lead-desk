@@ -5,13 +5,7 @@ import { env } from 'cloudflare:workers';
 
 const workerEnvironment = env as unknown as Environment;
 const app = createApp(workerEnvironment).compile();
-const API_PATHS = [
-  '/v1/',
-  '/api/auth/',
-  '/api/invites/',
-  '/openapi',
-  '/health',
-];
+const API_PATHS = ['/v1/', '/api/auth/', '/openapi', '/health'];
 
 export default {
   async fetch(request: Request): Promise<Response> {

@@ -9,10 +9,9 @@ import { expect, test } from 'vitest';
  *
  * The worker runs in Miniflare in PRODUCTION mode (no DEV_ADMIN_EMAIL
  * bypass), so every protected route resolves a Better Auth session from the
- * request cookie. Registration is invitation-only: the X-Setup-Token header
- * must present the bootstrap SETUP_TOKEN grant (only while no account exists)
- * or a one-time staff invite, and every authenticated session reaches the API.
- * The fixture applies the real drizzle/ migrations, including the generated
+ * request cookie. Registration is invite-gated (X-Setup-Token must match the
+ * SETUP_TOKEN binding) and access is allowlist-gated (STAFF_EMAILS). The
+ * fixture applies the real drizzle/ migrations, including the generated
  * Better Auth tables, against in-memory D1.
  */
 
@@ -74,6 +73,7 @@ type FixtureOptions = {
   betterAuthSecret?: null | string;
   betterAuthUrl?: null | string;
   setupToken?: null | string;
+  staffEmails?: null | string;
 };
 
 type RawResult = {
@@ -99,6 +99,10 @@ const startFixture = async (
 
   if (options.setupToken !== null) {
     bindings.SETUP_TOKEN = options.setupToken ?? SETUP_TOKEN;
+  }
+
+  if (options.staffEmails !== null) {
+    bindings.STAFF_EMAILS = options.staffEmails ?? 'admin@example.test';
   }
 
   const mf = new Miniflare(
@@ -183,7 +187,7 @@ const expectUnauthorized = (result: RawResult, label: string) => {
 const expectRejectedSignUp = (result: RawResult, label: string) => {
   expect(result.status, `${label}: ${JSON.stringify(result)}`).toBe(403);
   expect(result.json.code, `${label}: ${JSON.stringify(result)}`).toBe(
-    'invite_unavailable',
+    'invite_token_required',
   );
   expect(result.cookie, `${label}: ${JSON.stringify(result)}`).toBe('');
 };
@@ -282,10 +286,10 @@ test('sign-up is rejected when SETUP_TOKEN is not configured', async () => {
   }
 });
 
-test('sign-up with the bootstrap token grants access to any email', async () => {
+test('sign-up with the invite token grants access for an allowlisted email', async () => {
   const fx = await startFixture();
   try {
-    const cookie = await signUp(fx, 'anyone@example.test');
+    const cookie = await signUp(fx);
     const contacts = await fx.raw('/v1/contacts', 'GET', undefined, { cookie });
     expect(contacts.status, JSON.stringify(contacts)).toBe(200);
     expect(Array.isArray(contacts.json.data)).toBe(true);
@@ -294,83 +298,43 @@ test('sign-up with the bootstrap token grants access to any email', async () => 
   }
 });
 
-test('the bootstrap grant is single-use: a second sign-up is rejected', async () => {
+test('a token holder whose email is not allowlisted cannot create an account', async () => {
   const fx = await startFixture();
   try {
-    await signUp(fx, 'first@example.test');
     const result = await fx.raw(
       '/api/auth/sign-up/email',
       'POST',
       {
-        email: 'second@example.test',
-        name: 'Second Admin',
+        email: 'contractor@example.test',
+        name: 'Contractor',
         password: 'correct-horse-battery',
       },
       { 'X-Setup-Token': SETUP_TOKEN },
     );
     expect(result.status, JSON.stringify(result)).toBe(403);
-    expect(result.json.code, JSON.stringify(result)).toBe('invite_unavailable');
-    expect(result.cookie, JSON.stringify(result)).toBe('');
-    expect(await userCount(fx), 'no second user row is created').toBe(1);
+    expect(result.cookie).toBe('');
+    expect(await userCount(fx), 'no user row is created').toBe(0);
   } finally {
     await fx.dispose();
   }
 });
 
-test('a duplicate email is rejected with 409 and leaves the invite usable', async () => {
-  const fx = await startFixture();
+test('an empty STAFF_EMAILS rejects sign-up in production', async () => {
+  const fx = await startFixture({ staffEmails: '' });
   try {
-    const cookie = await signUp(fx, 'first@example.test');
-    const createInvite = async (name: string) => {
-      const created = await fx.raw('/v1/invites', 'POST', { name }, { cookie });
-      expect(created.status, JSON.stringify(created)).toBe(201);
-      return (created.json.data as { token: string }).token;
-    };
-
-    const firstInvite = await createInvite('first invite');
-    const secondInvite = await createInvite('second invite');
-
-    const first = await fx.raw(
+    const result = await fx.raw(
       '/api/auth/sign-up/email',
       'POST',
       {
-        email: 'dup@example.test',
-        name: 'Dup',
+        email: 'admin@example.test',
+        name: 'Test Admin',
         password: 'correct-horse-battery',
       },
-      { 'X-Setup-Token': firstInvite },
+      { 'X-Setup-Token': SETUP_TOKEN },
     );
-    expect(first.status, JSON.stringify(first)).toBe(200);
-    expect(first.cookie, JSON.stringify(first)).not.toBe('');
-
-    const duplicate = await fx.raw(
-      '/api/auth/sign-up/email',
-      'POST',
-      {
-        email: 'dup@example.test',
-        name: 'Dup Again',
-        password: 'correct-horse-battery',
-      },
-      { 'X-Setup-Token': secondInvite },
-    );
-    expect(duplicate.status, JSON.stringify(duplicate)).toBe(409);
-    expect(duplicate.json.code, JSON.stringify(duplicate)).toBe('email_exists');
-    expect(duplicate.cookie, JSON.stringify(duplicate)).toBe('');
-    expect(await userCount(fx), 'no duplicate user row').toBe(2);
-
-    // The failed attempt rolled back: the second invite is still usable.
-    const retry = await fx.raw(
-      '/api/auth/sign-up/email',
-      'POST',
-      {
-        email: 'fresh@example.test',
-        name: 'Fresh',
-        password: 'correct-horse-battery',
-      },
-      { 'X-Setup-Token': secondInvite },
-    );
-    expect(retry.status, JSON.stringify(retry)).toBe(200);
-    expect(retry.cookie, JSON.stringify(retry)).not.toBe('');
+    expect(result.status, JSON.stringify(result)).toBe(403);
+    expect(result.cookie).toBe('');
+    expect(await userCount(fx), 'no user row is created').toBe(0);
   } finally {
     await fx.dispose();
   }
@@ -399,7 +363,9 @@ test('production infers the request origin for sign-up, sign-in, sessions, and A
 });
 
 test('uses request.url instead of Origin, Host, or forwarded headers', async () => {
-  const fx = await startFixture();
+  const fx = await startFixture({
+    staffEmails: 'admin@example.test,second@example.test',
+  });
   try {
     const forwarded = await fx.raw(
       '/api/auth/sign-up/email',
@@ -440,7 +406,7 @@ test('uses request.url instead of Origin, Host, or forwarded headers', async () 
     expect(maliciousCallback.status, JSON.stringify(maliciousCallback)).toBe(
       403,
     );
-    expect(maliciousCallback.json.code).toBe('forbidden');
+    expect(maliciousCallback.json.code).toBe('INVALID_CALLBACK_URL');
     expect(await userCount(fx)).toBe(1);
   } finally {
     await fx.dispose();
@@ -512,148 +478,6 @@ test('uses a valid BETTER_AUTH_URL override as the exact trusted origin', async 
       'https://routed-worker.example',
     );
     expect(inferredOrigin.status, JSON.stringify(inferredOrigin)).toBe(403);
-  } finally {
-    await fx.dispose();
-  }
-});
-
-test('sign-up with invalid fields is rejected with 422 and consumes no grant', async () => {
-  const fx = await startFixture();
-  try {
-    const result = await fx.raw(
-      '/api/auth/sign-up/email',
-      'POST',
-      {
-        email: 'admin@example.test',
-        name: 'Test Admin',
-        password: 'short',
-      },
-      { 'X-Setup-Token': SETUP_TOKEN },
-    );
-    expect(result.status, JSON.stringify(result)).toBe(422);
-    expect(result.json.code, JSON.stringify(result)).toBe('validation_error');
-    expect(result.cookie, JSON.stringify(result)).toBe('');
-    expect(await userCount(fx), 'no user row may be written').toBe(0);
-
-    // The bootstrap grant is still available after the failed attempt.
-    expect((await signUp(fx)).length).toBeGreaterThan(0);
-  } finally {
-    await fx.dispose();
-  }
-});
-
-test('a hostile Origin header is rejected before any grant is consumed', async () => {
-  const fx = await startFixture();
-  try {
-    const result = await fx.raw(
-      '/api/auth/sign-up/email',
-      'POST',
-      {
-        email: 'admin@example.test',
-        name: 'Test Admin',
-        password: 'correct-horse-battery',
-      },
-      { Origin: 'https://attacker.example', 'X-Setup-Token': SETUP_TOKEN },
-    );
-    expect(result.status, JSON.stringify(result)).toBe(403);
-    expect(result.json.code, JSON.stringify(result)).toBe('forbidden');
-    expect(result.cookie, JSON.stringify(result)).toBe('');
-    expect(await userCount(fx), 'no user row may be written').toBe(0);
-
-    // The bootstrap grant is still available after the failed attempt.
-    expect((await signUp(fx)).length).toBeGreaterThan(0);
-  } finally {
-    await fx.dispose();
-  }
-});
-
-test('an external callbackURL is rejected before any grant is consumed', async () => {
-  const fx = await startFixture();
-  try {
-    const result = await fx.raw(
-      '/api/auth/sign-up/email',
-      'POST',
-      {
-        callbackURL: 'https://attacker.example/steal-session',
-        email: 'admin@example.test',
-        name: 'Test Admin',
-        password: 'correct-horse-battery',
-      },
-      { 'X-Setup-Token': SETUP_TOKEN },
-    );
-    expect(result.status, JSON.stringify(result)).toBe(403);
-    expect(result.json.code, JSON.stringify(result)).toBe('forbidden');
-    expect(result.cookie, JSON.stringify(result)).toBe('');
-    expect(await userCount(fx), 'no user row may be written').toBe(0);
-
-    // The bootstrap grant is still available after the failed attempt.
-    expect((await signUp(fx)).length).toBeGreaterThan(0);
-  } finally {
-    await fx.dispose();
-  }
-});
-
-test.each([
-  ['trailing slash', '/api/auth/sign-up/email/'],
-  ['dot segment', '/api/auth/sign-up/email/.'],
-])('sign-up path aliases (%s) never create an account', async (_, path) => {
-  const fx = await startFixture();
-  try {
-    const result = await fx.raw(
-      path,
-      'POST',
-      {
-        email: 'admin@example.test',
-        name: 'Test Admin',
-        password: 'correct-horse-battery',
-      },
-      { 'X-Setup-Token': SETUP_TOKEN },
-    );
-    expect(result.status, JSON.stringify(result)).toBeGreaterThanOrEqual(400);
-    expect(result.status, JSON.stringify(result)).toBeLessThan(500);
-    expect(result.cookie, JSON.stringify(result)).toBe('');
-    expect(await userCount(fx), 'no user row may be written').toBe(0);
-  } finally {
-    await fx.dispose();
-  }
-});
-
-test('concurrent sign-ups against one invite settle to exactly one account', async () => {
-  const fx = await startFixture();
-  try {
-    const cookie = await signUp(fx, 'owner@example.test');
-    const created = await fx.raw(
-      '/v1/invites',
-      'POST',
-      { name: 'race invite' },
-      { cookie },
-    );
-    expect(created.status, JSON.stringify(created)).toBe(201);
-    const token = (created.json.data as { token: string }).token;
-
-    const attempt = (email: string, name: string) =>
-      fx.raw(
-        '/api/auth/sign-up/email',
-        'POST',
-        { email, name, password: 'correct-horse-battery' },
-        { 'X-Setup-Token': token },
-      );
-    const [first, second] = await Promise.all([
-      attempt('race-a@example.test', 'Race A'),
-      attempt('race-b@example.test', 'Race B'),
-    ]);
-
-    const successes = [first, second].filter(
-      (result) => result.status === 200 && result.cookie !== '',
-    );
-    expect(
-      successes.length,
-      `${JSON.stringify(first)} | ${JSON.stringify(second)}`,
-    ).toBe(1);
-    const loser = first.status === 200 ? second : first;
-    expect(loser.status, JSON.stringify(loser)).toBe(403);
-    expect(loser.json.code, JSON.stringify(loser)).toBe('invite_unavailable');
-    expect(await userCount(fx), 'exactly one account is created').toBe(2);
   } finally {
     await fx.dispose();
   }

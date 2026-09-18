@@ -1,19 +1,14 @@
 import {
   activities,
   apiTokens,
-  bootstrapState,
   contacts,
   customFieldDefinitions,
   customFieldValues,
   idempotencyKeys,
   opportunities,
   pipelines,
-  session,
-  staffInvites,
   stages,
-  user,
 } from './schema';
-import { type RegistrationGrant } from '@/auth/registration-repository';
 import {
   type CustomFieldWrite,
   type NormalizedFieldValue,
@@ -28,16 +23,7 @@ import {
   type IntakeInput,
   normalizeEmail,
 } from '@/domain/schemas';
-import {
-  and,
-  asc,
-  desc,
-  eq,
-  inArray,
-  isNotNull,
-  isNull,
-  sql,
-} from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
 
 export type Env = {
@@ -53,6 +39,9 @@ export type Env = {
   // Invite token required to create a staff account (X-Setup-Token header on
   // POST /api/auth/sign-up/email). Unset or empty rejects every sign-up.
   SETUP_TOKEN?: string;
+  // Comma-separated staff emails. The only emails authorized on protected
+  // /v1 routes; unset or empty denies every session in production.
+  STAFF_EMAILS?: string;
 };
 
 export const DEFAULT_WORKSPACE_ID = '01ARZ3NDEKTSV4RRFFQ69G5FAV';
@@ -1069,309 +1058,6 @@ export const revokeApiToken = async (environment: Env, tokenId: string) => {
     )
     .run();
   return result.meta.changes > 0;
-};
-
-// --- Single-use staff invitations ----------------------------------------
-//
-// The raw token exists only in the create response; persistence is the
-// SHA-256 hash only. The validate endpoint never consumes an invitation;
-// redemption happens at registration.
-
-const INVITE_DEFAULT_TTL_MS = 7 * 86_400_000;
-
-export type InviteRecord = {
-  createdAt: string;
-  expiresAt: string;
-  id: string;
-  name: string;
-  prefix: string;
-  revokedAt: null | string;
-  usedAt: null | string;
-};
-
-export const createStaffInvite = async (
-  environment: Env,
-  name: string,
-  expiresAt?: string,
-): Promise<InviteRecord & { token: string }> => {
-  const raw = `cld_${crypto
-    .getRandomValues(new Uint8Array(32))
-    .reduce((text, byte) => text + byte.toString(16).padStart(2, '0'), '')}`;
-  const tokenHash = await hashToken(raw);
-  const record: InviteRecord = {
-    createdAt: now(),
-    expiresAt:
-      expiresAt ?? new Date(Date.now() + INVITE_DEFAULT_TTL_MS).toISOString(),
-    id: id(),
-    name,
-    prefix: raw.slice(0, 12),
-    revokedAt: null,
-    usedAt: null,
-  };
-  await getDatabase(environment)
-    .insert(staffInvites)
-    .values({
-      ...record,
-      tokenHash,
-    });
-  return { ...record, token: raw };
-};
-
-export const listStaffInvites = async (environment: Env) =>
-  getDatabase(environment)
-    .select({
-      createdAt: staffInvites.createdAt,
-      expiresAt: staffInvites.expiresAt,
-      id: staffInvites.id,
-      name: staffInvites.name,
-      prefix: staffInvites.prefix,
-      revokedAt: staffInvites.revokedAt,
-      usedAt: staffInvites.usedAt,
-    })
-    .from(staffInvites)
-    .orderBy(desc(staffInvites.createdAt));
-
-export const revokeStaffInvite = async (
-  environment: Env,
-  inviteId: string,
-): Promise<boolean> => {
-  const result = await getDatabase(environment)
-    .update(staffInvites)
-    .set({ revokedAt: now() })
-    .where(eq(staffInvites.id, inviteId))
-    .run();
-  return result.meta.changes > 0;
-};
-
-/**
- * Resolves a presented raw invite token to an available staff-invite
- * grant. Returns undefined when the token does not match an unrevoked,
- * unused, unexpired invite.
- */
-export const availableStaffInviteGrant = async (
-  environment: Env,
-  token: string,
-): Promise<RegistrationGrant | undefined> => {
-  if (token === '') {
-    return undefined;
-  }
-
-  const tokenHash = await hashToken(token);
-  const record = await getDatabase(environment)
-    .select()
-    .from(staffInvites)
-    .where(eq(staffInvites.tokenHash, tokenHash))
-    .get();
-  if (
-    record === undefined ||
-    record.revokedAt !== null ||
-    record.usedAt !== null ||
-    record.expiresAt <= now()
-  ) {
-    return undefined;
-  }
-
-  return { kind: 'invite', tokenHash };
-};
-
-/**
- * Non-consuming invitation check: available only while unrevoked, unused,
- * and unexpired.
- */
-export const checkStaffInviteAvailability = async (
-  environment: Env,
-  token: string,
-): Promise<boolean> =>
-  (await availableStaffInviteGrant(environment, token)) !== undefined;
-
-/**
- * Bootstrap grant availability: the seeded singleton must be unconsumed and
- * unexpired, and no account may exist yet (the current-account rule of
- * registration redemption).
- */
-export const isBootstrapGrantAvailable = async (
-  environment: Env,
-): Promise<boolean> => {
-  const database = getDatabase(environment);
-  const [bootstrap, account] = await Promise.all([
-    database
-      .select({
-        consumedAt: bootstrapState.consumedAt,
-        expiresAt: bootstrapState.expiresAt,
-      })
-      .from(bootstrapState)
-      .where(eq(bootstrapState.id, 'default'))
-      .get(),
-    database.select({ id: user.id }).from(user).limit(1).get(),
-  ]);
-  return (
-    bootstrap !== undefined &&
-    bootstrap.consumedAt === null &&
-    account === undefined &&
-    bootstrap.expiresAt > now()
-  );
-};
-
-export type StaffAccountRecord = {
-  disabledAt: Date | null;
-  email: string;
-  id: string;
-  name: string;
-};
-
-const staffAccountColumns = {
-  disabledAt: user.disabledAt,
-  email: user.email,
-  id: user.id,
-  name: user.name,
-} as const;
-
-/**
- * Lists every staff account (every account is staff) with the public
- * projection: id, name, email, and the durable disabled state.
- */
-export const listStaffAccounts = async (
-  environment: Env,
-): Promise<StaffAccountRecord[]> =>
-  getDatabase(environment)
-    .select(staffAccountColumns)
-    .from(user)
-    .orderBy(asc(user.email), asc(user.id));
-
-/**
- * Resolves a normalized (lowercase) email to its staff-account record.
- */
-export const getStaffAccountByEmail = async (
-  environment: Env,
-  email: string,
-): Promise<StaffAccountRecord | undefined> =>
-  getDatabase(environment)
-    .select(staffAccountColumns)
-    .from(user)
-    .where(eq(user.email, email))
-    .get();
-
-export type SetStaffDisabledOutcome =
-  | { kind: 'last-enabled' }
-  | { kind: 'not-found' }
-  | { kind: 'self' }
-  | { kind: 'updated'; record: StaffAccountRecord };
-
-/**
- * Durable staff revocation (stage s5). Disabling writes the flag and
- * deletes every session of the account in ONE D1 batch (single
- * transaction): a disabled account can never hold a live session. The
- * session DELETE is scoped to rows whose owner is disabled after the
- * UPDATE, so a concurrently no-op update can never revoke a
- * still-enabled account's sessions. Re-enabling clears the flag only:
- * deleted session rows are never restored, so the account keeps its
- * credentials but must sign in again.
- *
- * `actorEmail` identifies the signed-in admin performing the change and
- * enforces the self-disable protection; the enabled-count guard enforces
- * the last-enabled-account protection atomically with the UPDATE.
- */
-export const setStaffAccountDisabled = async (
-  environment: Env,
-  userId: string,
-  disabled: boolean,
-  actorEmail: string,
-): Promise<SetStaffDisabledOutcome> => {
-  const database = getDatabase(environment);
-  const target = await database
-    .select(staffAccountColumns)
-    .from(user)
-    .where(eq(user.id, userId))
-    .get();
-  if (target === undefined) {
-    return { kind: 'not-found' };
-  }
-
-  const isDisabled = target.disabledAt !== null;
-  if (disabled === isDisabled) {
-    // Idempotent: the requested state already holds.
-    return { kind: 'updated', record: target };
-  }
-
-  if (disabled) {
-    if (target.email === actorEmail.toLowerCase()) {
-      return { kind: 'self' };
-    }
-
-    const enabled = await database
-      .select({ count: sql<number>`count(*)` })
-      .from(user)
-      .where(isNull(user.disabledAt))
-      .get();
-    if (Number(enabled?.count ?? 0) <= 1) {
-      return { kind: 'last-enabled' };
-    }
-
-    const timestamp = new Date();
-    const [result] = await database.batch([
-      database
-        .update(user)
-        .set({ disabledAt: timestamp, updatedAt: timestamp })
-        .where(
-          and(
-            eq(user.id, userId),
-            isNull(user.disabledAt),
-            sql`(select count(*) from user where disabled_at is null) >= 2`,
-          ),
-        ),
-      database
-        .delete(session)
-        .where(
-          and(
-            eq(session.userId, userId),
-            sql`(select disabled_at from user where id = ${userId}) is not null`,
-          ),
-        ),
-    ]);
-    if (result.meta.changes === 0) {
-      // Lost a concurrent race; re-derive the outcome from the committed
-      // state instead of guessing.
-      const current = await database
-        .select(staffAccountColumns)
-        .from(user)
-        .where(eq(user.id, userId))
-        .get();
-      if (current === undefined) {
-        return { kind: 'not-found' };
-      }
-
-      if (current.disabledAt === null) {
-        return { kind: 'last-enabled' };
-      }
-
-      return { kind: 'updated', record: current };
-    }
-
-    return { kind: 'updated', record: { ...target, disabledAt: timestamp } };
-  }
-
-  const [updated] = await database.batch([
-    database
-      .update(user)
-      .set({ disabledAt: null, updatedAt: new Date() })
-      .where(and(eq(user.id, userId), isNotNull(user.disabledAt))),
-  ]);
-  if (updated.meta.changes === 0) {
-    // A concurrent enable already cleared the flag; re-read the committed
-    // state.
-    const current = await database
-      .select(staffAccountColumns)
-      .from(user)
-      .where(eq(user.id, userId))
-      .get();
-    if (current === undefined) {
-      return { kind: 'not-found' };
-    }
-
-    return { kind: 'updated', record: current };
-  }
-
-  return { kind: 'updated', record: { ...target, disabledAt: null } };
 };
 
 export const isIntakeToken = async (
