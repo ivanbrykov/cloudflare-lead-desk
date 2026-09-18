@@ -1762,7 +1762,9 @@ const localTimezoneLabel = () => {
   return `${Intl.DateTimeFormat().resolvedOptions().timeZone ?? 'local'} (${offset})`;
 };
 
-const tokenStatus = (token: Token): 'active' | 'expired' | 'legacy' | 'revoked' => {
+const tokenStatus = (
+  token: Token,
+): 'active' | 'expired' | 'legacy' | 'revoked' => {
   if (token.revokedAt) {
     return 'revoked';
   }

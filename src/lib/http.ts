@@ -33,6 +33,7 @@ export const request = async <T>(
   if (response.status === 204) {
     return undefined as T;
   }
+
   const payload = (await response.json()) as (ApiEnvelope<T> | T) & {
     message?: string;
   };
