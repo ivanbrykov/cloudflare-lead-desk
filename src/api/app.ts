@@ -29,6 +29,7 @@ import {
   UnauthorizedError,
 } from '@/auth/access';
 import { handleInvitationSignUp } from '@/auth/invitation-sign-up';
+import { handleDisabledAccountSignIn } from '@/auth/sign-in-guard';
 import {
   archiveFieldDefinition,
   checkStaffInviteAvailability,
@@ -46,9 +47,11 @@ import {
   listContacts,
   listOpportunities,
   listPipelines,
+  listStaffAccounts,
   listStaffInvites,
   revokeApiToken,
   revokeStaffInvite,
+  setStaffAccountDisabled,
 } from '@/db/repository';
 import { isIntakeKey } from '@/domain/intake';
 import {
@@ -67,6 +70,7 @@ import {
   CreateTokenSchema,
   IntakeInputSchema,
   MoveOpportunitySchema,
+  SetStaffDisabledSchema,
   UpdateOpportunitySchema,
   ValidateInviteSchema,
 } from '@/domain/schemas';
@@ -195,19 +199,22 @@ const requireAdmin = async (
 
 const createAppWithAuth = (environment: Env, getAuth: AuthForRequest) =>
   new Elysia({ adapter: CloudflareAdapter, name: 'cloudflare-lead-desk-api' })
+    // Elysia's mount() strips the mount prefix before forwarding. Better Auth
+    // expects its full basePath, so re-add the prefix to the cloned request.
+    // POST /sign-up/email is the invitation boundary: it resolves the grant
+    // before any account write and re-issues the session through Better
+    // Auth's sign-in endpoint.
     .mount('/api/auth', (request: Request) => {
-      // Elysia's mount() strips the mount prefix before forwarding.
-      const url = new URL(request.url);
-      // The invitation-only boundary intercepts the canonical sign-up path
-      // before Better Auth can register anyone; every other auth path (in
-      // particular path aliases such as a trailing slash, which Better Auth
-      // rejects with 404 because trailing slashes do not match routes) is
-      // delegated to Better Auth with its full basePath restored.
-      if (request.method === 'POST' && url.pathname === '/sign-up/email') {
-        return handleInvitationSignUp(environment, request, getAuth);
-      }
-
       try {
+        const url = new URL(request.url);
+        if (request.method === 'POST' && url.pathname === '/sign-up/email') {
+          return handleInvitationSignUp(environment, request, getAuth);
+        }
+
+        if (request.method === 'POST' && url.pathname === '/sign-in/email') {
+          return handleDisabledAccountSignIn(environment, request, getAuth);
+        }
+
         url.pathname = `/api/auth${url.pathname}`;
         return getAuth(request).handler(new Request(url, request));
       } catch (error) {
@@ -685,6 +692,53 @@ const createAppWithAuth = (environment: Env, getAuth: AuthForRequest) =>
       return (await revokeStaffInvite(environment, params.id))
         ? new Response(null, { status: 204 })
         : errorResponse(404, 'not_found', 'Invitation not found.');
+    })
+    .get('/v1/staff', async ({ request }) => {
+      const admin = await requireAdmin(request, getAuth, environment);
+      if ('error' in admin) {
+        return admin.error;
+      }
+
+      return { data: await listStaffAccounts(environment) };
+    })
+    .patch('/v1/staff/:id', async ({ body, params, request }) => {
+      const admin = await requireAdmin(request, getAuth, environment);
+      if ('error' in admin) {
+        return admin.error;
+      }
+
+      const parsed = await parse(SetStaffDisabledSchema, body);
+      if ('error' in parsed) {
+        return parsed.error;
+      }
+
+      const outcome = await setStaffAccountDisabled(
+        environment,
+        params.id,
+        parsed.data.disabled,
+        admin.email,
+      );
+      if (outcome.kind === 'not-found') {
+        return errorResponse(404, 'not_found', 'Staff account not found.');
+      }
+
+      if (outcome.kind === 'self') {
+        return errorResponse(
+          409,
+          'conflict',
+          'An account cannot disable itself.',
+        );
+      }
+
+      if (outcome.kind === 'last-enabled') {
+        return errorResponse(
+          409,
+          'conflict',
+          'The last enabled staff account cannot be disabled.',
+        );
+      }
+
+      return { data: outcome.record };
     })
     .post(
       '/v1/intakes',

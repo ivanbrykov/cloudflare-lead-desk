@@ -21,9 +21,9 @@ Every deployment is independent: the repo carries no account-specific values.
 
 The button clones this repository into your own GitHub or GitLab account, lets you choose the Worker name and the D1 database name on the setup page, prompts for the two secrets listed in `.dev.vars.example` (`BETTER_AUTH_SECRET`, `SETUP_TOKEN`), provisions the database in your Cloudflare account, runs the migrations as part of `pnpm run deploy`, and connects Workers Builds so every push to your copy deploys automatically.
 
-The template supplies empty values for both secrets. Generate separate random values for `BETTER_AUTH_SECRET` (`openssl rand -base64 32`) and `SETUP_TOKEN` (`openssl rand -hex 32`). Generate these once per installation and keep them across redeployments. The auth URL is detected automatically from the incoming request; there is no URL field to fill in.
+The template leaves both secrets empty. Generate separate random values for `BETTER_AUTH_SECRET` (`openssl rand -base64 32`) and `SETUP_TOKEN` (`openssl rand -hex 32`). Generate these once per installation and keep them across redeployments. The auth URL is detected automatically from the incoming request; there is no URL field to fill in.
 
-After the first deploy, open the app, switch to sign-up, and create the first account using the bootstrap token (`SETUP_TOKEN`) in the invite token field. Registration is invitation-only by design: while no account exists, a sign-up must present the bootstrap token, and afterwards it must present a staff invite — the bootstrap grant is consumed by the first account, so there is no "close registration" step. To add staff later, create a single-use invitation with `POST /v1/invites` and share its token (see [Adding staff](#adding-staff)).
+After the first deploy, open the app, switch to sign-up, and create the first account using the invite token (`SETUP_TOKEN`). Registration is invitation-only by design: the bootstrap token creates the first account, and every later account requires a single-use invite that an authenticated staff member creates with `POST /v1/invites`. Only invited staff can create an account or reach data.
 
 ### Manual install
 
@@ -32,51 +32,66 @@ Prerequisites: a Cloudflare account, Node.js 24.20.0 (see `.node-version`) and p
 1. Install dependencies: `pnpm install --frozen-lockfile`.
 2. Create the D1 database in your account with any name you like — it does not need to match the Worker, for example `pnpm exec wrangler d1 create lead-desk-db`. Copy the `database_id` it prints into the `d1_databases` entry in `wrangler.jsonc` (replacing the empty string) and set `database_name` to the same name you used.
 3. Set the session secret: `openssl rand -base64 32 | pnpm exec wrangler secret put BETTER_AUTH_SECRET`.
-4. Set the bootstrap invite token with `openssl rand -hex 32 | pnpm exec wrangler secret put SETUP_TOKEN`. Keep the secret across redeployments.
+4. Set the invite token: `openssl rand -hex 32 | pnpm exec wrangler secret put SETUP_TOKEN`. Keep it across redeployments.
 5. Deploy: `pnpm run deploy` (set `CLOUDFLARE_ACCOUNT_ID` if your wrangler login spans multiple accounts). The deploy script builds, applies the D1 migrations, and deploys. The migration also bootstraps the default workspace, pipeline, and stage rows (fixed ids, `INSERT OR IGNORE`) and makes stage positions unique per pipeline — the app itself never seeds data per request, so deleted bootstrap rows are not resurrected. Migration commands reference the `DB` binding rather than a database name, so renamed databases keep working.
 
 You can also connect the repository in the dashboard under Workers → Settings → Builds, with the deploy command set to `pnpm run deploy`.
 
 Open the deployed app, switch to sign-up, and create the first account using
-the `SETUP_TOKEN` bootstrap token in the invite token field. Registration is
-invitation-only — every sign-up must present the bootstrap token (while no
-account exists) or a staff invite — so there is no follow-up step to close
-it. Adding staff means creating a single-use invitation with
-`POST /v1/invites` and sharing its token.
+the `SETUP_TOKEN` invite token. Registration stays invitation-only: the
+bootstrap token creates the first account only, and adding staff means
+creating a single-use invite with `POST /v1/invites` from an authenticated
+staff session. Only invited staff get data access.
 
 Both `src/worker-global.ts` (the configured deployment entry) and the compatibility
 entry `src/worker.ts` use the same app compiled at module scope.
 
-Missing or old template-placeholder session secrets fail authentication closed,
-and an empty `SETUP_TOKEN` disables new registrations. Production also rejects
-bootstrap tokens shorter than 32 characters after trimming whitespace; this
-does not disable existing accounts or sign-in. A sign-up without an available
-grant (bootstrap or staff invite) returns `403 invite_unavailable` and writes
-nothing. The bootstrap token is reusable until the first account exists;
-rotate it if it leaks.
+Missing or old template-placeholder session secrets fail authentication closed.
+An empty `SETUP_TOKEN` disables new registrations. Production also rejects
+invite tokens shorter than 32 characters after trimming whitespace; this does
+not disable existing accounts or sign-in. The bootstrap token is usable until
+the first account exists, and staff invite tokens are single-use; rotate
+`SETUP_TOKEN` if it leaks.
+
+A fresh deployment operates in bootstrap mode: sign-up is gated by
+`SETUP_TOKEN` alone and every authenticated session is treated as staff.
+Once the first account exists, the bootstrap grant is no longer available and
+new staff accounts are created exclusively through single-use invites.
 
 ### Adding staff
 
-Staff accounts are created only through single-use invitations. The first
-account uses the bootstrap grant (`SETUP_TOKEN`). Afterwards, create an
-invitation with a staff session and share the returned token:
+Staff accounts are created through single-use invites, not an email allowlist.
+From an authenticated staff session, send `POST /v1/invites` with a
+`{ name }` body (and an optional `expiresAt`, defaulting to 7 days); the
+response contains the raw invite token exactly once. Share it with the new
+staff member and have them sign up with it as the `x-setup-token` header on
+`POST /api/auth/sign-up/email`:
 
 ```sh
-curl https://crm.example.com/v1/invites \
+curl https://crm.example.com/api/auth/sign-up/email \
   -H 'Content-Type: application/json' \
-  -H 'Cookie: better-auth.session_token=...' \
-  --data '{ "name": "New teammate", "expiresAt": "2026-10-15T00:00:00Z" }'
+  -H 'x-setup-token: <invite-token>' \
+  --data '{ "name": "New Staff", "email": "new@company.com", "password": "a-strong-password" }'
 ```
 
-`expiresAt` is optional (the invitation then expires after 7 days). The token
-is returned exactly once — the API stores only its SHA-256 hash — and is
-consumed the moment the account is created; a consumed, expired, or revoked
-invite is rejected with `403 invite_unavailable`. The new account signs up on
-the usual sign-up screen, sending the token as the `X-Setup-Token` header.
-Revoking an unused invitation (`DELETE /v1/invites/:id`) closes it immediately
-without deleting or locking out existing accounts; `GET /v1/invites` lists
-outstanding invitations, and `POST /api/invites/validate` checks a token
-without consuming it.
+An invite is redeemed once and marked used automatically at sign-up; while it
+is still available it can be listed (by 12-character prefix only) or revoked
+with `DELETE /v1/invites/:id`.
+
+### Managing staff accounts
+
+`GET /v1/staff` lists every staff account as the public projection
+(`id`, `name`, `email`, `disabledAt`); it never returns passwords, hashes,
+tokens, or session material. `PATCH /v1/staff/:id` with
+`{ "disabled": true }` disables an account: the durable disabled flag and the
+deletion of all of that account's sessions commit in one D1 transaction, so
+a disabled account's existing sessions are rejected immediately and sign-in
+with its credentials is denied until the account is re-enabled. Re-enabling
+with `{ "disabled": false }` restores the account's credentials; previously
+issued sessions stay revoked, so the account must sign in again. An account
+cannot disable itself, and the last enabled account cannot be disabled; both
+return `409 conflict`. Unknown ids return `404 not_found`, and both endpoints
+require an authenticated staff session.
 
 ### Optional auth URL override
 

@@ -173,6 +173,16 @@ export type ValidateInviteInput = Schema.Schema.Type<
   typeof ValidateInviteSchema
 >;
 
+export const SetStaffDisabledSchema = Schema.Struct({
+  disabled: Schema.Boolean,
+}).annotations({
+  description:
+    'Enables or disables a staff account. Disabling also revokes every session of that account; re-enabling preserves the credentials but never restores old sessions.',
+});
+export type SetStaffDisabledInput = Schema.Schema.Type<
+  typeof SetStaffDisabledSchema
+>;
+
 export const PaginationSchema = Schema.Struct({
   cursor: Schema.optional(RecordIdSchema),
   limit: Schema.optional(
