@@ -13,6 +13,7 @@ import {
   isBlankCustomFieldValue,
 } from './lib/custom-field-form';
 import { request } from './lib/http';
+import { quietFetch } from './lib/quiet-fetch';
 import { cn } from './lib/styles';
 import {
   DndContext,
@@ -32,7 +33,7 @@ import {
   Settings2,
   SlidersHorizontal,
 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { Link, Route, Switch, useLocation } from 'wouter';
 
@@ -1823,31 +1824,120 @@ const TokensPage = () => {
 
 const LoginPage = () => {
   const [mode, setMode] = useState<'sign-in' | 'sign-up'>('sign-in');
+  const [step, setStep] = useState<1 | 2>(1);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [inviteToken, setInviteToken] = useState('');
   const [error, setError] = useState<null | string>(null);
   const [pending, setPending] = useState(false);
-  const submit = async (event: React.FormEvent) => {
+  const registrationBusy = useRef(false);
+
+  const startRegistration = () => {
+    setMode('sign-up');
+    setStep(1);
+    setError(null);
+  };
+
+  const backToSignIn = () => {
+    setMode('sign-in');
+    setError(null);
+  };
+
+  const backToTokenStep = () => {
+    setInviteToken('');
+    setName('');
+    setEmail('');
+    setPassword('');
+    setStep(1);
+    setError(null);
+  };
+
+  const releaseRegistration = () => {
+    registrationBusy.current = false;
+    setPending(false);
+  };
+
+  const submitSignIn = async (event: React.FormEvent) => {
     event.preventDefault();
     setError(null);
     setPending(true);
-    const result =
-      mode === 'sign-up'
-        ? await signUp.email({
-            email,
-            fetchOptions: {
-              headers: { 'X-Setup-Token': inviteToken.trim() },
-            },
-            name,
-            password,
-          })
-        : await signIn.email({ email, password });
+    const result = await signIn.email({ email, password });
     setPending(false);
     if (result.error) {
       setError(result.error.message ?? 'Authentication failed.');
     }
+  };
+
+  const submitTokenStep = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (registrationBusy.current) {
+      return;
+    }
+
+    registrationBusy.current = true;
+    setError(null);
+    setPending(true);
+    try {
+      const response = await quietFetch('/api/invites/validate', {
+        body: JSON.stringify({ token: inviteToken.trim() }),
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+        },
+        method: 'POST',
+      });
+      if (response.ok) {
+        setStep(2);
+        return;
+      }
+
+      // The grant may be unknown, used, revoked, or expired; keep the
+      // message generic so the UI never reveals which state applies.
+      setError('Invitation is unavailable.');
+    } catch {
+      setError('Invitation is unavailable.');
+    } finally {
+      releaseRegistration();
+    }
+  };
+
+  const submitDetailsStep = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (registrationBusy.current) {
+      return;
+    }
+
+    registrationBusy.current = true;
+    setError(null);
+    setPending(true);
+    const result = await signUp.email({
+      email,
+      fetchOptions: {
+        headers: { 'X-Setup-Token': inviteToken.trim() },
+      },
+      name,
+      password,
+    });
+    releaseRegistration();
+    if (!result.error) {
+      return;
+    }
+
+    const failure = result.error as {
+      code?: string;
+      message?: string;
+      status?: number;
+    };
+    if (failure.code === 'invite_unavailable' && failure.status === 403) {
+      // The grant was used or expired while the details were being typed;
+      // restart from the token step without keeping the grant.
+      backToTokenStep();
+      setError(failure.message ?? 'Invitation is unavailable.');
+      return;
+    }
+
+    setError(failure.message ?? 'Authentication failed.');
   };
 
   return (
@@ -1859,48 +1949,55 @@ const LoginPage = () => {
           </span>
           Lead Desk
         </div>
-        <form
-          className="grid gap-4"
-          onSubmit={submit}
-        >
-          {mode === 'sign-up' && (
+        {mode === 'sign-in' ? (
+          <form
+            className="grid gap-4"
+            onSubmit={submitSignIn}
+          >
             <label className="grid gap-1 text-sm text-slate-300">
-              Name
+              Email
               <input
                 onChange={(event) => {
-                  setName(event.target.value);
+                  setEmail(event.target.value);
                 }}
-                placeholder="Ada Lovelace"
+                placeholder="you@example.com"
                 required
-                value={name}
+                type="email"
+                value={email}
               />
             </label>
-          )}
-          <label className="grid gap-1 text-sm text-slate-300">
-            Email
-            <input
-              onChange={(event) => {
-                setEmail(event.target.value);
-              }}
-              placeholder="you@example.com"
-              required
-              type="email"
-              value={email}
-            />
-          </label>
-          <label className="grid gap-1 text-sm text-slate-300">
-            Password
-            <input
-              minLength={8}
-              onChange={(event) => {
-                setPassword(event.target.value);
-              }}
-              required
-              type="password"
-              value={password}
-            />
-          </label>
-          {mode === 'sign-up' && (
+            <label className="grid gap-1 text-sm text-slate-300">
+              Password
+              <input
+                minLength={8}
+                onChange={(event) => {
+                  setPassword(event.target.value);
+                }}
+                required
+                type="password"
+                value={password}
+              />
+            </label>
+            {error && (
+              <p
+                className="rounded-md border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-100"
+                role="alert"
+              >
+                {error}
+              </p>
+            )}
+            <Button
+              disabled={pending}
+              type="submit"
+            >
+              Sign in
+            </Button>
+          </form>
+        ) : step === 1 ? (
+          <form
+            className="grid gap-4"
+            onSubmit={submitTokenStep}
+          >
             <label className="grid gap-1 text-sm text-slate-300">
               Invite token
               <input
@@ -1912,31 +2009,103 @@ const LoginPage = () => {
                 value={inviteToken}
               />
             </label>
-          )}
-          {error && (
-            <p className="rounded-md border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-100">
-              {error}
-            </p>
-          )}
-          <Button
-            disabled={pending}
-            type="submit"
+            {error && (
+              <p
+                className="rounded-md border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-100"
+                role="alert"
+              >
+                {error}
+              </p>
+            )}
+            <Button
+              disabled={pending}
+              type="submit"
+            >
+              Continue
+            </Button>
+          </form>
+        ) : (
+          <form
+            className="grid gap-4"
+            onSubmit={submitDetailsStep}
           >
-            {mode === 'sign-up' ? 'Create account' : 'Sign in'}
-          </Button>
-        </form>
-        <button
-          className="mt-4 text-sm text-cyan-300 hover:text-cyan-200"
-          onClick={() => {
-            setMode(mode === 'sign-up' ? 'sign-in' : 'sign-up');
-            setError(null);
-          }}
-          type="button"
-        >
-          {mode === 'sign-up'
-            ? 'Already have an account? Sign in'
-            : 'First time here? Create an account (invite only)'}
-        </button>
+            <label className="grid gap-1 text-sm text-slate-300">
+              Name
+              <input
+                onChange={(event) => {
+                  setName(event.target.value);
+                }}
+                placeholder="Ada Lovelace"
+                required
+                value={name}
+              />
+            </label>
+            <label className="grid gap-1 text-sm text-slate-300">
+              Email
+              <input
+                onChange={(event) => {
+                  setEmail(event.target.value);
+                }}
+                placeholder="you@example.com"
+                required
+                type="email"
+                value={email}
+              />
+            </label>
+            <label className="grid gap-1 text-sm text-slate-300">
+              Password
+              <input
+                minLength={8}
+                onChange={(event) => {
+                  setPassword(event.target.value);
+                }}
+                required
+                type="password"
+                value={password}
+              />
+            </label>
+            {error && (
+              <p
+                className="rounded-md border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-100"
+                role="alert"
+              >
+                {error}
+              </p>
+            )}
+            <Button
+              disabled={pending}
+              onClick={backToTokenStep}
+              tone="secondary"
+              type="button"
+            >
+              Back
+            </Button>
+            <Button
+              disabled={pending}
+              type="submit"
+            >
+              Create account
+            </Button>
+          </form>
+        )}
+        {mode === 'sign-in' ? (
+          <button
+            className="mt-4 text-sm text-cyan-300 hover:text-cyan-200"
+            onClick={startRegistration}
+            type="button"
+          >
+            Create account
+          </button>
+        ) : step === 1 ? (
+          <button
+            className="mt-4 text-sm text-cyan-300 hover:text-cyan-200"
+            disabled={pending}
+            onClick={backToSignIn}
+            type="button"
+          >
+            Sign in
+          </button>
+        ) : null}
       </div>
     </div>
   );
