@@ -12,6 +12,7 @@ import {
   stages,
   user,
 } from './schema';
+import { type RegistrationGrant } from '@/auth/registration-repository';
 import {
   type CustomFieldWrite,
   type NormalizedFieldValue,
@@ -42,13 +43,6 @@ export type Env = {
   // Invite token required to create a staff account (X-Setup-Token header on
   // POST /api/auth/sign-up/email). Unset or empty rejects every sign-up.
   SETUP_TOKEN?: string;
-  // Comma-separated staff emails. When the binding is SET (even to an empty
-  // string) this is the staff allowlist: the only emails authorized to
-  // register and to reach protected /v1 routes; empty denies everyone in
-  // production. When UNSET the deployment is in bootstrap mode: the
-  // SETUP_TOKEN gate is the only registration gate and every authenticated
-  // session belongs to staff.
-  STAFF_EMAILS?: string;
 };
 
 export const DEFAULT_WORKSPACE_ID = '01ARZ3NDEKTSV4RRFFQ69G5FAV';
@@ -1140,26 +1134,45 @@ export const revokeStaffInvite = async (
 };
 
 /**
- * Non-consuming invitation check: SHA-256 hash lookup; the invitation is
- * available only while unrevoked, unused, and unexpired.
+ * Resolves a presented raw invite token to an available staff-invite
+ * grant. Returns undefined when the token does not match an unrevoked,
+ * unused, unexpired invite.
  */
-export const checkStaffInviteAvailability = async (
+export const availableStaffInviteGrant = async (
   environment: Env,
   token: string,
-): Promise<boolean> => {
+): Promise<RegistrationGrant | undefined> => {
+  if (token === '') {
+    return undefined;
+  }
+
   const tokenHash = await hashToken(token);
   const record = await getDatabase(environment)
     .select()
     .from(staffInvites)
     .where(eq(staffInvites.tokenHash, tokenHash))
     .get();
-  return (
-    record !== undefined &&
-    record.revokedAt === null &&
-    record.usedAt === null &&
-    record.expiresAt > now()
-  );
+  if (
+    record === undefined ||
+    record.revokedAt !== null ||
+    record.usedAt !== null ||
+    record.expiresAt <= now()
+  ) {
+    return undefined;
+  }
+
+  return { kind: 'invite', tokenHash };
 };
+
+/**
+ * Non-consuming invitation check: available only while unrevoked, unused,
+ * and unexpired.
+ */
+export const checkStaffInviteAvailability = async (
+  environment: Env,
+  token: string,
+): Promise<boolean> =>
+  (await availableStaffInviteGrant(environment, token)) !== undefined;
 
 /**
  * Bootstrap grant availability: the seeded singleton must be unconsumed and

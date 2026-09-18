@@ -23,7 +23,6 @@
     }
   ],
   "vars": {
-    "ENVIRONMENT": "production",
-    "STAFF_EMAILS": ""
+    "ENVIRONMENT": "production"
   }
 }

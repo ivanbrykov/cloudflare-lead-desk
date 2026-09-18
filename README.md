@@ -19,11 +19,11 @@ Every deployment is independent: the repo carries no account-specific values.
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/ivanbrykov/cloudflare-lead-desk)
 
-The button clones this repository into your own GitHub or GitLab account, lets you choose the Worker name and the D1 database name on the setup page, prompts for the plain-text `STAFF_EMAILS` variable and the two secrets listed in `.dev.vars.example` (`BETTER_AUTH_SECRET`, `SETUP_TOKEN`), provisions the database in your Cloudflare account, runs the migrations as part of `pnpm run deploy`, and connects Workers Builds so every push to your copy deploys automatically.
+The button clones this repository into your own GitHub or GitLab account, lets you choose the Worker name and the D1 database name on the setup page, prompts for the two secrets listed in `.dev.vars.example` (`BETTER_AUTH_SECRET`, `SETUP_TOKEN`), provisions the database in your Cloudflare account, runs the migrations as part of `pnpm run deploy`, and connects Workers Builds so every push to your copy deploys automatically.
 
-The template supplies empty values for the staff-email variable and both secrets. Enter your staff emails and generate separate random values for `BETTER_AUTH_SECRET` (`openssl rand -base64 32`) and `SETUP_TOKEN` (`openssl rand -hex 32`). Generate these once per installation and keep them across redeployments. The auth URL is detected automatically from the incoming request; there is no URL field to fill in.
+The template supplies empty values for both secrets. Generate separate random values for `BETTER_AUTH_SECRET` (`openssl rand -base64 32`) and `SETUP_TOKEN` (`openssl rand -hex 32`). Generate these once per installation and keep them across redeployments. The auth URL is detected automatically from the incoming request; there is no URL field to fill in.
 
-After the first deploy, open the app, switch to sign-up, and create the first account using the invite token (`SETUP_TOKEN`). Registration is invite-gated by design — every sign-up must present the token and use an email in `STAFF_EMAILS`, so there is no separate "close registration" step. To add staff later, add their email to `vars.STAFF_EMAILS` in your fork's `wrangler.jsonc`, redeploy, and share the invite token. Only emails in `STAFF_EMAILS` can create an account or reach data.
+After the first deploy, open the app, switch to sign-up, and create the first account using the bootstrap token (`SETUP_TOKEN`) in the invite token field. Registration is invitation-only by design: while no account exists, a sign-up must present the bootstrap token, and afterwards it must present a staff invite — the bootstrap grant is consumed by the first account, so there is no "close registration" step. To add staff later, create a single-use invitation with `POST /v1/invites` and share its token (see [Adding staff](#adding-staff)).
 
 ### Manual install
 
@@ -32,44 +32,51 @@ Prerequisites: a Cloudflare account, Node.js 24.20.0 (see `.node-version`) and p
 1. Install dependencies: `pnpm install --frozen-lockfile`.
 2. Create the D1 database in your account with any name you like — it does not need to match the Worker, for example `pnpm exec wrangler d1 create lead-desk-db`. Copy the `database_id` it prints into the `d1_databases` entry in `wrangler.jsonc` (replacing the empty string) and set `database_name` to the same name you used.
 3. Set the session secret: `openssl rand -base64 32 | pnpm exec wrangler secret put BETTER_AUTH_SECRET`.
-4. Set `vars.STAFF_EMAILS` in `wrangler.jsonc` to the comma-separated staff emails, and set the invite token with `openssl rand -hex 32 | pnpm exec wrangler secret put SETUP_TOKEN`. Keep these secrets across redeployments.
+4. Set the bootstrap invite token with `openssl rand -hex 32 | pnpm exec wrangler secret put SETUP_TOKEN`. Keep the secret across redeployments.
 5. Deploy: `pnpm run deploy` (set `CLOUDFLARE_ACCOUNT_ID` if your wrangler login spans multiple accounts). The deploy script builds, applies the D1 migrations, and deploys. The migration also bootstraps the default workspace, pipeline, and stage rows (fixed ids, `INSERT OR IGNORE`) and makes stage positions unique per pipeline — the app itself never seeds data per request, so deleted bootstrap rows are not resurrected. Migration commands reference the `DB` binding rather than a database name, so renamed databases keep working.
 
 You can also connect the repository in the dashboard under Workers → Settings → Builds, with the deploy command set to `pnpm run deploy`.
 
 Open the deployed app, switch to sign-up, and create the first account using
-the `SETUP_TOKEN` invite token. Registration stays invite-gated — every
-sign-up must present the token — so there is no follow-up step to close it.
-Adding staff means adding their email to `STAFF_EMAILS` and sharing the
-invite token; only allowlisted emails get data access.
+the `SETUP_TOKEN` bootstrap token in the invite token field. Registration is
+invitation-only — every sign-up must present the bootstrap token (while no
+account exists) or a staff invite — so there is no follow-up step to close
+it. Adding staff means creating a single-use invitation with
+`POST /v1/invites` and sharing its token.
 
 Both `src/worker-global.ts` (the configured deployment entry) and the compatibility
 entry `src/worker.ts` use the same app compiled at module scope.
 
-Missing or old template-placeholder session secrets fail authentication closed.
-An empty `STAFF_EMAILS` authorizes nobody in production, and an empty
-`SETUP_TOKEN` disables new registrations. Production also rejects invite tokens
-shorter than 32 characters after trimming whitespace; this does not disable
-existing accounts or sign-in. The invite token is reusable; rotate it
-if it leaks.
+Missing or old template-placeholder session secrets fail authentication closed,
+and an empty `SETUP_TOKEN` disables new registrations. Production also rejects
+bootstrap tokens shorter than 32 characters after trimming whitespace; this
+does not disable existing accounts or sign-in. A sign-up without an available
+grant (bootstrap or staff invite) returns `403 invite_unavailable` and writes
+nothing. The bootstrap token is reusable until the first account exists;
+rotate it if it leaks.
 
-A deployment that has never set `STAFF_EMAILS` operates in bootstrap mode:
-sign-up is gated by `SETUP_TOKEN` alone and every authenticated session is
-treated as staff; setting the variable (even to an empty string) switches it
-to the allowlist rules above.
+### Adding staff
 
-### Updating staff emails
+Staff accounts are created only through single-use invitations. The first
+account uses the bootstrap grant (`SETUP_TOKEN`). Afterwards, create an
+invitation with a staff session and share the returned token:
 
-`STAFF_EMAILS` is a plain-text variable, so its value is readable and stored in
-your fork's Wrangler configuration. Update `vars.STAFF_EMAILS` in
-`wrangler.jsonc` and redeploy when the list changes. A dashboard-only edit can be
-overwritten by the next deployment from your repository.
+```sh
+curl https://crm.example.com/v1/invites \
+  -H 'Content-Type: application/json' \
+  -H 'Cookie: better-auth.session_token=...' \
+  --data '{ "name": "New teammate", "expiresAt": "2026-10-15T00:00:00Z" }'
+```
 
-If an earlier installation stored `STAFF_EMAILS` as a secret, record the intended
-list in your fork's `wrangler.jsonc`, remove the old secret in Workers → Settings →
-Variables and Secrets, and deploy the updated configuration. The app reads the
-same `env.STAFF_EMAILS` binding either way. Removing the old secret before deploying
-the variable temporarily blocks staff access; it does not delete any accounts.
+`expiresAt` is optional (the invitation then expires after 7 days). The token
+is returned exactly once — the API stores only its SHA-256 hash — and is
+consumed the moment the account is created; a consumed, expired, or revoked
+invite is rejected with `403 invite_unavailable`. The new account signs up on
+the usual sign-up screen, sending the token as the `X-Setup-Token` header.
+Revoking an unused invitation (`DELETE /v1/invites/:id`) closes it immediately
+without deleting or locking out existing accounts; `GET /v1/invites` lists
+outstanding invitations, and `POST /api/invites/validate` checks a token
+without consuming it.
 
 ### Optional auth URL override
 
@@ -95,7 +102,7 @@ Copy `.dev.vars.example` to `.dev.vars`, fill in `BETTER_AUTH_SECRET` and
 `ENVIRONMENT=development` to `.dev.vars` to allow local HTTP. Run
 `pnpm run db:migrate:local`, then `pnpm run dev:worker` and open the URL it prints.
 Enter the invite token on the sign-up screen to create a throwaway account;
-sessions are stored in local D1. The staff allowlist is enforced in production.
+sessions are stored in local D1.
 Optionally add `DEV_ADMIN_EMAIL` to bypass the session check locally. Development
 settings are deliberately absent from `.dev.vars.example`, whose entries become
 installer prompts. Deployed configuration stays `ENVIRONMENT=production`.

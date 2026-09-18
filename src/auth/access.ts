@@ -7,26 +7,6 @@ export class UnauthorizedError extends Error {
   }
 }
 
-const parseStaffAllowlist = (allowlist: string | undefined): string[] =>
-  (allowlist ?? '')
-    .split(',')
-    .map((entry) => entry.trim().toLowerCase())
-    .filter((entry) => entry !== '');
-
-/**
- * The single staff allowlist check: an email is staff when it matches an
- * entry of STAFF_EMAILS after trimming whitespace and ignoring case.
- */
-export const isStaffEmail = (
-  email: string,
-  allowlist: string | undefined,
-): boolean => {
-  const normalized = email.trim().toLowerCase();
-  return (
-    normalized !== '' && parseStaffAllowlist(allowlist).includes(normalized)
-  );
-};
-
 export const requireSessionIdentity = async (
   request: Request,
   auth: Auth,
@@ -43,24 +23,9 @@ export const requireSessionIdentity = async (
     throw new UnauthorizedError();
   }
 
-  const email = session.user.email;
-  // A configured allowlist is the staff gate: in production a session is
-  // honored only for an allowlisted email, and an explicitly empty
-  // allowlist fails closed instead of letting every session through. An
-  // UNSET allowlist is bootstrap mode: the deployment has no staff roster
-  // yet, so every authenticated session belongs to staff (registration
-  // stays gated by SETUP_TOKEN).
-  if (
-    environment.ENVIRONMENT === 'production' &&
-    environment.STAFF_EMAILS !== undefined &&
-    !isStaffEmail(email, environment.STAFF_EMAILS)
-  ) {
-    throw new UnauthorizedError(
-      'This account is not authorized to use this deployment.',
-    );
-  }
-
-  return email;
+  // Stage s4: registration is invitation-only, so every enabled Better Auth
+  // account belongs to staff. There is no email allowlist to enforce.
+  return session.user.email;
 };
 
 export const bearerToken = (request: Request): null | string => {
