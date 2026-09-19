@@ -39,6 +39,7 @@ import {
   Plus,
   Settings2,
   SlidersHorizontal,
+  Users,
 } from 'lucide-react';
 import { useEffect, useReducer, useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
@@ -91,6 +92,12 @@ type Pipeline = {
   name: string;
   stages: Stage[];
 };
+type StaffAccount = {
+  disabledAt: null | string;
+  email: string;
+  id: string;
+  name: string;
+};
 
 type Stage = { color: string; id: string; name: string; position: number };
 
@@ -108,6 +115,7 @@ const navigation = [
   { href: '/contacts', icon: ContactRound, label: 'Contacts' },
   { href: '/settings/fields', icon: SlidersHorizontal, label: 'Fields' },
   { href: '/settings/invites', icon: Mail, label: 'Invitations' },
+  { href: '/settings/staff', icon: Users, label: 'Staff' },
   { href: '/settings/tokens', icon: KeyRound, label: 'Tokens' },
 ];
 
@@ -136,6 +144,10 @@ const appQuery = {
   pipelines: () => ({
     queryFn: () => request<Pipeline[]>('/v1/pipelines'),
     queryKey: ['pipelines'],
+  }),
+  staff: () => ({
+    queryFn: () => request<StaffAccount[]>('/v1/staff'),
+    queryKey: ['staff'],
   }),
   tokens: () => ({
     queryFn: () => request<Token[]>('/v1/tokens'),
@@ -2411,6 +2423,104 @@ const InvitesPage = () => {
   );
 };
 
+const StaffPage = () => {
+  const queryClient = useQueryClient();
+  const { data: session } = useSession();
+  const staff = useQuery(appQuery.staff());
+  const setStatus = useMutation({
+    mutationFn: (input: { disabled: boolean; id: string }) =>
+      request<StaffAccount>(`/v1/staff/${input.id}`, {
+        body: JSON.stringify({ disabled: input.disabled }),
+        method: 'PATCH',
+      }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['staff'] }),
+  });
+  return (
+    <>
+      <Header
+        eyebrow="Integrations"
+        title="Staff accounts"
+      />
+      <div className="p-5 sm:p-8">
+        {staff.isPending ? (
+          <p className="text-slate-400">Loading staff…</p>
+        ) : staff.error ? (
+          <ErrorState error={staff.error} />
+        ) : staff.data?.length ? (
+          <div className="overflow-x-auto rounded-xl border border-slate-800">
+            <table className="w-full text-left text-sm">
+              <thead className="bg-slate-900 text-xs uppercase tracking-wider text-slate-400">
+                <tr>
+                  <th className="px-4 py-3">Name</th>
+                  <th className="px-4 py-3">Email</th>
+                  <th className="px-4 py-3">Status</th>
+                  <th className="px-4 py-3 text-right">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {staff.data.map((account) => {
+                  const disabled = Boolean(account.disabledAt);
+                  // The server is the authority on self-disable and
+                  // last-enabled protection; hiding the control for the
+                  // signed-in account keeps the list unambiguous without
+                  // pretending the client enforces the rule.
+                  const isSelf = session?.user?.id === account.id;
+                  return (
+                    <tr
+                      className="border-t border-slate-800"
+                      key={account.id}
+                    >
+                      <td className="px-4 py-3 font-medium text-slate-100">
+                        {account.name}
+                      </td>
+                      <td className="px-4 py-3 text-slate-500">
+                        {account.email}
+                      </td>
+                      <td
+                        className={cn(
+                          'px-4 py-3',
+                          disabled ? 'text-rose-300' : 'text-emerald-300',
+                        )}
+                      >
+                        {disabled ? 'disabled' : 'enabled'}
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex justify-end">
+                          {isSelf ? null : (
+                            <Button
+                              disabled={setStatus.isPending}
+                              onClick={() =>
+                                setStatus.mutate({
+                                  disabled: !disabled,
+                                  id: account.id,
+                                })
+                              }
+                              tone={disabled ? 'secondary' : 'danger'}
+                            >
+                              {disabled ? 'Enable' : 'Disable'}
+                            </Button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="text-sm text-slate-400">No staff accounts yet.</p>
+        )}
+        {setStatus.error && (
+          <div className="mt-4">
+            <ErrorState error={setStatus.error} />
+          </div>
+        )}
+      </div>
+    </>
+  );
+};
+
 const LoginPage = () => {
   const [mode, setMode] = useState<'sign-in' | 'sign-up'>('sign-in');
   const [signInEmail, setSignInEmail] = useState('');
@@ -2724,6 +2834,9 @@ export const App = () => {
         </Route>
         <Route path="/settings/invites">
           <InvitesPage />
+        </Route>
+        <Route path="/settings/staff">
+          <StaffPage />
         </Route>
         <Route>
           <OpportunitiesPage />
