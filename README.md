@@ -47,11 +47,12 @@ Both `src/worker-global.ts` (the configured deployment entry) and the compatibil
 entry `src/worker.ts` use the same app compiled at module scope.
 
 Missing or old template-placeholder session secrets fail authentication closed.
-An empty `SETUP_TOKEN` disables new registrations. Production also rejects
-invite tokens shorter than 32 characters after trimming whitespace; this does
-not disable existing accounts or sign-in. The bootstrap token is usable until
-the first account exists, and staff invite tokens are single-use; rotate
-`SETUP_TOKEN` if it leaks.
+An empty `SETUP_TOKEN` disables bootstrap-token registration only: active,
+unused, unexpired staff invites stay redeemable, so revoke those too in order to
+stop all new registrations. Production also rejects invite tokens shorter than
+32 characters after trimming whitespace; this does not disable existing accounts or sign-in. The bootstrap token is usable until the first account
+exists, and staff invite tokens are single-use; rotate `SETUP_TOKEN` if it
+leaks.
 
 A fresh deployment operates in bootstrap mode: sign-up is gated by
 `SETUP_TOKEN` alone and every authenticated session is treated as staff.

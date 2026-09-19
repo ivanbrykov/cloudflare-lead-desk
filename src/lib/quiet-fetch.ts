@@ -36,10 +36,14 @@ const ensureWorker = (): Worker => {
     return worker;
   }
 
-  worker = new Worker(new URL('quiet-fetch.worker.ts', import.meta.url), {
-    type: 'module',
-  });
-  worker.onmessage = (event: MessageEvent<WorkerFetchResult>) => {
+  const instance = new Worker(
+    new URL('quiet-fetch.worker.ts', import.meta.url),
+    {
+      type: 'module',
+    },
+  );
+  worker = instance;
+  instance.onmessage = (event: MessageEvent<WorkerFetchResult>) => {
     const { id } = event.data;
     const entry = pending.get(id);
     if (!entry) {
@@ -65,16 +69,25 @@ const ensureWorker = (): Worker => {
     );
   };
 
-  worker.onerror = () => {
+  instance.onerror = () => {
+    // A failed load leaves the worker unable to process messages, so reject
+    // anything queued, tear it down, and let a later call spin up a fresh one.
+    // Ignore errors from an instance a later call already replaced.
+    if (worker !== instance) {
+      return;
+    }
+
     const failure = new Error('Quiet fetch worker is unavailable');
     for (const entry of pending.values()) {
       entry.reject(failure);
     }
 
     pending.clear();
+    instance.terminate();
+    worker = null;
   };
 
-  return worker;
+  return instance;
 };
 
 export const quietFetch = (
