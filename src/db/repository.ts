@@ -1049,7 +1049,18 @@ export const createApiToken = async (
     workspaceId: DEFAULT_WORKSPACE_ID,
   };
   await getDatabase(environment).insert(apiTokens).values(record);
-  return { ...record, token: raw };
+  // Return only the public projection plus the raw token, which is shown
+  // exactly once. The hash and workspace id stay server-side.
+  return {
+    createdAt: record.createdAt,
+    expiresAt: record.expiresAt,
+    id: record.id,
+    name: record.name,
+    prefix: record.prefix,
+    revokedAt: null,
+    scope: record.scope,
+    token: raw,
+  };
 };
 
 export const listApiTokens = async (environment: Env) =>
