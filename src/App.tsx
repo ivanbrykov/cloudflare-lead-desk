@@ -30,9 +30,11 @@ import { effectTsResolver } from '@hookform/resolvers/effect-ts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ContactRound,
+  Copy,
   KeyRound,
   LayoutList,
   LogOut,
+  Mail,
   PanelsTopLeft,
   Plus,
   Settings2,
@@ -61,6 +63,16 @@ type FieldDefinition = {
   type: 'boolean' | 'date' | 'number' | 'select' | 'text';
 };
 
+type Invite = {
+  createdAt: string;
+  expiresAt: null | string;
+  id: string;
+  name: string;
+  prefix: string;
+  revokedAt: null | string;
+  usedAt: null | string;
+};
+
 type Opportunity = {
   contact: Contact;
   createdAt: string;
@@ -72,13 +84,16 @@ type Opportunity = {
   source: string;
   stageId: string;
 };
+
 type Pipeline = {
   archivedAt: null | string;
   id: string;
   name: string;
   stages: Stage[];
 };
+
 type Stage = { color: string; id: string; name: string; position: number };
+
 type Token = {
   createdAt: string;
   expiresAt: null | string;
@@ -92,6 +107,7 @@ const navigation = [
   { href: '/opportunities', icon: LayoutList, label: 'Opportunities' },
   { href: '/contacts', icon: ContactRound, label: 'Contacts' },
   { href: '/settings/fields', icon: SlidersHorizontal, label: 'Fields' },
+  { href: '/settings/invites', icon: Mail, label: 'Invitations' },
   { href: '/settings/tokens', icon: KeyRound, label: 'Tokens' },
 ];
 
@@ -99,6 +115,10 @@ const appQuery = {
   contacts: () => ({
     queryFn: () => request<Contact[]>('/v1/contacts'),
     queryKey: ['contacts'],
+  }),
+  invites: () => ({
+    queryFn: () => request<Invite[]>('/v1/invites'),
+    queryKey: ['invites'],
   }),
   // The board fetches opportunities filtered by the selected pipeline. The
   // pipeline id is part of the query key so every board selection has its
@@ -1746,6 +1766,26 @@ const FieldsPage = () => {
 
 const TOKEN_DEFAULT_TTL_MS = 90 * 86_400_000;
 
+const INVITE_DEFAULT_TTL_MS = 7 * 86_400_000;
+
+const inviteStatus = (
+  invite: Invite,
+): 'active' | 'expired' | 'revoked' | 'used' => {
+  if (invite.revokedAt) {
+    return 'revoked';
+  }
+
+  if (invite.usedAt) {
+    return 'used';
+  }
+
+  if (invite.expiresAt && new Date(invite.expiresAt).getTime() <= Date.now()) {
+    return 'expired';
+  }
+
+  return 'active';
+};
+
 // datetime-local inputs only carry local wall-clock time, so shift the
 // instant into local parts before handing it to the input element.
 const toLocalInputValue = (date: Date) =>
@@ -1785,6 +1825,7 @@ const statusTone = {
   expired: 'text-amber-300',
   legacy: 'text-sky-300',
   revoked: 'text-rose-300',
+  used: 'text-violet-300',
 } as const;
 
 const CreateTokenDialog = ({
@@ -2063,6 +2104,299 @@ const TokensPage = () => {
       </div>
       {showCreateDialog ? (
         <CreateTokenDialog
+          defaultExpiration={defaultExpiration}
+          key={createNonce}
+          onOpenChange={(value) => {
+            if (!value) {
+              setShowCreateDialog(false);
+            }
+          }}
+          open={showCreateDialog}
+        />
+      ) : null}
+    </>
+  );
+};
+
+const CreateInviteDialog = ({
+  defaultExpiration,
+  onOpenChange,
+  open,
+}: {
+  readonly defaultExpiration: string;
+  readonly onOpenChange: (value: boolean) => void;
+  readonly open: boolean;
+}) => {
+  const queryClient = useQueryClient();
+  const [copyFailed, setCopyFailed] = useState(false);
+  const [formError, setFormError] = useState<null | string>(null);
+  const [name, setName] = useState('');
+  const [rawToken, setRawToken] = useState<null | string>(null);
+  // The parent remounts this dialog (via its key) on every open, so state is
+  // always fresh: empty form, 7-day default matching the backend, no raw
+  // token, and an idle create mutation.
+  const [expiration, setExpiration] = useState(defaultExpiration);
+  const create = useMutation({
+    mutationFn: (input: { expiresAt?: string; name: string }) =>
+      request<Invite & { token: string }>('/v1/invites', {
+        body: JSON.stringify(input),
+        method: 'POST',
+      }),
+    onSuccess: (created) => {
+      // Keep the dialog open: the raw invite token is shown once and must
+      // stay visible until the staff member explicitly dismisses it.
+      setFormError(null);
+      setRawToken(created.token);
+      queryClient.invalidateQueries({ queryKey: ['invites'] });
+    },
+  });
+
+  // Escape, backdrop, and the close control all route through here. While a
+  // create is in flight, dismissal is ignored so a generated token can never
+  // be lost behind a closed dialog.
+  const handleOpenChange = (value: boolean) => {
+    if (!value && create.isPending) {
+      return;
+    }
+
+    onOpenChange(value);
+  };
+
+  const submit = () => {
+    const trimmedName = name.trim();
+    if (!trimmedName) {
+      setFormError('Enter an invite name.');
+      return;
+    }
+
+    // The input value is local wall-clock time; new Date parses it as local
+    // time and toISOString converts it to the UTC ISO string the API expects.
+    const parsedExpiration = expiration ? new Date(expiration) : undefined;
+    if (
+      parsedExpiration &&
+      (!Number.isFinite(parsedExpiration.getTime()) ||
+        parsedExpiration.getTime() <= Date.now())
+    ) {
+      setFormError('Expiration must be in the future.');
+      return;
+    }
+
+    setFormError(null);
+    create.mutate({
+      expiresAt: parsedExpiration?.toISOString(),
+      name: trimmedName,
+    });
+  };
+
+  const copyToken = async () => {
+    if (!rawToken) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(rawToken);
+      setCopyFailed(false);
+    } catch {
+      // Clipboard access can be denied; the raw text stays visible and
+      // selectable instead of being replaced by a "copied" state.
+      setCopyFailed(true);
+    }
+  };
+
+  return (
+    <Dialog
+      onOpenChange={handleOpenChange}
+      open={open}
+      title="Create invite"
+    >
+      {rawToken ? (
+        <div className="grid gap-4">
+          <p className="text-sm text-slate-300">
+            Invitation created. It will not be shown again.
+          </p>
+          <code className="block break-all rounded-md border border-slate-700 bg-slate-950 p-3 font-mono text-xs text-slate-100">
+            {rawToken}
+          </code>
+          {copyFailed && (
+            <p className="text-sm text-amber-300">
+              Clipboard unavailable — select the text above to copy it.
+            </p>
+          )}
+          <div className="flex justify-end gap-2">
+            <Button
+              onClick={() => {
+                void copyToken();
+              }}
+            >
+              <Copy size={16} /> Copy invite
+            </Button>
+            <Button
+              onClick={() => handleOpenChange(false)}
+              tone="secondary"
+            >
+              Done
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <form
+          className="grid gap-4"
+          onSubmit={(event) => {
+            event.preventDefault();
+            submit();
+          }}
+        >
+          <label className="grid gap-1 text-sm text-slate-300">
+            Invite name
+            <input
+              onChange={(event) => setName(event.target.value)}
+              placeholder="Weekend onboarding"
+              value={name}
+            />
+          </label>
+          <div className="grid gap-1">
+            <label className="grid gap-1 text-sm text-slate-300">
+              Expiration
+              <input
+                onChange={(event) => setExpiration(event.target.value)}
+                type="datetime-local"
+                value={expiration}
+              />
+            </label>
+            <p className="text-xs text-slate-500">
+              Local time ({localTimezoneLabel()})
+            </p>
+          </div>
+          {formError && <p className="text-sm text-rose-300">{formError}</p>}
+          {create.error && <ErrorState error={create.error} />}
+          <div className="flex justify-end gap-2">
+            <Button
+              disabled={create.isPending}
+              onClick={() => handleOpenChange(false)}
+              tone="secondary"
+              type="button"
+            >
+              Cancel
+            </Button>
+            <Button
+              disabled={create.isPending || !name.trim()}
+              type="submit"
+            >
+              Create invite
+            </Button>
+          </div>
+        </form>
+      )}
+    </Dialog>
+  );
+};
+
+const InvitesPage = () => {
+  const queryClient = useQueryClient();
+  const [createNonce, setCreateNonce] = useState(0);
+  const [defaultExpiration, setDefaultExpiration] = useState('');
+  const [showCreateDialog, setShowCreateDialog] = useState(false);
+  const invites = useQuery(appQuery.invites());
+  const revoke = useMutation({
+    mutationFn: (id: string) =>
+      request(`/v1/invites/${id}`, { method: 'DELETE' }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['invites'] }),
+  });
+  return (
+    <>
+      <Header
+        action={
+          <Button
+            onClick={() => {
+              setCreateNonce((value) => value + 1);
+              setDefaultExpiration(
+                toLocalInputValue(new Date(Date.now() + INVITE_DEFAULT_TTL_MS)),
+              );
+              setShowCreateDialog(true);
+            }}
+          >
+            <Plus size={16} /> Create invite
+          </Button>
+        }
+        eyebrow="Integrations"
+        title="Invitations"
+      />
+      <div className="p-5 sm:p-8">
+        {invites.isPending ? (
+          <p className="text-slate-400">Loading invitations…</p>
+        ) : invites.error ? (
+          <ErrorState error={invites.error} />
+        ) : invites.data?.length ? (
+          <div className="overflow-x-auto rounded-xl border border-slate-800">
+            <table className="w-full text-left text-sm">
+              <thead className="bg-slate-900 text-xs uppercase tracking-wider text-slate-400">
+                <tr>
+                  <th className="px-4 py-3">Name</th>
+                  <th className="px-4 py-3">Created</th>
+                  <th className="px-4 py-3">Expires</th>
+                  <th className="px-4 py-3">Status</th>
+                  <th className="px-4 py-3 text-right">Revoke</th>
+                </tr>
+              </thead>
+              <tbody>
+                {invites.data.map((invite) => (
+                  <tr
+                    className="border-t border-slate-800"
+                    key={invite.id}
+                  >
+                    <td className="px-4 py-3">
+                      <p className="font-medium text-slate-100">
+                        {invite.name}
+                      </p>
+                      <code className="font-mono text-xs text-slate-500">
+                        {invite.prefix}…
+                      </code>
+                    </td>
+                    <td className="px-4 py-3 text-slate-500">
+                      {new Date(invite.createdAt).toLocaleDateString()}
+                    </td>
+                    <td className="px-4 py-3 text-slate-400">
+                      {invite.expiresAt
+                        ? new Date(invite.expiresAt).toLocaleDateString()
+                        : '—'}
+                    </td>
+                    <td
+                      className={cn(
+                        'px-4 py-3',
+                        statusTone[inviteStatus(invite)],
+                      )}
+                    >
+                      {inviteStatus(invite)}
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex justify-end">
+                        {!invite.revokedAt && (
+                          <Button
+                            disabled={revoke.isPending}
+                            onClick={() => revoke.mutate(invite.id)}
+                            tone="danger"
+                          >
+                            Revoke
+                          </Button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="text-sm text-slate-400">No invites yet.</p>
+        )}
+        {revoke.error && (
+          <div className="mt-4">
+            <ErrorState error={revoke.error} />
+          </div>
+        )}
+      </div>
+      {showCreateDialog ? (
+        <CreateInviteDialog
           defaultExpiration={defaultExpiration}
           key={createNonce}
           onOpenChange={(value) => {
@@ -2387,6 +2721,9 @@ export const App = () => {
         </Route>
         <Route path="/settings/tokens">
           <TokensPage />
+        </Route>
+        <Route path="/settings/invites">
+          <InvitesPage />
         </Route>
         <Route>
           <OpportunitiesPage />
