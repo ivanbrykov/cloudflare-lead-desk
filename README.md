@@ -58,6 +58,31 @@ A fresh deployment operates in bootstrap mode: sign-up is gated by
 Once the first account exists, the bootstrap grant is no longer available and
 new staff accounts are created exclusively through single-use invites.
 
+A fresh deployment also gets a one-time setup window: the migration seeds the
+bootstrap grant with a 7-day expiry (`bootstrap_state`, fixed id `default`),
+and the grant is consumed the moment the first account is created. Existing
+installations gain access at upgrade because the same migration marks the
+grant consumed when a user already exists, so nothing about the previous
+sign-in flow changes for them. Audit the `bootstrap_state` row before
+deploying if you are upgrading an installation you did not build.
+
+If that one-time window expires before the first account is created, the
+bootstrap token stops accepting sign-ups. Recovery is operator-only and
+narrow on purpose: extend the window only for an unused grant, never reset
+consumption, and never expose a public reset path. Run this against the D1
+binding, replacing `<DB>` with your configured binding name:
+
+```sh
+pnpm exec wrangler d1 execute <DB> --remote --command \
+  "UPDATE bootstrap_state SET expires_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+7 days') WHERE id = 'default' AND consumed_at IS NULL AND NOT EXISTS (SELECT 1 FROM user);"
+```
+
+The `WHERE` clause refuses to touch a grant that was already consumed or a
+database that already has an account, so the command is a no-op on a
+healthy installation. Rotate `SETUP_TOKEN` in the same change if the
+original value leaked.
+
+
 ### Adding staff
 
 Staff accounts are created through single-use invites, not an email allowlist.
@@ -77,6 +102,23 @@ curl https://crm.example.com/api/auth/sign-up/email \
 An invite is redeemed once and marked used automatically at sign-up; while it
 is still available it can be listed (by 12-character prefix only) or revoked
 with `DELETE /v1/invites/:id`.
+
+
+### API tokens
+
+Intake API tokens are created in **Settings → Tokens**. A token carries a
+finite expiry that defaults to 90 days and must be in the future; `expiresAt`
+is optional but never null on new tokens. Legacy rows created before the
+expiry column existed keep a `null` `expiresAt` and are shown as
+`No expiry (legacy)` — they keep working, and revoking them is the supported
+way to retire one. A token's raw value is returned exactly once, at creation,
+inside the dialog; the list only ever shows the 12-character prefix. Revoke a
+token with `DELETE /v1/tokens/:id` or the Revoke action in the list. An
+expired or revoked token returns `401 unauthorized` on use.
+
+Invitations follow the same display-once rule with a 7-day default expiry,
+and they can be used, expired, revoked, or still active — the list shows each
+state and hides Revoke only for already-revoked rows.
 
 ### Managing staff accounts
 

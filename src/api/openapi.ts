@@ -240,6 +240,16 @@ export const openApiSpecification = {
         summary: 'Create a single-use staff invitation',
       },
     },
+    '/v1/invites/{id}': {
+      delete: {
+        responses: {
+          '204': { description: 'Invitation revoked' },
+          '401': { description: 'Access required' },
+          '404': { description: 'Invitation not found' },
+        },
+        summary: 'Revoke a pending staff invitation',
+      },
+    },
     '/v1/opportunities': {
       get: {
         description:
@@ -364,6 +374,54 @@ export const openApiSpecification = {
           },
         },
         summary: 'Disable or re-enable a staff account',
+      },
+    },
+    '/v1/tokens': {
+      get: {
+        responses: {
+          '200': {
+            description:
+              'Intake tokens as { id, name, prefix, createdAt, expiresAt, revokedAt }; the raw token is never returned',
+          },
+          '401': { description: 'Access required' },
+        },
+        summary: 'List intake API tokens',
+      },
+      post: {
+        requestBody: {
+          content: {
+            'application/json': {
+              schema: {
+                properties: {
+                  expiresAt: { type: 'string' },
+                  name: { type: 'string' },
+                },
+                required: ['name'],
+                type: 'object',
+              },
+            },
+          },
+          required: true,
+        },
+        responses: {
+          '201': {
+            description:
+              'Token created (raw token returned exactly once; expiresAt defaults to 90 days and must be in the future)',
+          },
+          '401': { description: 'Access required' },
+          '422': { description: 'validation_error (invalid name or expiry)' },
+        },
+        summary: 'Create an intake API token',
+      },
+    },
+    '/v1/tokens/{id}': {
+      delete: {
+        responses: {
+          '204': { description: 'Token revoked' },
+          '401': { description: 'Access required' },
+          '404': { description: 'Token not found' },
+        },
+        summary: 'Revoke an intake API token',
       },
     },
   },
