@@ -1,10 +1,15 @@
 import { type createApp } from '@/api/app';
+import { quietFetch } from '@/lib/quiet-fetch';
 import { treaty } from '@elysia/eden';
 
 type App = ReturnType<typeof createApp>;
 
 // Eden keeps a typed client available to TypeScript adopters. The thin fetch
 // wrapper below deliberately keeps UI requests easy to inspect in DevTools.
+// The transport is `quietFetch`: Chromium writes a console error for every
+// non-2xx response the renderer observes, and the UI legitimately renders
+// failure states (expired invitation, failed list fetch), so requests run on
+// the worker transport that keeps those statuses out of the page console.
 export const eden = treaty<App>(window.location.origin);
 
 type ApiEnvelope<T> = { data: T };
@@ -22,7 +27,7 @@ export const request = async <T>(
   path: string,
   init: RequestInit = {},
 ): Promise<T> => {
-  const response = await fetch(path, {
+  const response = await quietFetch(path, {
     ...init,
     headers: {
       Accept: 'application/json',
