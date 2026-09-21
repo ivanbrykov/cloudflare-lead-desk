@@ -54,6 +54,31 @@ export const publishRelease = async ({
 
   const isCurrentMain = async () =>
     (await api('git/ref/heads/main'))?.object?.sha === manifest.commit;
+  const findRelease = async (tag) => {
+    const published = await api(`releases/tags/${tag}`);
+    if (published) {
+      return published;
+    }
+
+    // GitHub's by-tag endpoint only returns published releases. Authenticated
+    // listings include drafts, including an interrupted upload from a prior run.
+    for (let page = 1; ; page += 1) {
+      const releases = await api(`releases?per_page=100&page=${page}`);
+      assert(
+        Array.isArray(releases),
+        'Could not list releases to locate the draft.',
+      );
+      const found = releases.find((release) => release.tag_name === tag);
+      if (found) {
+        return found;
+      }
+
+      if (releases.length < 100) {
+        return null;
+      }
+    }
+  };
+
   const publish = async () => {
     if (!(await isCurrentMain())) {
       log('Skipping superseded main build; latest remains unchanged.');
@@ -61,7 +86,7 @@ export const publishRelease = async ({
     }
 
     const tag = `build-${manifest.commit}`;
-    const existing = await api(`releases/tags/${tag}`);
+    let existing = await findRelease(tag);
     if (existing && !existing.draft) {
       log(
         `Release ${tag} is already published; its assets will not be overwritten.`,
@@ -99,14 +124,21 @@ export const publishRelease = async ({
         '--notes-file',
         notes,
       ]);
+      existing = await findRelease(tag);
     }
+
+    assert(
+      Number.isSafeInteger(existing?.id) && existing.id > 0,
+      'Could not locate the created draft release by ID.',
+    );
+    const draftPath = `releases/${existing.id}`;
 
     // Never overwrite assets, even if a draft is manually published mid-upload.
     // Interrupted uploads can resume only when any existing assets match exactly.
     for (const asset of ['lead-desk.tgz', 'lead-desk.json']) {
-      const draft = await api(`releases/tags/${tag}`);
+      const draft = await api(draftPath);
       assert(
-        draft?.draft,
+        draft?.draft && draft.tag_name === tag,
         'Release changed state during publishing; refusing to modify it.',
       );
       const uploaded = draft.assets?.find((entry) => entry.name === asset);
@@ -135,8 +167,9 @@ export const publishRelease = async ({
       return;
     }
 
+    const ready = await api(draftPath);
     assert(
-      (await api(`releases/tags/${tag}`))?.draft,
+      ready?.draft && ready.tag_name === tag,
       'Release was published externally; refusing to change latest.',
     );
     gh([
