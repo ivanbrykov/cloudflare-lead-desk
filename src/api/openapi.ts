@@ -10,6 +10,33 @@ export const openApiSpecification = {
   },
   openapi: '3.1.0',
   paths: {
+    '/api/invites/validate': {
+      post: {
+        requestBody: {
+          content: {
+            'application/json': {
+              schema: {
+                properties: { token: { type: 'string' } },
+                required: ['token'],
+                type: 'object',
+              },
+            },
+          },
+          required: true,
+        },
+        responses: {
+          '200': {
+            description: '{ valid: true } when the grant is still usable',
+          },
+          '403': {
+            description:
+              'invite_unavailable (used, revoked, expired, unknown, or bootstrap already consumed)',
+          },
+          '422': { description: 'validation_error' },
+        },
+        summary: 'Check whether an invite or bootstrap token is still usable',
+      },
+    },
     '/health': {
       get: {
         responses: { '200': { description: 'Healthy Worker' } },
@@ -177,6 +204,52 @@ export const openApiSpecification = {
         summary: 'Atomically capture a contact and opportunity',
       },
     },
+    '/v1/invites': {
+      get: {
+        responses: {
+          '200': {
+            description: 'Invites (token shown by 12-character prefix only)',
+          },
+          '401': { description: 'Access required' },
+        },
+        summary: 'List staff invitations',
+      },
+      post: {
+        requestBody: {
+          content: {
+            'application/json': {
+              schema: {
+                properties: {
+                  expiresAt: { type: 'string' },
+                  name: { type: 'string' },
+                },
+                required: ['name'],
+                type: 'object',
+              },
+            },
+          },
+          required: true,
+        },
+        responses: {
+          '201': {
+            description: 'Invite created (raw token returned exactly once)',
+          },
+          '401': { description: 'Access required' },
+          '422': { description: 'validation_error (invalid name or expiry)' },
+        },
+        summary: 'Create a single-use staff invitation',
+      },
+    },
+    '/v1/invites/{id}': {
+      delete: {
+        responses: {
+          '204': { description: 'Invitation revoked' },
+          '401': { description: 'Access required' },
+          '404': { description: 'Invitation not found' },
+        },
+        summary: 'Revoke a pending staff invitation',
+      },
+    },
     '/v1/opportunities': {
       get: {
         description:
@@ -256,6 +329,99 @@ export const openApiSpecification = {
           '401': { description: 'Access required' },
         },
         summary: 'Create pipeline',
+      },
+    },
+    '/v1/staff': {
+      get: {
+        responses: {
+          '200': {
+            description:
+              'Staff accounts as { id, name, email, disabledAt }; no credential or session material',
+          },
+          '401': { description: 'Access required' },
+        },
+        summary: 'List staff accounts',
+      },
+    },
+    '/v1/staff/{id}': {
+      patch: {
+        requestBody: {
+          content: {
+            'application/json': {
+              schema: {
+                properties: { disabled: { type: 'boolean' } },
+                required: ['disabled'],
+                type: 'object',
+              },
+            },
+          },
+          required: true,
+        },
+        responses: {
+          '200': {
+            description:
+              'Account updated as { id, name, email, disabledAt }. Disabling writes the durable flag and deletes all of the account sessions in one transaction; re-enabling keeps credentials but sessions stay revoked',
+          },
+          '401': { description: 'Access required' },
+          '404': { description: 'Staff account not found' },
+          '409': {
+            description:
+              'conflict: the actor cannot disable its own account, and the last enabled account cannot be disabled',
+          },
+          '422': {
+            description:
+              'validation_error (body must be { disabled: boolean })',
+          },
+        },
+        summary: 'Disable or re-enable a staff account',
+      },
+    },
+    '/v1/tokens': {
+      get: {
+        responses: {
+          '200': {
+            description:
+              'Intake tokens as { id, name, prefix, createdAt, expiresAt, revokedAt }; the raw token is never returned',
+          },
+          '401': { description: 'Access required' },
+        },
+        summary: 'List intake API tokens',
+      },
+      post: {
+        requestBody: {
+          content: {
+            'application/json': {
+              schema: {
+                properties: {
+                  expiresAt: { type: 'string' },
+                  name: { type: 'string' },
+                },
+                required: ['name'],
+                type: 'object',
+              },
+            },
+          },
+          required: true,
+        },
+        responses: {
+          '201': {
+            description:
+              'Token created (raw token returned exactly once; expiresAt defaults to 90 days and must be in the future)',
+          },
+          '401': { description: 'Access required' },
+          '422': { description: 'validation_error (invalid name or expiry)' },
+        },
+        summary: 'Create an intake API token',
+      },
+    },
+    '/v1/tokens/{id}': {
+      delete: {
+        responses: {
+          '204': { description: 'Token revoked' },
+          '401': { description: 'Access required' },
+          '404': { description: 'Token not found' },
+        },
+        summary: 'Revoke an intake API token',
       },
     },
   },

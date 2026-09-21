@@ -13,6 +13,12 @@ import {
   isBlankCustomFieldValue,
 } from './lib/custom-field-form';
 import { request } from './lib/http';
+import { quietFetch } from './lib/quiet-fetch';
+import {
+  initialRegistrationState,
+  registrationReducer,
+  type SignUpFailure,
+} from './lib/registration-flow';
 import { cn } from './lib/styles';
 import {
   DndContext,
@@ -24,15 +30,18 @@ import { effectTsResolver } from '@hookform/resolvers/effect-ts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ContactRound,
+  Copy,
   KeyRound,
   LayoutList,
   LogOut,
+  Mail,
   PanelsTopLeft,
   Plus,
   Settings2,
   SlidersHorizontal,
+  Users,
 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useReducer, useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { Link, Route, Switch, useLocation } from 'wouter';
 
@@ -55,6 +64,16 @@ type FieldDefinition = {
   type: 'boolean' | 'date' | 'number' | 'select' | 'text';
 };
 
+type Invite = {
+  createdAt: string;
+  expiresAt: null | string;
+  id: string;
+  name: string;
+  prefix: string;
+  revokedAt: null | string;
+  usedAt: null | string;
+};
+
 type Opportunity = {
   contact: Contact;
   createdAt: string;
@@ -66,15 +85,25 @@ type Opportunity = {
   source: string;
   stageId: string;
 };
+
 type Pipeline = {
   archivedAt: null | string;
   id: string;
   name: string;
   stages: Stage[];
 };
+type StaffAccount = {
+  disabledAt: null | string;
+  email: string;
+  id: string;
+  name: string;
+};
+
 type Stage = { color: string; id: string; name: string; position: number };
+
 type Token = {
   createdAt: string;
+  expiresAt: null | string;
   id: string;
   name: string;
   prefix: string;
@@ -85,6 +114,8 @@ const navigation = [
   { href: '/opportunities', icon: LayoutList, label: 'Opportunities' },
   { href: '/contacts', icon: ContactRound, label: 'Contacts' },
   { href: '/settings/fields', icon: SlidersHorizontal, label: 'Fields' },
+  { href: '/settings/invites', icon: Mail, label: 'Invitations' },
+  { href: '/settings/staff', icon: Users, label: 'Staff' },
   { href: '/settings/tokens', icon: KeyRound, label: 'Tokens' },
 ];
 
@@ -92,6 +123,10 @@ const appQuery = {
   contacts: () => ({
     queryFn: () => request<Contact[]>('/v1/contacts'),
     queryKey: ['contacts'],
+  }),
+  invites: () => ({
+    queryFn: () => request<Invite[]>('/v1/invites'),
+    queryKey: ['invites'],
   }),
   // The board fetches opportunities filtered by the selected pipeline. The
   // pipeline id is part of the query key so every board selection has its
@@ -109,6 +144,14 @@ const appQuery = {
   pipelines: () => ({
     queryFn: () => request<Pipeline[]>('/v1/pipelines'),
     queryKey: ['pipelines'],
+  }),
+  staff: () => ({
+    queryFn: () => request<StaffAccount[]>('/v1/staff'),
+    queryKey: ['staff'],
+  }),
+  tokens: () => ({
+    queryFn: () => request<Token[]>('/v1/tokens'),
+    queryKey: ['tokens'],
   }),
 };
 
@@ -1733,25 +1776,248 @@ const FieldsPage = () => {
   );
 };
 
-const TokensPage = () => {
+const TOKEN_DEFAULT_TTL_MS = 90 * 86_400_000;
+
+const INVITE_DEFAULT_TTL_MS = 7 * 86_400_000;
+
+const inviteStatus = (
+  invite: Invite,
+): 'active' | 'expired' | 'revoked' | 'used' => {
+  if (invite.revokedAt) {
+    return 'revoked';
+  }
+
+  if (invite.usedAt) {
+    return 'used';
+  }
+
+  if (invite.expiresAt && new Date(invite.expiresAt).getTime() <= Date.now()) {
+    return 'expired';
+  }
+
+  return 'active';
+};
+
+// datetime-local inputs only carry local wall-clock time, so shift the
+// instant into local parts before handing it to the input element.
+const toLocalInputValue = (date: Date) =>
+  new Date(date.getTime() - date.getTimezoneOffset() * 60_000)
+    .toISOString()
+    .slice(0, 16);
+
+const localTimezoneLabel = () => {
+  const offsetMinutes = -new Date().getTimezoneOffset();
+  const absolute = Math.abs(offsetMinutes);
+  const offset = `UTC${offsetMinutes < 0 ? '-' : '+'}${String(
+    Math.floor(absolute / 60),
+  ).padStart(2, '0')}:${String(absolute % 60).padStart(2, '0')}`;
+  return `${Intl.DateTimeFormat().resolvedOptions().timeZone ?? 'local'} (${offset})`;
+};
+
+const tokenStatus = (
+  token: Token,
+): 'active' | 'expired' | 'legacy' | 'revoked' => {
+  if (token.revokedAt) {
+    return 'revoked';
+  }
+
+  if (!token.expiresAt) {
+    return 'legacy';
+  }
+
+  if (new Date(token.expiresAt).getTime() <= Date.now()) {
+    return 'expired';
+  }
+
+  return 'active';
+};
+
+const statusTone = {
+  active: 'text-emerald-300',
+  expired: 'text-amber-300',
+  legacy: 'text-sky-300',
+  revoked: 'text-rose-300',
+  used: 'text-violet-300',
+} as const;
+
+const CreateTokenDialog = ({
+  defaultExpiration,
+  onOpenChange,
+  open,
+}: {
+  readonly defaultExpiration: string;
+  readonly onOpenChange: (value: boolean) => void;
+  readonly open: boolean;
+}) => {
   const queryClient = useQueryClient();
-  const [name, setName] = useState('Website form intake');
-  const [newToken, setNewToken] = useState<null | string>(null);
-  const tokens = useQuery({
-    queryFn: () => request<Token[]>('/v1/tokens'),
-    queryKey: ['tokens'],
-  });
+  const [copyFailed, setCopyFailed] = useState(false);
+  const [formError, setFormError] = useState<null | string>(null);
+  const [name, setName] = useState('');
+  const [rawToken, setRawToken] = useState<null | string>(null);
+  // The parent remounts this dialog (via its key) on every open, so state is
+  // always fresh: empty form, 90-day default matching the backend, no raw
+  // token, and an idle create mutation.
+  const [expiration, setExpiration] = useState(defaultExpiration);
   const create = useMutation({
-    mutationFn: () =>
+    mutationFn: (input: { expiresAt?: string; name: string }) =>
       request<Token & { token: string }>('/v1/tokens', {
-        body: JSON.stringify({ name }),
+        body: JSON.stringify(input),
         method: 'POST',
       }),
-    onSuccess: (token) => {
-      setNewToken(token.token);
+    onSuccess: (created) => {
+      // Keep the dialog open: the raw token is shown once and must stay
+      // visible until the staff member explicitly dismisses it.
+      setFormError(null);
+      setRawToken(created.token);
       queryClient.invalidateQueries({ queryKey: ['tokens'] });
     },
   });
+
+  // Escape, backdrop, and the close control all route through here. While a
+  // create is in flight, dismissal is ignored so a generated token can never
+  // be lost behind a closed dialog.
+  const handleOpenChange = (value: boolean) => {
+    if (!value && create.isPending) {
+      return;
+    }
+
+    onOpenChange(value);
+  };
+
+  const submit = () => {
+    const trimmedName = name.trim();
+    if (!trimmedName) {
+      setFormError('Enter a token name.');
+      return;
+    }
+
+    // The input value is local wall-clock time; new Date parses it as local
+    // time and toISOString converts it to the UTC ISO string the API expects.
+    const parsedExpiration = expiration ? new Date(expiration) : undefined;
+    if (
+      parsedExpiration &&
+      (!Number.isFinite(parsedExpiration.getTime()) ||
+        parsedExpiration.getTime() <= Date.now())
+    ) {
+      setFormError('Expiration must be in the future.');
+      return;
+    }
+
+    setFormError(null);
+    create.mutate({
+      expiresAt: parsedExpiration?.toISOString(),
+      name: trimmedName,
+    });
+  };
+
+  const copyToken = async () => {
+    if (!rawToken) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(rawToken);
+      setCopyFailed(false);
+    } catch {
+      // Clipboard access can be denied; the raw text stays visible and
+      // selectable instead of being replaced by a "copied" state.
+      setCopyFailed(true);
+    }
+  };
+
+  return (
+    <Dialog
+      onOpenChange={handleOpenChange}
+      open={open}
+      title="Create token"
+    >
+      {rawToken ? (
+        <div className="grid gap-4">
+          <p className="text-sm text-slate-300">
+            Token created. It will not be shown again.
+          </p>
+          <code className="block break-all rounded-md border border-slate-700 bg-slate-950 p-3 font-mono text-xs text-slate-100">
+            {rawToken}
+          </code>
+          {copyFailed && (
+            <p className="text-sm text-amber-300">
+              Clipboard unavailable — select the text above to copy it.
+            </p>
+          )}
+          <div className="flex justify-end gap-2">
+            <Button
+              onClick={() => {
+                void copyToken();
+              }}
+            >
+              Copy token
+            </Button>
+            <Button
+              onClick={() => handleOpenChange(false)}
+              tone="secondary"
+            >
+              Done
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <form
+          className="grid gap-4"
+          onSubmit={(event) => {
+            event.preventDefault();
+            submit();
+          }}
+        >
+          <label className="grid gap-1 text-sm text-slate-300">
+            Token name
+            <input
+              onChange={(event) => setName(event.target.value)}
+              placeholder="Website form intake"
+              value={name}
+            />
+          </label>
+          <div className="grid gap-1">
+            <label className="grid gap-1 text-sm text-slate-300">
+              Expiration
+              <input
+                onChange={(event) => setExpiration(event.target.value)}
+                type="datetime-local"
+                value={expiration}
+              />
+            </label>
+            <p className="text-xs text-slate-500">
+              Local time ({localTimezoneLabel()})
+            </p>
+          </div>
+          {formError && <p className="text-sm text-rose-300">{formError}</p>}
+          {create.error && <ErrorState error={create.error} />}
+          <div className="flex justify-end gap-2">
+            <Button
+              disabled={create.isPending}
+              onClick={() => handleOpenChange(false)}
+              tone="secondary"
+            >
+              Cancel
+            </Button>
+            <Button
+              disabled={create.isPending || !name.trim()}
+              type="submit"
+            >
+              Create token
+            </Button>
+          </div>
+        </form>
+      )}
+    </Dialog>
+  );
+};
+
+const TokensPage = () => {
+  const queryClient = useQueryClient();
+  const [createNonce, setCreateNonce] = useState(0);
+  const [defaultExpiration, setDefaultExpiration] = useState('');
+  const [showCreateDialog, setShowCreateDialog] = useState(false);
+  const tokens = useQuery(appQuery.tokens());
   const revoke = useMutation({
     mutationFn: (id: string) =>
       request(`/v1/tokens/${id}`, { method: 'DELETE' }),
@@ -1760,62 +2026,496 @@ const TokensPage = () => {
   return (
     <>
       <Header
+        action={
+          <Button
+            onClick={() => {
+              setCreateNonce((value) => value + 1);
+              setDefaultExpiration(
+                toLocalInputValue(new Date(Date.now() + TOKEN_DEFAULT_TTL_MS)),
+              );
+              setShowCreateDialog(true);
+            }}
+          >
+            <Plus size={16} /> Create token
+          </Button>
+        }
         eyebrow="Integrations"
         title="API tokens"
       />
-      <div className="grid gap-6 p-5 sm:p-8 lg:grid-cols-[22rem_1fr]">
-        <section className="rounded-xl border border-slate-800 bg-slate-900/40 p-5">
-          <label className="grid gap-1 text-sm">
-            Token name
+      <div className="p-5 sm:p-8">
+        {tokens.isPending ? (
+          <p className="text-slate-400">Loading tokens…</p>
+        ) : tokens.error ? (
+          <ErrorState error={tokens.error} />
+        ) : tokens.data?.length ? (
+          <div className="overflow-x-auto rounded-xl border border-slate-800">
+            <table className="w-full text-left text-sm">
+              <thead className="bg-slate-900 text-xs uppercase tracking-wider text-slate-400">
+                <tr>
+                  <th className="px-4 py-3">Name</th>
+                  <th className="px-4 py-3">Created</th>
+                  <th className="px-4 py-3">Expires</th>
+                  <th className="px-4 py-3">Status</th>
+                  <th className="px-4 py-3 text-right">Revoke</th>
+                </tr>
+              </thead>
+              <tbody>
+                {tokens.data.map((token) => (
+                  <tr
+                    className="border-t border-slate-800"
+                    key={token.id}
+                  >
+                    <td className="px-4 py-3">
+                      <p className="font-medium text-slate-100">{token.name}</p>
+                      <code className="font-mono text-xs text-slate-500">
+                        {token.prefix}…
+                      </code>
+                    </td>
+                    <td className="px-4 py-3 text-slate-500">
+                      {new Date(token.createdAt).toLocaleDateString()}
+                    </td>
+                    <td className="px-4 py-3 text-slate-400">
+                      {token.expiresAt
+                        ? new Date(token.expiresAt).toLocaleDateString()
+                        : 'No expiry (legacy)'}
+                    </td>
+                    <td
+                      className={cn(
+                        'px-4 py-3',
+                        statusTone[tokenStatus(token)],
+                      )}
+                    >
+                      {tokenStatus(token)}
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex justify-end">
+                        {!token.revokedAt && (
+                          <Button
+                            disabled={revoke.isPending}
+                            onClick={() => revoke.mutate(token.id)}
+                            tone="danger"
+                          >
+                            Revoke
+                          </Button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="text-sm text-slate-400">No API tokens yet.</p>
+        )}
+        {revoke.error && (
+          <div className="mt-4">
+            <ErrorState error={revoke.error} />
+          </div>
+        )}
+      </div>
+      {showCreateDialog ? (
+        <CreateTokenDialog
+          defaultExpiration={defaultExpiration}
+          key={createNonce}
+          onOpenChange={(value) => {
+            if (!value) {
+              setShowCreateDialog(false);
+            }
+          }}
+          open={showCreateDialog}
+        />
+      ) : null}
+    </>
+  );
+};
+
+const CreateInviteDialog = ({
+  defaultExpiration,
+  onOpenChange,
+  open,
+}: {
+  readonly defaultExpiration: string;
+  readonly onOpenChange: (value: boolean) => void;
+  readonly open: boolean;
+}) => {
+  const queryClient = useQueryClient();
+  const [copyFailed, setCopyFailed] = useState(false);
+  const [formError, setFormError] = useState<null | string>(null);
+  const [name, setName] = useState('');
+  const [rawToken, setRawToken] = useState<null | string>(null);
+  // The parent remounts this dialog (via its key) on every open, so state is
+  // always fresh: empty form, 7-day default matching the backend, no raw
+  // token, and an idle create mutation.
+  const [expiration, setExpiration] = useState(defaultExpiration);
+  const create = useMutation({
+    mutationFn: (input: { expiresAt?: string; name: string }) =>
+      request<Invite & { token: string }>('/v1/invites', {
+        body: JSON.stringify(input),
+        method: 'POST',
+      }),
+    onSuccess: (created) => {
+      // Keep the dialog open: the raw invite token is shown once and must
+      // stay visible until the staff member explicitly dismisses it.
+      setFormError(null);
+      setRawToken(created.token);
+      queryClient.invalidateQueries({ queryKey: ['invites'] });
+    },
+  });
+
+  // Escape, backdrop, and the close control all route through here. While a
+  // create is in flight, dismissal is ignored so a generated token can never
+  // be lost behind a closed dialog.
+  const handleOpenChange = (value: boolean) => {
+    if (!value && create.isPending) {
+      return;
+    }
+
+    onOpenChange(value);
+  };
+
+  const submit = () => {
+    const trimmedName = name.trim();
+    if (!trimmedName) {
+      setFormError('Enter an invite name.');
+      return;
+    }
+
+    // The input value is local wall-clock time; new Date parses it as local
+    // time and toISOString converts it to the UTC ISO string the API expects.
+    const parsedExpiration = expiration ? new Date(expiration) : undefined;
+    if (
+      parsedExpiration &&
+      (!Number.isFinite(parsedExpiration.getTime()) ||
+        parsedExpiration.getTime() <= Date.now())
+    ) {
+      setFormError('Expiration must be in the future.');
+      return;
+    }
+
+    setFormError(null);
+    create.mutate({
+      expiresAt: parsedExpiration?.toISOString(),
+      name: trimmedName,
+    });
+  };
+
+  const copyToken = async () => {
+    if (!rawToken) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(rawToken);
+      setCopyFailed(false);
+    } catch {
+      // Clipboard access can be denied; the raw text stays visible and
+      // selectable instead of being replaced by a "copied" state.
+      setCopyFailed(true);
+    }
+  };
+
+  return (
+    <Dialog
+      onOpenChange={handleOpenChange}
+      open={open}
+      title="Create invite"
+    >
+      {rawToken ? (
+        <div className="grid gap-4">
+          <p className="text-sm text-slate-300">
+            Invitation created. It will not be shown again.
+          </p>
+          <code className="block break-all rounded-md border border-slate-700 bg-slate-950 p-3 font-mono text-xs text-slate-100">
+            {rawToken}
+          </code>
+          {copyFailed && (
+            <p className="text-sm text-amber-300">
+              Clipboard unavailable — select the text above to copy it.
+            </p>
+          )}
+          <div className="flex justify-end gap-2">
+            <Button
+              onClick={() => {
+                void copyToken();
+              }}
+            >
+              <Copy size={16} /> Copy invite
+            </Button>
+            <Button
+              onClick={() => handleOpenChange(false)}
+              tone="secondary"
+            >
+              Done
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <form
+          className="grid gap-4"
+          onSubmit={(event) => {
+            event.preventDefault();
+            submit();
+          }}
+        >
+          <label className="grid gap-1 text-sm text-slate-300">
+            Invite name
             <input
               onChange={(event) => setName(event.target.value)}
+              placeholder="Weekend onboarding"
               value={name}
             />
           </label>
-          <Button
-            className="mt-3"
-            disabled={!name || create.isPending}
-            onClick={() => create.mutate()}
-          >
-            <Plus size={16} /> Create intake token
-          </Button>
-          {newToken && (
-            <div className="mt-4 rounded-md border border-amber-400/40 bg-amber-400/10 p-3 text-sm text-amber-100">
-              <p className="font-semibold">
-                Copy this now — it will not be shown again.
-              </p>
-              <code className="mt-2 block break-all text-xs">{newToken}</code>
-            </div>
-          )}
-        </section>
-        <section className="rounded-xl border border-slate-800 bg-slate-900/40 p-5">
-          <h2 className="font-semibold text-white">
-            Active and revoked tokens
-          </h2>
-          <div className="mt-4 grid gap-2">
-            {tokens.data?.map((token) => (
-              <div
-                className="flex items-center justify-between gap-4 rounded-md border border-slate-800 p-3"
-                key={token.id}
-              >
-                <div>
-                  <p className="font-medium">{token.name}</p>
-                  <p className="text-xs text-slate-500">
-                    {token.prefix}… {token.revokedAt ? '· revoked' : ''}
-                  </p>
-                </div>
-                {!token.revokedAt && (
-                  <Button
-                    onClick={() => revoke.mutate(token.id)}
-                    tone="danger"
-                  >
-                    Revoke
-                  </Button>
-                )}
-              </div>
-            ))}
+          <div className="grid gap-1">
+            <label className="grid gap-1 text-sm text-slate-300">
+              Expiration
+              <input
+                onChange={(event) => setExpiration(event.target.value)}
+                type="datetime-local"
+                value={expiration}
+              />
+            </label>
+            <p className="text-xs text-slate-500">
+              Local time ({localTimezoneLabel()})
+            </p>
           </div>
-        </section>
+          {formError && <p className="text-sm text-rose-300">{formError}</p>}
+          {create.error && <ErrorState error={create.error} />}
+          <div className="flex justify-end gap-2">
+            <Button
+              disabled={create.isPending}
+              onClick={() => handleOpenChange(false)}
+              tone="secondary"
+              type="button"
+            >
+              Cancel
+            </Button>
+            <Button
+              disabled={create.isPending || !name.trim()}
+              type="submit"
+            >
+              Create invite
+            </Button>
+          </div>
+        </form>
+      )}
+    </Dialog>
+  );
+};
+
+const InvitesPage = () => {
+  const queryClient = useQueryClient();
+  const [createNonce, setCreateNonce] = useState(0);
+  const [defaultExpiration, setDefaultExpiration] = useState('');
+  const [showCreateDialog, setShowCreateDialog] = useState(false);
+  const invites = useQuery(appQuery.invites());
+  const revoke = useMutation({
+    mutationFn: (id: string) =>
+      request(`/v1/invites/${id}`, { method: 'DELETE' }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['invites'] }),
+  });
+  return (
+    <>
+      <Header
+        action={
+          <Button
+            onClick={() => {
+              setCreateNonce((value) => value + 1);
+              setDefaultExpiration(
+                toLocalInputValue(new Date(Date.now() + INVITE_DEFAULT_TTL_MS)),
+              );
+              setShowCreateDialog(true);
+            }}
+          >
+            <Plus size={16} /> Create invite
+          </Button>
+        }
+        eyebrow="Integrations"
+        title="Invitations"
+      />
+      <div className="p-5 sm:p-8">
+        {invites.isPending ? (
+          <p className="text-slate-400">Loading invitations…</p>
+        ) : invites.error ? (
+          <ErrorState error={invites.error} />
+        ) : invites.data?.length ? (
+          <div className="overflow-x-auto rounded-xl border border-slate-800">
+            <table className="w-full text-left text-sm">
+              <thead className="bg-slate-900 text-xs uppercase tracking-wider text-slate-400">
+                <tr>
+                  <th className="px-4 py-3">Name</th>
+                  <th className="px-4 py-3">Created</th>
+                  <th className="px-4 py-3">Expires</th>
+                  <th className="px-4 py-3">Status</th>
+                  <th className="px-4 py-3 text-right">Revoke</th>
+                </tr>
+              </thead>
+              <tbody>
+                {invites.data.map((invite) => (
+                  <tr
+                    className="border-t border-slate-800"
+                    key={invite.id}
+                  >
+                    <td className="px-4 py-3">
+                      <p className="font-medium text-slate-100">
+                        {invite.name}
+                      </p>
+                      <code className="font-mono text-xs text-slate-500">
+                        {invite.prefix}…
+                      </code>
+                    </td>
+                    <td className="px-4 py-3 text-slate-500">
+                      {new Date(invite.createdAt).toLocaleDateString()}
+                    </td>
+                    <td className="px-4 py-3 text-slate-400">
+                      {invite.expiresAt
+                        ? new Date(invite.expiresAt).toLocaleDateString()
+                        : '—'}
+                    </td>
+                    <td
+                      className={cn(
+                        'px-4 py-3',
+                        statusTone[inviteStatus(invite)],
+                      )}
+                    >
+                      {inviteStatus(invite)}
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex justify-end">
+                        {!invite.revokedAt && (
+                          <Button
+                            disabled={revoke.isPending}
+                            onClick={() => revoke.mutate(invite.id)}
+                            tone="danger"
+                          >
+                            Revoke
+                          </Button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="text-sm text-slate-400">No invites yet.</p>
+        )}
+        {revoke.error && (
+          <div className="mt-4">
+            <ErrorState error={revoke.error} />
+          </div>
+        )}
+      </div>
+      {showCreateDialog ? (
+        <CreateInviteDialog
+          defaultExpiration={defaultExpiration}
+          key={createNonce}
+          onOpenChange={(value) => {
+            if (!value) {
+              setShowCreateDialog(false);
+            }
+          }}
+          open={showCreateDialog}
+        />
+      ) : null}
+    </>
+  );
+};
+
+const StaffPage = () => {
+  const queryClient = useQueryClient();
+  const { data: session } = useSession();
+  const staff = useQuery(appQuery.staff());
+  const setStatus = useMutation({
+    mutationFn: (input: { disabled: boolean; id: string }) =>
+      request<StaffAccount>(`/v1/staff/${input.id}`, {
+        body: JSON.stringify({ disabled: input.disabled }),
+        method: 'PATCH',
+      }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['staff'] }),
+  });
+  return (
+    <>
+      <Header
+        eyebrow="Integrations"
+        title="Staff accounts"
+      />
+      <div className="p-5 sm:p-8">
+        {staff.isPending ? (
+          <p className="text-slate-400">Loading staff…</p>
+        ) : staff.error ? (
+          <ErrorState error={staff.error} />
+        ) : staff.data?.length ? (
+          <div className="overflow-x-auto rounded-xl border border-slate-800">
+            <table className="w-full text-left text-sm">
+              <thead className="bg-slate-900 text-xs uppercase tracking-wider text-slate-400">
+                <tr>
+                  <th className="px-4 py-3">Name</th>
+                  <th className="px-4 py-3">Email</th>
+                  <th className="px-4 py-3">Status</th>
+                  <th className="px-4 py-3 text-right">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {staff.data.map((account) => {
+                  const disabled = Boolean(account.disabledAt);
+                  // The server is the authority on self-disable and
+                  // last-enabled protection; hiding the control for the
+                  // signed-in account keeps the list unambiguous without
+                  // pretending the client enforces the rule.
+                  const isSelf = session?.user?.id === account.id;
+                  return (
+                    <tr
+                      className="border-t border-slate-800"
+                      key={account.id}
+                    >
+                      <td className="px-4 py-3 font-medium text-slate-100">
+                        {account.name}
+                      </td>
+                      <td className="px-4 py-3 text-slate-500">
+                        {account.email}
+                      </td>
+                      <td
+                        className={cn(
+                          'px-4 py-3',
+                          disabled ? 'text-rose-300' : 'text-emerald-300',
+                        )}
+                      >
+                        {disabled ? 'disabled' : 'enabled'}
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex justify-end">
+                          {isSelf ? null : (
+                            <Button
+                              disabled={setStatus.isPending}
+                              onClick={() =>
+                                setStatus.mutate({
+                                  disabled: !disabled,
+                                  id: account.id,
+                                })
+                              }
+                              tone={disabled ? 'secondary' : 'danger'}
+                            >
+                              {disabled ? 'Enable' : 'Disable'}
+                            </Button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="text-sm text-slate-400">No staff accounts yet.</p>
+        )}
+        {setStatus.error && (
+          <div className="mt-4">
+            <ErrorState error={setStatus.error} />
+          </div>
+        )}
       </div>
     </>
   );
@@ -1823,31 +2523,94 @@ const TokensPage = () => {
 
 const LoginPage = () => {
   const [mode, setMode] = useState<'sign-in' | 'sign-up'>('sign-in');
-  const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [inviteToken, setInviteToken] = useState('');
-  const [error, setError] = useState<null | string>(null);
-  const [pending, setPending] = useState(false);
-  const submit = async (event: React.FormEvent) => {
+  const [signInEmail, setSignInEmail] = useState('');
+  const [signInError, setSignInError] = useState<null | string>(null);
+  const [signInPassword, setSignInPassword] = useState('');
+  const [signInPending, setSignInPending] = useState(false);
+  const [registration, dispatch] = useReducer(
+    registrationReducer,
+    undefined,
+    initialRegistrationState,
+  );
+  // Synchronous guard so a fast double submit cannot start a second
+  // request before the reducer's busy flag has re-rendered.
+  const registrationBusy = useRef(false);
+
+  const releaseRegistration = () => {
+    registrationBusy.current = false;
+  };
+
+  const { busy: pending, error, fields, step } = registration;
+
+  const startRegistration = () => {
+    setMode('sign-up');
+    dispatch({ type: 'begin-registration' });
+  };
+
+  const backToSignIn = () => {
+    setMode('sign-in');
+  };
+
+  const submitSignIn = async (event: React.FormEvent) => {
     event.preventDefault();
-    setError(null);
-    setPending(true);
-    const result =
-      mode === 'sign-up'
-        ? await signUp.email({
-            email,
-            fetchOptions: {
-              headers: { 'X-Setup-Token': inviteToken.trim() },
-            },
-            name,
-            password,
-          })
-        : await signIn.email({ email, password });
-    setPending(false);
+    setSignInError(null);
+    setSignInPending(true);
+    const result = await signIn.email({
+      email: signInEmail,
+      password: signInPassword,
+    });
+    setSignInPending(false);
     if (result.error) {
-      setError(result.error.message ?? 'Authentication failed.');
+      setSignInError(result.error.message ?? 'Authentication failed.');
     }
+  };
+
+  const submitTokenStep = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (registrationBusy.current) {
+      return;
+    }
+
+    registrationBusy.current = true;
+    dispatch({ type: 'token-submit' });
+    try {
+      const response = await quietFetch('/api/invites/validate', {
+        body: JSON.stringify({ token: fields.inviteToken.trim() }),
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+        },
+        method: 'POST',
+      });
+      dispatch({ ok: response.ok, type: 'token-result' });
+    } catch {
+      dispatch({ ok: false, type: 'token-result' });
+    } finally {
+      releaseRegistration();
+    }
+  };
+
+  const submitDetailsStep = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (registrationBusy.current) {
+      return;
+    }
+
+    registrationBusy.current = true;
+    dispatch({ type: 'details-submit' });
+    const result = await signUp.email({
+      email: fields.email,
+      fetchOptions: {
+        headers: { 'X-Setup-Token': fields.inviteToken.trim() },
+      },
+      name: fields.name,
+      password: fields.password,
+    });
+    dispatch({
+      error: (result.error ?? null) as null | SignUpFailure,
+      type: 'details-result',
+    });
+    releaseRegistration();
   };
 
   return (
@@ -1859,84 +2622,179 @@ const LoginPage = () => {
           </span>
           Lead Desk
         </div>
-        <form
-          className="grid gap-4"
-          onSubmit={submit}
-        >
-          {mode === 'sign-up' && (
+        {mode === 'sign-in' ? (
+          <form
+            className="grid gap-4"
+            onSubmit={submitSignIn}
+          >
             <label className="grid gap-1 text-sm text-slate-300">
-              Name
+              Email
               <input
                 onChange={(event) => {
-                  setName(event.target.value);
+                  setSignInEmail(event.target.value);
                 }}
-                placeholder="Ada Lovelace"
+                placeholder="you@example.com"
                 required
-                value={name}
+                type="email"
+                value={signInEmail}
               />
             </label>
-          )}
-          <label className="grid gap-1 text-sm text-slate-300">
-            Email
-            <input
-              onChange={(event) => {
-                setEmail(event.target.value);
-              }}
-              placeholder="you@example.com"
-              required
-              type="email"
-              value={email}
-            />
-          </label>
-          <label className="grid gap-1 text-sm text-slate-300">
-            Password
-            <input
-              minLength={8}
-              onChange={(event) => {
-                setPassword(event.target.value);
-              }}
-              required
-              type="password"
-              value={password}
-            />
-          </label>
-          {mode === 'sign-up' && (
+            <label className="grid gap-1 text-sm text-slate-300">
+              Password
+              <input
+                minLength={8}
+                onChange={(event) => {
+                  setSignInPassword(event.target.value);
+                }}
+                required
+                type="password"
+                value={signInPassword}
+              />
+            </label>
+            {signInError && (
+              <p
+                className="rounded-md border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-100"
+                role="alert"
+              >
+                {signInError}
+              </p>
+            )}
+            <Button
+              disabled={signInPending}
+              type="submit"
+            >
+              Sign in
+            </Button>
+          </form>
+        ) : step === 1 ? (
+          <form
+            className="grid gap-4"
+            onSubmit={submitTokenStep}
+          >
             <label className="grid gap-1 text-sm text-slate-300">
               Invite token
               <input
                 onChange={(event) => {
-                  setInviteToken(event.target.value);
+                  dispatch({
+                    name: 'inviteToken',
+                    type: 'field-change',
+                    value: event.target.value,
+                  });
                 }}
                 placeholder="Shared with you by a staff member"
                 required
-                value={inviteToken}
+                value={fields.inviteToken}
               />
             </label>
-          )}
-          {error && (
-            <p className="rounded-md border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-100">
-              {error}
-            </p>
-          )}
-          <Button
-            disabled={pending}
-            type="submit"
+            {error && (
+              <p
+                className="rounded-md border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-100"
+                role="alert"
+              >
+                {error}
+              </p>
+            )}
+            <Button
+              disabled={pending}
+              type="submit"
+            >
+              Continue
+            </Button>
+          </form>
+        ) : (
+          <form
+            className="grid gap-4"
+            onSubmit={submitDetailsStep}
           >
-            {mode === 'sign-up' ? 'Create account' : 'Sign in'}
-          </Button>
-        </form>
-        <button
-          className="mt-4 text-sm text-cyan-300 hover:text-cyan-200"
-          onClick={() => {
-            setMode(mode === 'sign-up' ? 'sign-in' : 'sign-up');
-            setError(null);
-          }}
-          type="button"
-        >
-          {mode === 'sign-up'
-            ? 'Already have an account? Sign in'
-            : 'First time here? Create an account (invite only)'}
-        </button>
+            <label className="grid gap-1 text-sm text-slate-300">
+              Name
+              <input
+                onChange={(event) => {
+                  dispatch({
+                    name: 'name',
+                    type: 'field-change',
+                    value: event.target.value,
+                  });
+                }}
+                placeholder="Ada Lovelace"
+                required
+                value={fields.name}
+              />
+            </label>
+            <label className="grid gap-1 text-sm text-slate-300">
+              Email
+              <input
+                onChange={(event) => {
+                  dispatch({
+                    name: 'email',
+                    type: 'field-change',
+                    value: event.target.value,
+                  });
+                }}
+                placeholder="you@example.com"
+                required
+                type="email"
+                value={fields.email}
+              />
+            </label>
+            <label className="grid gap-1 text-sm text-slate-300">
+              Password
+              <input
+                minLength={8}
+                onChange={(event) => {
+                  dispatch({
+                    name: 'password',
+                    type: 'field-change',
+                    value: event.target.value,
+                  });
+                }}
+                required
+                type="password"
+                value={fields.password}
+              />
+            </label>
+            {error && (
+              <p
+                className="rounded-md border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-100"
+                role="alert"
+              >
+                {error}
+              </p>
+            )}
+            <Button
+              disabled={pending}
+              onClick={() => dispatch({ type: 'back-to-token' })}
+              tone="secondary"
+              type="button"
+            >
+              Back
+            </Button>
+            <Button
+              disabled={pending}
+              type="submit"
+            >
+              Create account
+            </Button>
+          </form>
+        )}
+        {mode === 'sign-in' ? (
+          <button
+            className="mt-4 text-sm text-cyan-300 hover:text-cyan-200"
+            onClick={startRegistration}
+            type="button"
+          >
+            Create account
+          </button>
+        ) : step === 1 ? (
+          <button
+            className="mt-4 text-sm text-cyan-300 hover:text-cyan-200"
+            disabled={pending}
+            onClick={backToSignIn}
+            type="button"
+          >
+            Sign in
+          </button>
+        ) : null}
       </div>
     </div>
   );
@@ -1973,6 +2831,12 @@ export const App = () => {
         </Route>
         <Route path="/settings/tokens">
           <TokensPage />
+        </Route>
+        <Route path="/settings/invites">
+          <InvitesPage />
+        </Route>
+        <Route path="/settings/staff">
+          <StaffPage />
         </Route>
         <Route>
           <OpportunitiesPage />

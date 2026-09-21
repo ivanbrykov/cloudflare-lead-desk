@@ -1,0 +1,20 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "my-lead-desk",
+  "main": "src/worker.js",
+  "compatibility_date": "2026-08-23",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "binding": "ASSETS",
+    "directory": ".lead-desk/current/assets",
+    "not_found_handling": "single-page-application"
+  },
+  "d1_databases": [{
+    "binding": "DB",
+    "database_name": "my-lead-desk",
+    "database_id": "",
+    "migrations_dir": ".lead-desk/current/migrations"
+  }],
+  "vars": { "ENVIRONMENT": "production" },
+  "observability": { "enabled": true }
+}

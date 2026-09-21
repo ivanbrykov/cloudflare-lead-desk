@@ -1,31 +1,11 @@
 import { type Auth } from '@/auth';
-import { type Env } from '@/db/repository';
+import { type Env, getStaffAccountByEmail } from '@/db/repository';
 
 export class UnauthorizedError extends Error {
   constructor(message = 'Authentication is required.') {
     super(message);
   }
 }
-
-const parseStaffAllowlist = (allowlist: string | undefined): string[] =>
-  (allowlist ?? '')
-    .split(',')
-    .map((entry) => entry.trim().toLowerCase())
-    .filter((entry) => entry !== '');
-
-/**
- * The single staff allowlist check: an email is staff when it matches an
- * entry of STAFF_EMAILS after trimming whitespace and ignoring case.
- */
-export const isStaffEmail = (
-  email: string,
-  allowlist: string | undefined,
-): boolean => {
-  const normalized = email.trim().toLowerCase();
-  return (
-    normalized !== '' && parseStaffAllowlist(allowlist).includes(normalized)
-  );
-};
 
 export const requireSessionIdentity = async (
   request: Request,
@@ -43,20 +23,21 @@ export const requireSessionIdentity = async (
     throw new UnauthorizedError();
   }
 
-  const email = session.user.email;
-  // The allowlist is the staff gate: in production a session is only
-  // honored for an allowlisted email, and an unset/empty allowlist fails
-  // closed instead of letting every session through.
-  if (
-    environment.ENVIRONMENT === 'production' &&
-    !isStaffEmail(email, environment.STAFF_EMAILS)
-  ) {
-    throw new UnauthorizedError(
-      'This account is not authorized to use this deployment.',
-    );
+  // Stage s4: registration is invitation-only, so every enabled Better Auth
+  // account belongs to staff. There is no email allowlist to enforce.
+  // Stage s5: durable revocation. The session row is deleted when an
+  // account is disabled, but protected routes also consult the DB account
+  // state directly, so a stale session can never authorize a disabled
+  // account even if the row were momentarily still observable.
+  const account = await getStaffAccountByEmail(
+    environment,
+    session.user.email.toLowerCase(),
+  );
+  if (account === undefined || account.disabledAt !== null) {
+    throw new UnauthorizedError();
   }
 
-  return email;
+  return session.user.email;
 };
 
 export const bearerToken = (request: Request): null | string => {
