@@ -1,44 +1,81 @@
 # My Lead Desk installation
 
-This repository owns your Cloudflare deployment configuration. The CRM itself is
-installed from a packaged GitHub Release when you run the build command.
+This repository owns your Cloudflare Worker, D1 binding, runtime settings, and
+secrets. Lead Desk application code is compiled from the exact upstream commit in
+`lead-desk.json`; ordinary builds never select a newer revision.
 
 ## First deployment
 
-The Deploy to Cloudflare flow provisions your Worker and D1 and prompts for
-`BETTER_AUTH_SECRET` and `SETUP_TOKEN`. Keep the generated database ID, Worker
-name and both secrets across updates. Configure Workers Builds with:
+The Deploy to Cloudflare flow provisions the Worker and D1 database and prompts
+for `BETTER_AUTH_SECRET` and `SETUP_TOKEN`. Keep the Worker name, database ID, and
+both secrets across upgrades. Configure Workers Builds with:
 
 - **Build command:** `pnpm run build`
 - **Deploy command:** `pnpm run deploy`
 - **Node:** 24.20.0 or later within Node 24
 - **pnpm:** 10.34.5 (also pinned in `package.json`)
 
-The build resolves the latest published Lead Desk release, verifies its SHA-256,
-installs its bundled Worker/UI/migrations, and records the exact version, source
-commit, and digest in `.lead-desk/current/installation.json`. The deploy command
-checks build readiness, applies pending D1 migrations using the `DB` binding, and
-deploys to the existing Worker.
+The build fetches only the full source SHA recorded in `lead-desk.json`, installs
+that checkout with its frozen `pnpm-lock.yaml` (including build-time development
+dependencies even when `NODE_ENV=production`), and runs its source-build command.
+The compiled Worker, browser assets, migrations, runtime requirements, and source
+receipt are prepared under ignored `.lead-desk/current/`. The deploy command
+checks that receipt, applies pending migrations through your existing `DB`
+binding, and deploys to your existing Worker.
 
-At least one Lead Desk package release must exist upstream before this template
-can build. If there is no release yet, the build fails; it does not silently
-install repository source or an older cached package.
+The initial pin is a reachable bootstrap commit. It predates the stable
+`source:build` command, so the installer uses a narrowly scoped local adapter for
+that commit only. No GitHub Release or release asset is downloaded.
 
-## Update
+## Upgrade Lead Desk
 
-Trigger a new **build and deploy** in Cloudflare Workers Builds. The unchanged
-`"release": "latest"` setting in `lead-desk.json` resolves again on every build.
-No application-source sync or automated commits to this repository are needed.
-The updater never edits your tracked package manifest, tooling lockfile, Wrangler
-configuration, or secrets. All downloaded application files are under ignored
-`.lead-desk/`.
+[![Upgrade Lead Desk](https://img.shields.io/badge/Upgrade-Lead%20Desk-2088ff?logo=githubactions&logoColor=white)](../../actions/workflows/upgrade.yml)
 
-Reactivating an existing Cloudflare Worker version is different: it uses the
-already-uploaded code and does not run this updater. Upstream commits become
-available only once upstream CI publishes their package release. Following latest
-means you opt into successful main builds, including their database migrations.
+1. Select **Run workflow** on the page opened by the button.
+2. Confirm the run on your repository's default branch.
 
-For a local deployment:
+The workflow resolves upstream `main` once to a full commit SHA, compiles and
+validates that candidate, and compares its migration history with SQL fetched from
+the previously pinned commit even in a clean runner. It then changes only
+`revision` in `lead-desk.json`. If the pin is already current, it creates no
+commit. Otherwise it makes one normal `github-actions[bot]` commit and pushes
+without force. A concurrent update or
+branch-protection rule that rejects direct pushes makes the workflow fail rather
+than bypassing the rule.
+
+Resolution, candidate validation, and the pin commit run as three isolated hosted
+jobs. Candidate install/build code receives read-only repository permissions and a
+checkout with credentials removed. The fresh write job consumes only immutable
+resolver outputs, executes no repository script, reconstructs only
+`lead-desk.json`, rechecks the default-branch SHA and old pin, and exposes the
+write token only to that trusted inline step. Workflow actions are pinned to full
+commit SHAs; no artifacts or caches cross the validation/write boundary.
+
+The button uses a repository-relative GitHub link, so it targets this copied
+repository rather than the upstream Lead Desk repository.
+
+### If the Upgrade workflow is missing
+
+Cloudflare documents that a template subdirectory becomes the copied repository
+root, but it does not document whether `.github/workflows` is preserved. If the
+button opens a 404 or the Actions tab has no **Upgrade Lead Desk** workflow:
+
+1. Open **Actions** and choose **set up a workflow yourself**.
+2. Copy the complete contents of [`upgrade-workflow.yml`](upgrade-workflow.yml)
+   into `.github/workflows/upgrade.yml`.
+3. Commit it to the default branch, then use the Upgrade button again.
+
+The fallback file is tested byte-for-byte against the bundled workflow. This is a
+one-time repository setup step and needs no Cloudflare token.
+
+Cloudflare documents that pushes to the configured production branch trigger a
+Workers Build. The specific workflow-token push path still needs a live copied
+repository verification. After the upgrade commit appears, confirm that a
+Cloudflare build starts and retains the same Worker and D1 IDs. If it does not,
+push the pin commit with an owner credential or start the existing connected build
+manually; do not add a deploy-hook URL or Cloudflare credential to this workflow.
+
+## Rebuild or deploy locally
 
 ```sh
 pnpm install --frozen-lockfile
@@ -46,61 +83,43 @@ pnpm run build
 pnpm run deploy
 ```
 
-Cloudflare performs dependency installation before its configured build command.
-`pnpm run deploy` deliberately does not resolve latest a second time: it deploys
-exactly what the successful build prepared.
+Cloudflare installs this repository's small tooling dependency set before its
+build command. `pnpm run deploy` deliberately does not fetch source again: its
+preflight requires the prepared repository and commit to match `lead-desk.json`,
+then deploys exactly that successful prepared build.
 
-## Pin a release
-
-Change `release` in `lead-desk.json` to an exact upstream tag:
-
-```json
-{
-  "release": "build-<full-40-character-source-commit>",
-  "repository": "ivanbrykov/cloudflare-lead-desk"
-}
-```
-
-Use an actual tag from the upstream Releases page, replacing the placeholder.
-`LEAD_DESK_RELEASE` is an optional build-environment override for the same setting.
-Switch back to `latest` to follow updates. The public upstream needs no GitHub
-credential. If API rate limits require one, `LEAD_DESK_GITHUB_TOKEN` is an optional
-**build-only** token used for the GitHub API, never for redirected asset downloads.
-
-A pinned version makes subsequent builds repeat that version. Pinning an older
-release is not a database rollback. Database migrations are forward-only; restore
-from a database backup or use an explicitly compatible corrective release when
-recovering from a bad migration.
-
-## Local development and checks
+To work against local D1 and HTTPS workerd:
 
 ```sh
-pnpm install --frozen-lockfile
-pnpm run build
 cp .dev.vars.example .dev.vars
-# Fill .dev.vars with fresh local-only values; do not commit it.
+# Fill .dev.vars with new local-only values; never commit it.
+pnpm run build
 pnpm run db:migrate:local
 pnpm exec wrangler dev --local --local-protocol https
 ```
 
-The template runs production auth behavior, so local authentication also needs an
-HTTPS origin. A local self-signed certificate may require browser acknowledgement.
-`pnpm run deploy:dry-run` validates packaging without deploying.
+`pnpm run deploy:dry-run` validates the prepared Worker without deploying.
 
-## Failed builds and compatibility changes
+## Pins, migrations, and failed builds
 
-A failed release lookup, download, checksum check, install, or compatibility check
-fails the build and invalidates deploy readiness. It never falls back to cached
-code. Retry the build once the underlying problem is resolved.
+`lead-desk.json` must contain a public GitHub `owner/repository` and an exact
+40-character `revision`. Do not replace the revision with `main`, `latest`, a tag,
+or a shortened SHA. Rebuilding the same commit does not update the application.
 
-The updater refuses rewritten/removed migrations when an existing generated
-installation is available. Upstream publishing also compares migration hashes
-against the previous latest release, covering fresh Cloudflare build checkouts.
-If a release needs a newer compatibility date or additional flags, the build asks
-you to review and update `wrangler.jsonc` explicitly. New resource bindings or
-changes to these installer scripts may likewise require a template update; package
-updates do not rewrite installation-owned files.
+A pin to older application code is not a database rollback. SQL migrations are
+forward-only, existing migration names and contents are immutable, and new
+migrations are applied once. Restore a D1 backup or use an explicitly compatible
+corrective revision when recovering from a bad migration.
 
-`.lead-desk/.lock` prevents concurrent updates. If a build process was killed and
-left it behind, first confirm no updater is running, then remove that lock
+An unreachable commit, frozen install failure, source-build failure, rewritten
+migration, or incompatible runtime requirement removes the readiness marker and
+blocks deployment. Existing D1 data and tracked configuration remain untouched;
+the last prepared Worker files are not treated as deployable until a successful
+rebuild restores readiness.
+
+The updater never copies `.dev.vars` or installation files into upstream source.
+It removes deployment credentials from dependency-install and build subprocesses,
+builds in an owned staging directory, and promotes only validated output.
+`.lead-desk/.lock` prevents concurrent builds. If a killed process leaves that
+directory behind, first confirm no build is running, then remove only the lock
 directory and rebuild. Do not edit `.lead-desk/current` manually.

@@ -49,10 +49,10 @@ branch it describes and removes it when the PR closes; putting it in `README.md`
 leaves a stale link behind after every merge.
 
 The permanent `README.md` button points at `tree/main/templates/cloudflare`.
-That self-contained installation follows published packages. Never replace its
-stable template path with an ephemeral feature-branch path. PR source previews
-may still use the whole feature branch as shown above; an unpublished package
-cannot be installed through the latest-release template.
+That self-contained installation compiles an exact recorded upstream source
+revision. Never replace its stable template path with an ephemeral feature-branch
+path. PR source previews may still use the whole feature branch as shown above;
+the template's initial pin remains a reachable main commit.
 
 ## Secrets
 
@@ -61,14 +61,16 @@ fresh random values per installation; never commit one. `.dev.vars.example`
 lists them with empty values and is the template the installer reads — keep both
 secrets out of it.
 
-## Release distribution
+## Source distribution
 
 - Template scripts/config live in `templates/cloudflare/` and must work when
   copied alone to a new repository. Do not use parent workspace imports there.
 - Published SQL migration names and contents are immutable; add new migrations.
-- Product packages bundle Worker/UI/migrations. Latest is resolved once per build,
-  with exact source commit and SHA-256 logged. Failed updates must block deploy.
-- CI publishes only verified upstream main builds. Never overwrite published
-  release assets, automatically merge a PR, or deploy a customer installation.
-- Validate with `pnpm run test:release` and `pnpm run test:distribution` in addition
-  to the app checks when changing packaging or installer behavior.
+- Ordinary template builds fetch and compile only the full SHA recorded in
+  `lead-desk.json`; only the explicit Upgrade workflow may advance that pin.
+- Keep Worker/UI/migration build details in the upstream `source:build` command.
+  Failed fetches, installs, builds, or validation must block deployment.
+- The manual updater may commit only the source pin, never force-push, bypass
+  branch protection, or deploy a customer installation directly.
+- Validate with `pnpm run test:source` and `pnpm run test:distribution` in addition
+  to the app checks when changing source distribution or installer behavior.

@@ -1,20 +1,16 @@
-import { checkInstallation } from '../../templates/cloudflare/scripts/installed.mjs';
-import { checksum } from '../../templates/cloudflare/scripts/release.mjs';
-import { installRelease } from '../../templates/cloudflare/scripts/update.mjs';
+import { prepareSource } from '../../templates/cloudflare/scripts/build.mjs';
+import {
+  checkInstallation,
+  inspect,
+} from '../../templates/cloudflare/scripts/installed.mjs';
+import { checksum } from '../../templates/cloudflare/scripts/source.mjs';
+import { upgradePin } from '../../templates/cloudflare/scripts/upgrade.mjs';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { log as print } from 'node:console';
 import { createHash, randomBytes } from 'node:crypto';
 import { createWriteStream } from 'node:fs';
-import {
-  cp,
-  mkdir,
-  mkdtemp,
-  readdir,
-  readFile,
-  rename,
-  writeFile,
-} from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve as resolvePath } from 'node:path';
@@ -28,7 +24,7 @@ const here = import.meta.dirname;
 const source = resolvePath(here, '../..');
 const output = resolvePath(
   process.argv[2] ??
-    join(await mkdtemp(join(tmpdir(), 'lead-desk-release-')), 'run'),
+    join(await mkdtemp(join(tmpdir(), 'lead-desk-source-')), 'run'),
 );
 const consumer = join(output, 'consumer');
 await mkdir(output, { recursive: false });
@@ -40,6 +36,7 @@ await cp(join(source, 'templates/cloudflare'), consumer, {
 const environment = {
   ...process.env,
   CI: '1',
+  NODE_ENV: 'development',
   WRANGLER_LOG_PATH: join(output, 'logs', 'wrangler'),
   WRANGLER_SEND_METRICS: 'false',
   XDG_CONFIG_HOME: join(output, 'config'),
@@ -58,12 +55,13 @@ const evidence = {
   consumer,
   limitations: [
     'Local workerd/D1 and Wrangler dry-run only; no Cloudflare deployment or Deploy Button test.',
-    'A simulated GitHub release service serves real packaged app builds; v2 adds a synthetic additive migration.',
-    'GitHub release publication and real Deploy Button provisioning are not exercised here.',
+    'The bootstrap fetch uses public GitHub; controlled upgrade revisions use a local standalone Git repository.',
+    'Workflow availability after the Deploy Button and workflow-token push delivery to Cloudflare are not exercised here.',
   ],
   node: process.version,
+  revisions: [],
   sourceCommit: '',
-  versions: [],
+  sourceInstallNodeEnv: 'production',
 };
 let commandNumber = 0;
 const command = async (
@@ -94,7 +92,7 @@ const command = async (
     } catch {
       /* Process already exited. */
     }
-  }, 180_000);
+  }, 600_000);
   const code = await new Promise((resolve, reject) => {
     child.on('error', reject);
     child.on('exit', resolve);
@@ -143,19 +141,19 @@ const protectedPaths = [
   '.dev.vars',
   'package.json',
   'pnpm-lock.yaml',
-  'lead-desk.json',
 ];
-const fingerprints = async () =>
+const fingerprintsAt = async (root, paths = protectedPaths) =>
   Object.fromEntries(
     await Promise.all(
-      protectedPaths.map(async (path) => [
+      paths.map(async (path) => [
         path,
         createHash('sha256')
-          .update(await readFile(join(consumer, path)))
+          .update(await readFile(join(root, path)))
           .digest('hex'),
       ]),
     ),
   );
+const fingerprints = async () => fingerprintsAt(consumer);
 const configPath = join(consumer, 'wrangler.jsonc');
 const configuration = JSON.parse(await readFile(configPath, 'utf8'));
 await writeFile(
@@ -171,6 +169,7 @@ const originalFingerprints = await fingerprints();
 let server;
 let serverLog;
 let browser;
+const originalNodeEnvironment = process.env.NODE_ENV;
 const api = async (
   context,
   path,
@@ -232,8 +231,9 @@ const snapshot = async () => {
   return rows;
 };
 
-const start = async (context, version) => {
-  serverLog = createWriteStream(join(output, 'logs', `dev-${version}.log`));
+const start = async (context, revision) => {
+  const label = revision.slice(0, 12);
+  serverLog = createWriteStream(join(output, 'logs', `dev-${label}.log`));
   server = spawn(
     'pnpm',
     [
@@ -264,14 +264,14 @@ const start = async (context, version) => {
     assert.equal(
       server.exitCode,
       null,
-      `Wrangler exited early; see dev-${version}.log`,
+      `Wrangler exited early; see dev-${label}.log`,
     );
     try {
       const response = await context.request.get(`${origin}/health`, {
         timeout: 1_000,
       });
       if (response.ok()) {
-        assert.equal(response.headers()['x-lead-desk-version'], version);
+        assert.equal(response.headers()['x-lead-desk-commit'], revision);
         return;
       }
     } catch (error) {
@@ -283,7 +283,7 @@ const start = async (context, version) => {
     await delay(500);
   }
 
-  throw new Error(`Wrangler did not become healthy; see dev-${version}.log`);
+  throw new Error(`Wrangler did not become healthy; see dev-${label}.log`);
 };
 
 const stop = async () => {
@@ -320,7 +320,7 @@ const stop = async () => {
   });
 };
 
-const ui = async (context, version) => {
+const ui = async (context, revision) => {
   const page = await context.newPage();
   const errors = [];
   page.on('pageerror', (error) => errors.push(error.message));
@@ -329,164 +329,84 @@ const ui = async (context, version) => {
   await page.getByText('Survives Upgrade', { exact: true }).first().waitFor();
   await page.screenshot({
     fullPage: true,
-    path: join(output, `contacts-${version}.png`),
+    path: join(output, `contacts-${revision.slice(0, 12)}.png`),
   });
   assert.deepEqual(errors, []);
   await page.close();
-  pass(`real packaged SPA loads authenticated contacts in ${version}`);
+  pass(`source-built SPA loads authenticated contacts at ${revision}`);
 };
 
 try {
   evidence.sourceCommit = (
     await command('git', ['rev-parse', 'HEAD'], source)
   ).trim();
-  const versions = ['0.1.0-test.1', '0.1.0-test.2'];
-  const packages = [];
-  for (const version of versions) {
-    const destination = join(output, version);
-    await command(
-      'node',
-      [join(here, 'build.mjs'), destination, version],
-      source,
-    );
-    const archives = (await readdir(destination)).filter((name) =>
-      name.endsWith('.tgz'),
-    );
-    assert.equal(archives.length, 1);
-    const tarball = join(destination, archives[0]);
-    const contents = await command('tar', ['-tzf', tarball], source);
-    assert(
-      !contents.includes('.dev.vars') &&
-        !contents.includes('node_modules/') &&
-        !contents.includes('/src/'),
-      'package must not contain source workspace or secrets',
-    );
-    packages.push(tarball);
-    evidence.versions.push({
-      sha256: createHash('sha256')
-        .update(await readFile(tarball))
-        .digest('hex'),
-      version,
-    });
-  }
-
-  const secondPath = join(output, versions[1]);
-  const secondMetadata = JSON.parse(
-    await readFile(join(secondPath, 'lead-desk.json'), 'utf8'),
-  );
-  const originalCommit = secondMetadata.commit;
-  secondMetadata.commit = 'f'.repeat(40); // A simulated second release, never published.
-  const migrationName = '9999_release_upgrade_probe.sql';
-  const migrationSQL =
-    'CREATE TABLE package_spike_upgrade (id TEXT PRIMARY KEY);\n';
-  secondMetadata.migrations.push({
-    name: migrationName,
-    sha256: checksum(migrationSQL),
-  });
-  await writeFile(
-    join(secondPath, 'package/migrations', migrationName),
-    migrationSQL,
-  );
-  const workerPath = join(secondPath, 'package/worker.mjs');
-  await writeFile(
-    workerPath,
-    (await readFile(workerPath, 'utf8')).replaceAll(
-      originalCommit,
-      secondMetadata.commit,
-    ),
-  );
-  await writeFile(
-    join(secondPath, 'package/assets/lead-desk-version.json'),
-    JSON.stringify({ commit: secondMetadata.commit, version: versions[1] }),
-  );
-  await writeFile(
-    join(secondPath, 'package/release.json'),
-    JSON.stringify(
-      Object.fromEntries(
-        Object.entries(secondMetadata).filter(([key]) => key !== 'sha256'),
-      ),
-    ),
-  );
-  const repacked = join(secondPath, 'repacked');
-  await mkdir(repacked);
+  const upstream = join(output, 'upstream');
   await command(
-    'pnpm',
-    ['pack', '--pack-destination', repacked],
-    join(secondPath, 'package'),
+    'git',
+    ['clone', '--quiet', '--no-local', source, upstream],
+    output,
   );
-  const packedName = (await readdir(repacked)).find((name) =>
-    name.endsWith('.tgz'),
+  await command('git', ['config', 'user.name', 'Lead Desk test'], upstream);
+  await command(
+    'git',
+    ['config', 'user.email', 'lead-desk-test@example.invalid'],
+    upstream,
   );
-  await rename(join(repacked, packedName), packages[1]);
-  secondMetadata.sha256 = checksum(await readFile(packages[1]));
+  const firstRevision = (
+    await command('git', ['rev-parse', 'HEAD'], upstream)
+  ).trim();
+  const migrationName = '9999_source_upgrade_probe.sql';
   await writeFile(
-    join(secondPath, 'lead-desk.json'),
-    JSON.stringify(secondMetadata),
+    join(upstream, 'drizzle', migrationName),
+    'CREATE TABLE source_upgrade_probe (id TEXT PRIMARY KEY);\n',
   );
-  evidence.versions[1].sha256 = secondMetadata.sha256;
-  const metadata = await Promise.all(
-    versions.map(async (version) =>
-      JSON.parse(
-        await readFile(join(output, version, 'lead-desk.json'), 'utf8'),
-      ),
-    ),
+  await command('git', ['add', '--', `drizzle/${migrationName}`], upstream);
+  await command(
+    'git',
+    ['commit', '--quiet', '-m', 'test: add upgrade probe migration'],
+    upstream,
   );
-  let activeRelease = 0;
-  let failNetwork = false;
-  let corruptArchive = false;
-  let rewriteHistory = false;
-  const repository = 'ivanbrykov/cloudflare-lead-desk';
-  const fixtureFetch = async (url) => {
-    if (failNetwork) {
-      return new globalThis.Response('unavailable', { status: 503 });
-    }
+  const secondRevision = (
+    await command('git', ['rev-parse', 'HEAD'], upstream)
+  ).trim();
+  evidence.revisions.push(firstRevision, secondRevision);
+  const repositoryUrl = `file://${upstream}`;
 
-    if (url === `https://api.github.com/repos/${repository}/releases/latest`) {
-      return globalThis.Response.json({
-        assets: [
-          { name: 'lead-desk.tgz', state: 'uploaded' },
-          { name: 'lead-desk.json', state: 'uploaded' },
-        ],
-        draft: false,
-        prerelease: false,
-        tag_name: `build-${metadata[activeRelease].commit}`,
-      });
-    }
-
-    for (const [index, manifest] of metadata.entries()) {
-      const base = `https://github.com/${repository}/releases/download/build-${manifest.commit}`;
-      if (url === `${base}/lead-desk.json`) {
-        if (rewriteHistory) {
-          return globalThis.Response.json({
-            ...manifest,
-            migrations: manifest.migrations.map((migration, position) =>
-              position === 0
-                ? { ...migration, sha256: '0'.repeat(64) }
-                : migration,
-            ),
-          });
-        }
-
-        return globalThis.Response.json(manifest);
-      }
-
-      if (url === `${base}/lead-desk.tgz`) {
-        if (corruptArchive) {
-          return new globalThis.Response('corrupted release archive');
-        }
-
-        return new globalThis.Response(await readFile(packages[index]));
-      }
-    }
-
-    throw new Error(`Unexpected release URL: ${url}`);
-  };
-
-  pass(
-    'two real packages ready; local release fixture simulates latest moving between distinct tags',
-  );
   await command('pnpm', ['install', '--frozen-lockfile']);
-  await installRelease({ fetchImpl: fixtureFetch, repository, root: consumer });
+  environment.NODE_ENV = 'production';
+  process.env.NODE_ENV = 'production';
+  await command('pnpm', ['run', 'build']);
+  const bootstrapReceipt = await checkInstallation(consumer);
+  assert.equal(
+    bootstrapReceipt.commit,
+    '8c8f7cdede319c7ab1785a2917c8d0f73fa565ac',
+  );
+  pass(
+    'fresh consumer fetched and compiled the real reachable bootstrap commit',
+  );
+
+  const firstUpgrade = await upgradePin({
+    repositoryUrl,
+    root: consumer,
+    targetRevision: firstRevision,
+  });
+  assert.equal(firstUpgrade.changed, true);
+  const pinnedFirst = await readFile(join(consumer, 'lead-desk.json'), 'utf8');
+  assert.equal(JSON.parse(pinnedFirst).revision, firstRevision);
+  const stableFingerprints = await fingerprints();
+  const unchangedReceipt = await prepareSource({
+    configuration: JSON.parse(pinnedFirst),
+    repositoryUrl,
+    root: consumer,
+  });
+  assert.equal(unchangedReceipt.commit, firstRevision);
+  assert.equal(
+    await readFile(join(consumer, 'lead-desk.json'), 'utf8'),
+    pinnedFirst,
+  );
+  assert.deepEqual(await fingerprints(), stableFingerprints);
+  pass('ordinary rebuild remains on the exact recorded source revision');
+
   await migrate();
   await migrate();
   const firstMigrations = await sql(
@@ -495,13 +415,13 @@ try {
   assert(firstMigrations.length > 0);
   browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({ ignoreHTTPSErrors: true });
-  await start(context, versions[0]);
+  await start(context, firstRevision);
   assert.equal(
-    (await api(context, '/lead-desk-version.json')).version,
-    versions[0],
+    (await api(context, '/lead-desk-version.json')).commit,
+    firstRevision,
   );
   await api(context, '/api/auth/sign-up/email', {
-    data: { email: 'owner@example.test', name: 'Spike Owner', password },
+    data: { email: 'owner@example.test', name: 'Source Owner', password },
     headers: { 'X-Setup-Token': setupToken },
     method: 'POST',
   });
@@ -533,22 +453,36 @@ try {
   await api(context, '/v1/intakes', {
     data: {
       contact: { email: 'intake@example.test' },
-      opportunity: { name: 'Existing deal', source: 'package-spike' },
-      source: 'package-spike',
+      opportunity: { name: 'Existing deal', source: 'source-build' },
+      source: 'source-build',
     },
     headers: {
       Authorization: `Bearer ${token.token}`,
-      'Idempotency-Key': 'spike-before-upgrade',
+      'Idempotency-Key': 'source-before-upgrade',
     },
     method: 'POST',
     status: 201,
   });
-  await ui(context, versions[0]);
+  await ui(context, firstRevision);
   await stop();
   const before = await snapshot();
   await command('pnpm', ['run', 'deploy:dry-run']);
-  activeRelease = 1;
-  await installRelease({ fetchImpl: fixtureFetch, repository, root: consumer });
+
+  const secondUpgrade = await upgradePin({
+    repositoryUrl,
+    root: consumer,
+    targetRevision: secondRevision,
+  });
+  assert.deepEqual(secondUpgrade, {
+    changed: true,
+    newRevision: secondRevision,
+    oldRevision: firstRevision,
+  });
+  const pinnedSecond = JSON.parse(
+    await readFile(join(consumer, 'lead-desk.json'), 'utf8'),
+  );
+  assert.equal(pinnedSecond.revision, secondRevision);
+  assert.deepEqual(await fingerprints(), originalFingerprints);
   await migrate();
   const after = await snapshot();
   assert.deepEqual(
@@ -560,36 +494,32 @@ try {
     'SELECT name FROM d1_migrations ORDER BY name',
   );
   assert.equal(secondMigrations.length, firstMigrations.length + 1);
-  assert(
-    secondMigrations.some(
-      (row) => row.name === '9999_release_upgrade_probe.sql',
-    ),
-  );
-  await sql('SELECT * FROM package_spike_upgrade');
+  assert(secondMigrations.some((row) => row.name === migrationName));
+  await sql('SELECT * FROM source_upgrade_probe');
   await migrate();
   assert.deepEqual(
     await sql('SELECT name FROM d1_migrations ORDER BY name'),
     secondMigrations,
   );
   pass(
-    'upgrade preserves all existing CRM/account/session/token/invite rows and applies exactly one new migration once',
+    'upgrade preserves CRM/account/session/token/invite rows and applies one additive migration once',
   );
-  assert.deepEqual(await fingerprints(), originalFingerprints);
   pass(
-    'consumer Worker entrypoint, resource configuration, and local secrets remain byte-identical',
+    'Worker entrypoint, resource configuration, tooling, and secrets remain byte-identical',
   );
-  await start(context, versions[1]);
+
+  await start(context, secondRevision);
   assert.equal(
-    (await api(context, '/lead-desk-version.json')).version,
-    versions[1],
+    (await api(context, '/lead-desk-version.json')).commit,
+    secondRevision,
   );
   assert.equal(
     (await api(context, `/v1/contacts/${contact.id}`)).data.email,
     'lead@example.test',
   );
-  await ui(context, versions[1]);
+  await ui(context, secondRevision);
   pass(
-    'v2 Worker and asset markers are served; pre-upgrade session remains authorized',
+    'new Worker/UI receipts are served and the existing session remains authorized',
   );
   const fresh = await browser.newContext({ ignoreHTTPSErrors: true });
   await api(fresh, '/api/auth/sign-in/email', {
@@ -610,54 +540,162 @@ try {
   await api(fresh, '/v1/intakes', {
     data: {
       contact: { email: 'after@example.test' },
-      opportunity: { name: 'New deal', source: 'package-spike' },
-      source: 'package-spike',
+      opportunity: { name: 'New deal', source: 'source-build' },
+      source: 'source-build',
     },
     headers: {
       Authorization: `Bearer ${token.token}`,
-      'Idempotency-Key': 'spike-after-upgrade',
+      'Idempotency-Key': 'source-after-upgrade',
     },
     method: 'POST',
     status: 201,
   });
-  pass(
-    'existing password, unredeemed invitation, and bearer token work after upgrade',
-  );
+  pass('existing password, invitation, and API token work after upgrade');
   await stop();
   await command('pnpm', ['run', 'deploy:dry-run']);
-  pass('both versions bundle with consumer Wrangler deploy --dry-run');
-  failNetwork = true;
-  await assert.rejects(
-    installRelease({ fetchImpl: fixtureFetch, repository, root: consumer }),
-    /HTTP 503/u,
-  );
-  await assert.rejects(checkInstallation(consumer));
-  failNetwork = false;
+  pass('both controlled revisions pass consumer Wrangler deploy --dry-run');
+
   const installedWorker = join(consumer, '.lead-desk/current/worker.mjs');
   const previousWorkerHash = checksum(await readFile(installedWorker));
-  corruptArchive = true;
   await assert.rejects(
-    installRelease({ fetchImpl: fixtureFetch, repository, root: consumer }),
-    /checksum mismatch/u,
+    prepareSource({
+      configuration: { ...pinnedSecond, revision: 'f'.repeat(40) },
+      repositoryUrl,
+      root: consumer,
+    }),
   );
   await assert.rejects(checkInstallation(consumer));
   assert.equal(checksum(await readFile(installedWorker)), previousWorkerHash);
-  corruptArchive = false;
-  rewriteHistory = true;
+  pass(
+    'an unreachable revision invalidates readiness without replacing current output',
+  );
+
+  await command(
+    'git',
+    [
+      'checkout',
+      '--quiet',
+      secondRevision,
+      '--',
+      'drizzle/0000_reflective_whiplash.sql',
+    ],
+    upstream,
+  );
+  await writeFile(
+    join(upstream, 'drizzle', '0000_reflective_whiplash.sql'),
+    `${await readFile(join(upstream, 'drizzle', '0000_reflective_whiplash.sql'), 'utf8')}\n-- forbidden rewrite\n`,
+  );
+  await command(
+    'git',
+    ['add', '--', 'drizzle/0000_reflective_whiplash.sql'],
+    upstream,
+  );
+  await command(
+    'git',
+    ['commit', '--quiet', '-m', 'test: rewrite history'],
+    upstream,
+  );
+  const rewrittenRevision = (
+    await command('git', ['rev-parse', 'HEAD'], upstream)
+  ).trim();
+  const cleanConsumer = join(output, 'clean-upgrade-consumer');
+  await cp(join(source, 'templates/cloudflare'), cleanConsumer, {
+    filter: (path) => !path.includes('node_modules'),
+    recursive: true,
+  });
+  await writeFile(
+    join(cleanConsumer, 'lead-desk.json'),
+    `${JSON.stringify(pinnedSecond, undefined, 2)}\n`,
+  );
+  await writeFile(
+    join(cleanConsumer, '.dev.vars'),
+    'BETTER_AUTH_SECRET=preserve-me\nSETUP_TOKEN=preserve-me-too\n',
+  );
+  await command('pnpm', ['install', '--frozen-lockfile'], cleanConsumer);
+  const cleanProtectedPaths = [
+    ...protectedPaths,
+    'README.md',
+    'lead-desk.json',
+  ];
+  const cleanFingerprints = await fingerprintsAt(
+    cleanConsumer,
+    cleanProtectedPaths,
+  );
+  assert.equal(
+    await inspect(join(cleanConsumer, '.lead-desk/current')),
+    null,
+    'Clean upgrade fixture unexpectedly has generated output',
+  );
   await assert.rejects(
-    installRelease({ fetchImpl: fixtureFetch, repository, root: consumer }),
+    upgradePin({
+      repositoryUrl,
+      root: cleanConsumer,
+      targetRevision: rewrittenRevision,
+    }),
     /Migration removed or rewritten/u,
   );
-  assert.equal(checksum(await readFile(installedWorker)), previousWorkerHash);
-  rewriteHistory = false;
-  pass(
-    'corrupt archives and rewritten migration history are rejected before replacing the installation',
+  assert.deepEqual(
+    await fingerprintsAt(cleanConsumer, cleanProtectedPaths),
+    cleanFingerprints,
   );
-  await installRelease({ fetchImpl: fixtureFetch, repository, root: consumer });
+  assert.equal(await inspect(join(cleanConsumer, '.lead-desk/current')), null);
+  assert.equal(
+    JSON.parse(await readFile(join(cleanConsumer, 'lead-desk.json'), 'utf8'))
+      .revision,
+    secondRevision,
+  );
+  assert.equal(checksum(await readFile(installedWorker)), previousWorkerHash);
+  pass(
+    'clean-consumer upgrade rejects rewritten pinned history before changing the pin or user files',
+  );
+
+  const descriptorPath = join(upstream, 'package.json');
+  const descriptor = JSON.parse(await readFile(descriptorPath, 'utf8'));
+  descriptor.scripts['source:build'] = 'node -e "process.exit(23)"';
+  await writeFile(
+    descriptorPath,
+    `${JSON.stringify(descriptor, undefined, 2)}\n`,
+  );
+  await command('git', ['add', '--', 'package.json'], upstream);
+  await command(
+    'git',
+    ['commit', '--quiet', '-m', 'test: fail source build'],
+    upstream,
+  );
+  const brokenBuildRevision = (
+    await command('git', ['rev-parse', 'HEAD'], upstream)
+  ).trim();
+  await assert.rejects(
+    prepareSource({
+      configuration: { ...pinnedSecond, revision: brokenBuildRevision },
+      repositoryUrl,
+      root: consumer,
+    }),
+  );
+  await assert.rejects(checkInstallation(consumer));
+  assert.equal(checksum(await readFile(installedWorker)), previousWorkerHash);
+  pass('a source-build failure blocks deploy and preserves current output');
+
+  await prepareSource({
+    configuration: pinnedSecond,
+    repositoryUrl,
+    root: consumer,
+  });
   await checkInstallation(consumer);
   assert.deepEqual(await fingerprints(), originalFingerprints);
+  const alreadyCurrent = await upgradePin({
+    repositoryUrl,
+    root: consumer,
+    targetRevision: secondRevision,
+  });
+  assert.equal(alreadyCurrent.changed, false);
+  assert.equal(
+    JSON.parse(await readFile(join(consumer, 'lead-desk.json'), 'utf8'))
+      .revision,
+    secondRevision,
+  );
   pass(
-    'failed latest lookup blocks deploy preflight; successful rebuild recovers without tracked file changes',
+    'a successful rebuild recovers readiness and an already-current upgrade is idempotent',
   );
   evidence.result = 'passed';
 } catch (error) {
@@ -665,6 +703,12 @@ try {
   evidence.error = error.message;
   throw error;
 } finally {
+  if (originalNodeEnvironment === undefined) {
+    delete process.env.NODE_ENV;
+  } else {
+    process.env.NODE_ENV = originalNodeEnvironment;
+  }
+
   await stop();
   if (browser) {
     await browser.close();
@@ -672,7 +716,7 @@ try {
 
   await writeFile(
     join(output, 'result.json'),
-    JSON.stringify(evidence, null, 2) + '\n',
+    `${JSON.stringify(evidence, null, 2)}\n`,
   );
   print(`Evidence: ${output}`);
 }

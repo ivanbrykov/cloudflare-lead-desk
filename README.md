@@ -19,11 +19,23 @@ Every deployment is independent: the repo carries no account-specific values.
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/ivanbrykov/cloudflare-lead-desk/tree/main/templates/cloudflare)
 
-The button copies the self-contained [`templates/cloudflare`](templates/cloudflare) installation project into your own GitHub or GitLab account. It lets you choose the Worker and D1 names, prompts for the two secrets, provisions your database, and connects Workers Builds. The CRM is installed as a prebuilt package from GitHub Releases; your repository owns only the installation configuration.
+The button copies the self-contained [`templates/cloudflare`](templates/cloudflare)
+installation project into your own GitHub repository. It lets you choose the Worker
+and D1 names, prompts for the two secrets, provisions your database, and connects
+Workers Builds. Your repository owns only installation configuration; every build
+compiles Lead Desk from the exact full source SHA recorded in `lead-desk.json`.
 
-Use **build command `pnpm run build`** and **deploy command `pnpm run deploy`**. A new build resolves the latest published Lead Desk release, verifies its checksum, and prepares its Worker, UI, and migrations. Deployment applies pending migrations to your existing `DB` binding and updates the existing Worker. No source sync or bot commits to your repository are needed. Reactivating an old Worker version does not run an update.
+Use **build command `pnpm run build`** and **deploy command `pnpm run deploy`**.
+Ordinary rebuilds repeat the recorded revision. The copied README has an **Upgrade
+Lead Desk** button that opens a manual GitHub workflow: after you select **Run
+workflow**, it validates upstream `main` and creates one source-pin commit only when
+the revision changes. Deployment applies pending migrations to the existing `DB`
+binding and updates the existing Worker.
 
-The package installer requires the first successful upstream main release to be published. See [package releases](docs/package-releases.md) for release setup, exact version pins, migration compatibility, and converting an existing full-source snapshot without replacing its database.
+No GitHub Release package or publishing token is involved. See [source-built
+installations](docs/source-built-installations.md) for pinning, workflow enablement,
+migration compatibility, live verification limits, and converting an existing
+full-source snapshot without replacing its database.
 
 The template leaves both secrets empty. Generate separate random values for `BETTER_AUTH_SECRET` (`openssl rand -base64 32`) and `SETUP_TOKEN` (`openssl rand -hex 32`). Generate these once per installation and keep them across redeployments. The auth URL is detected automatically from the incoming request; there is no URL field to fill in.
 
@@ -346,10 +358,13 @@ Responses with a 5xx status, and failure lines, are written with `console.error`
 3. `pnpm exec vitest run` — includes the Miniflare-backed D1 suites.
 4. `pnpm run build`.
 5. `pnpm exec wrangler deploy --dry-run` — validates the deployable bundle without authentication.
-6. Release contract tests and a real packaged-template upgrade test using local D1 and Chromium.
-7. Build the versioned `lead-desk.tgz` and checksum/migration manifest as CI artifacts.
+6. Source-build contract tests and an isolated template upgrade using local D1 and Chromium.
+7. An append-only migration-history check against Git history.
+8. The stable source-build command, preserving its source receipt as a CI artifact.
 
-A separate, restricted job publishes those verified artifacts to GitHub Releases on upstream main only. It checks append-only migration history, stages assets in a draft, and advances latest after upload. It uses the workflow token for release publication, never a Cloudflare token. See [the release contract](docs/package-releases.md).
+There is no package publication job. Installations compile their pinned commit with
+its frozen lockfile, and only their explicit Upgrade workflow advances that pin.
+See [the source installation contract](docs/source-built-installations.md).
 
 ## Development
 

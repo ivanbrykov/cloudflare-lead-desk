@@ -68,6 +68,7 @@
   "scripts": {
     "build": "vite build",
     "check": "pnpm run lint && pnpm run typecheck && pnpm run test",
+    "check:migrations": "node scripts/source/checkMigrations.mjs",
     "db:generate": "drizzle-kit generate",
     "db:migrate:local": "wrangler d1 migrations apply DB --local",
     "db:migrate:remote": "wrangler d1 migrations apply DB --remote",
@@ -76,10 +77,10 @@
     "dev:worker": "pnpm run build && wrangler dev",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
-    "release:build": "node scripts/release/build.mjs",
+    "source:build": "node scripts/source/build.mjs",
     "test": "vitest run",
-    "test:distribution": "node scripts/release/smoke.mjs",
-    "test:release": "node --test --test-isolation=none scripts/release/contracts.test.mjs scripts/release/publish.test.mjs",
+    "test:distribution": "node scripts/source/smoke.mjs",
+    "test:source": "node --test --test-isolation=none scripts/source/contracts.test.mjs",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit"
   },
