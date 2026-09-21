@@ -1,6 +1,9 @@
 @import "tailwindcss";
 
 :root {
+  /* The native calendar popup on datetime-local inputs reads this to pick its
+     palette; without it Firefox renders a light popup over a dark UI. */
+  color-scheme: dark;
   color: #e2e8f0;
   background: #0f172a;
   font-family: Inter, ui-sans-serif, system-ui, sans-serif;
