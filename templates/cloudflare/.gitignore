@@ -1,0 +1,5 @@
+node_modules/
+.lead-desk/
+.wrangler/
+.dev.vars
+*.log

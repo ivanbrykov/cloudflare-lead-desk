@@ -14,7 +14,9 @@ export default defineConfig(
     'drizzle',
     'node_modules',
     '.wrangler',
-    'pnpm-lock.yaml',
+    '**/pnpm-lock.yaml',
+    '.release',
+    '**/.lead-desk',
   ]),
   ...auto,
   {

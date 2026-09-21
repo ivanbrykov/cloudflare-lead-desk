@@ -5,3 +5,6 @@ dist/
 coverage/
 tsconfig.tsbuildinfo
 *.log
+
+.release/
+.lead-desk/

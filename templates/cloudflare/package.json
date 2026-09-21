@@ -1,0 +1,26 @@
+{
+  "cloudflare": {
+    "bindings": {
+      "BETTER_AUTH_SECRET": {"description": "Session signing secret. Generate once with openssl rand -base64 32 and keep it across updates."},
+      "DB": {"description": "Your persistent Lead Desk D1 database. Updates reuse this binding and its existing data."},
+      "SETUP_TOKEN": {"description": "Bootstrap token for the first account. Generate with openssl rand -hex 32. Subsequent staff use invitations."}
+    }
+  },
+  "devDependencies": {
+    "jsonc-parser": "3.3.1",
+    "wrangler": "4.125.0"
+  },
+  "engines": {"node": ">=24.20.0 <25"},
+  "name": "my-lead-desk",
+  "packageManager": "pnpm@10.34.5",
+  "private": true,
+  "scripts": {
+    "build": "node scripts/update.mjs",
+    "db:migrate:local": "wrangler d1 migrations apply DB --local",
+    "db:migrate:remote": "wrangler d1 migrations apply DB --remote",
+    "deploy": "node scripts/preflight.mjs && pnpm run db:migrate:remote && wrangler deploy",
+    "deploy:dry-run": "node scripts/preflight.mjs && wrangler deploy --dry-run",
+    "dev": "wrangler dev --local"
+  },
+  "type": "module"
+}

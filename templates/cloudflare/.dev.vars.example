@@ -1,0 +1,9 @@
+# Secret used to sign Better Auth session cookies. Generate a fresh value with:
+#   openssl rand -base64 32
+BETTER_AUTH_SECRET=
+# Invite token required to create a staff account (sent as the X-Setup-Token
+# header on the sign-up screen). Generate with:
+#   openssl rand -hex 32
+# Production requires at least 32 characters after trimming whitespace.
+# Rotate it in the dashboard if it leaks.
+SETUP_TOKEN=
