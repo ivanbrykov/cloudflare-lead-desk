@@ -600,6 +600,33 @@ try {
   assert.equal(checksum(await readFile(installedWorker)), previousWorkerHash);
   pass('rewritten historical SQL is rejected before replacing current output');
 
+  const descriptorPath = join(upstream, 'package.json');
+  const descriptor = JSON.parse(await readFile(descriptorPath, 'utf8'));
+  descriptor.scripts['source:build'] = 'node -e "process.exit(23)"';
+  await writeFile(
+    descriptorPath,
+    `${JSON.stringify(descriptor, undefined, 2)}\n`,
+  );
+  await command('git', ['add', '--', 'package.json'], upstream);
+  await command(
+    'git',
+    ['commit', '--quiet', '-m', 'test: fail source build'],
+    upstream,
+  );
+  const brokenBuildRevision = (
+    await command('git', ['rev-parse', 'HEAD'], upstream)
+  ).trim();
+  await assert.rejects(
+    prepareSource({
+      configuration: { ...pinnedSecond, revision: brokenBuildRevision },
+      repositoryUrl,
+      root: consumer,
+    }),
+  );
+  await assert.rejects(checkInstallation(consumer));
+  assert.equal(checksum(await readFile(installedWorker)), previousWorkerHash);
+  pass('a source-build failure blocks deploy and preserves current output');
+
   await prepareSource({
     configuration: pinnedSecond,
     repositoryUrl,
