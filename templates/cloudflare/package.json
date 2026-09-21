@@ -15,7 +15,7 @@
   "packageManager": "pnpm@10.34.5",
   "private": true,
   "scripts": {
-    "build": "node scripts/update.mjs",
+    "build": "node scripts/build.mjs",
     "db:migrate:local": "wrangler d1 migrations apply DB --local",
     "db:migrate:remote": "wrangler d1 migrations apply DB --remote",
     "deploy": "node scripts/preflight.mjs && pnpm run db:migrate:remote && wrangler deploy",

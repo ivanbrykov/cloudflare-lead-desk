@@ -1,0 +1,46 @@
+name: Upgrade Lead Desk
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: lead-desk-upgrade-${{ github.event.repository.default_branch }}
+  cancel-in-progress: false
+
+jobs:
+  upgrade:
+    name: Validate and pin upstream main
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout the installation default branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.20.0
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.34.5
+
+      - name: Install installation tooling
+        run: pnpm install --frozen-lockfile
+
+      - name: Build and validate upstream main
+        env:
+          LEAD_DESK_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: node scripts/upgrade.mjs
+
+      - name: Commit only the validated source pin
+        env:
+          LEAD_DESK_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: node scripts/commitUpgrade.mjs

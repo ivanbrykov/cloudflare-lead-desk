@@ -6,5 +6,5 @@ coverage/
 tsconfig.tsbuildinfo
 *.log
 
-.release/
+.source-build/
 .lead-desk/

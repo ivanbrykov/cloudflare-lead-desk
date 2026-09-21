@@ -16,6 +16,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -40,14 +42,19 @@ jobs:
       - name: Test
         run: pnpm exec vitest run
 
+      - name: Protect migration history
+        env:
+          MIGRATION_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: pnpm run check:migrations
+
       - name: Build
         run: pnpm run build
 
       - name: Deploy dry-run
         run: pnpm exec wrangler deploy --dry-run
 
-      - name: Release contract tests
-        run: pnpm run test:release
+      - name: Source distribution contract tests
+        run: pnpm run test:source
 
       - name: Install Chromium
         run: pnpm exec playwright install --with-deps chromium
@@ -55,48 +62,14 @@ jobs:
       - name: Template install and persistent D1 upgrade
         run: pnpm run test:distribution
 
-      - name: Package this commit
-        env:
-          RELEASE_VERSION: 0.1.0-main.${{ github.run_number }}.${{ github.run_attempt }}
-        run: pnpm run release:build .release "$RELEASE_VERSION"
+      - name: Build this commit through the source distribution contract
+        run: pnpm run source:build .source-build
 
-      - name: Preserve release artifacts
+      - name: Preserve source-build receipt
         uses: actions/upload-artifact@v4
         with:
-          name: lead-desk-release
+          name: lead-desk-source-build
           include-hidden-files: true
           path: |
-            .release/lead-desk.tgz
-            .release/lead-desk.json
+            .source-build/source.json
           if-no-files-found: error
-
-  publish:
-    name: Publish tested main package
-    needs: verify
-    if: >-
-      github.repository == 'ivanbrykov/cloudflare-lead-desk' &&
-      github.ref == 'refs/heads/main' &&
-      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: write
-    concurrency:
-      group: lead-desk-release-main
-      cancel-in-progress: false
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version-file: .node-version
-      - name: Download verified package
-        uses: actions/download-artifact@v4
-        with:
-          name: lead-desk-release
-          path: .release
-      - name: Publish without rewriting existing releases
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: node scripts/release/publish.mjs .release

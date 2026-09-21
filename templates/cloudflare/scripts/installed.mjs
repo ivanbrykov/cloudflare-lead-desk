@@ -1,4 +1,4 @@
-import { validateManifest } from './release.mjs';
+import { checksum, validateSourceManifest } from './source.mjs';
 import { parse } from 'jsonc-parser';
 import assert from 'node:assert/strict';
 import { lstat, readFile } from 'node:fs/promises';
@@ -29,13 +29,13 @@ export const assertRuntimeConfig = async (root, manifest) => {
   assert(
     typeof config.compatibility_date === 'string' &&
       config.compatibility_date >= manifest.compatibilityDate,
-    `This release requires compatibility_date >= ${manifest.compatibilityDate}; review and update your Wrangler config.`,
+    `This source revision requires compatibility_date >= ${manifest.compatibilityDate}; review and update your Wrangler config.`,
   );
   assert(
     manifest.compatibilityFlags.every((flag) =>
       config.compatibility_flags?.includes(flag),
     ),
-    'This release needs additional compatibility_flags; review your Wrangler config.',
+    'This source revision needs additional compatibility_flags; review your Wrangler config.',
   );
   const database = config.d1_databases?.find(
     (binding) => binding.binding === 'DB',
@@ -67,15 +67,14 @@ export const checkInstallation = async (root) => {
     'An update is incomplete or still running; do not deploy until it finishes.',
   );
   const current = join(root, '.lead-desk/current');
-  const manifest = validateManifest(
-    JSON.parse(await readFile(join(current, 'installation.json'), 'utf8')),
-  );
+  const receiptBytes = await readFile(join(current, 'installation.json'));
+  const manifest = validateSourceManifest(JSON.parse(receiptBytes.toString()));
   const ready = JSON.parse(
     await readFile(join(root, '.lead-desk/ready.json'), 'utf8'),
   );
   assert.equal(
-    ready.sha256,
-    manifest.sha256,
+    ready.receiptSha256,
+    checksum(receiptBytes),
     'Installation is not ready. Run pnpm run build successfully before deploying.',
   );
   await assertRuntimeConfig(root, manifest);
