@@ -452,6 +452,9 @@ test('template workflow is reproducible and README link is repository-relative',
     workflow,
     /pnpm\/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4/u,
   );
+  assert.match(workflow, /git fetch --no-auto-maintenance/u);
+  assert.match(workflow, /GIT_CONFIG_KEY_4=maintenance\.auto/u);
+  assert.match(workflow, /GIT_CONFIG_KEY_5=gc\.auto/u);
   assert.match(workflow, /github\.event\.repository\.default_branch/u);
   assert.doesNotMatch(workflow, /cloudflare.*token/iu);
   assert.match(readme, /\.\.\/\.\.\/actions\/workflows\/upgrade\.yml/u);
@@ -459,6 +462,16 @@ test('template workflow is reproducible and README link is repository-relative',
     readme,
     /github\.com\/ivanbrykov\/cloudflare-lead-desk\/actions/u,
   );
+});
+
+test('ephemeral source fetches disable detached Git maintenance', async () => {
+  const builder = await readFile(
+    join(root, 'templates/cloudflare/scripts/build.mjs'),
+    'utf8',
+  );
+  assert.match(builder, /'--no-auto-maintenance'/u);
+  assert.match(builder, /\['config', 'maintenance\.auto', 'false'\]/u);
+  assert.match(builder, /\['config', 'gc\.auto', '0'\]/u);
 });
 
 test('candidate validation is isolated from repository write authority', async () => {

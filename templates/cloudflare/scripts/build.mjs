@@ -59,6 +59,7 @@ const fetchRevision = ({ checkout, revision }) => {
       '-c',
       'http.https://github.com/.extraheader=',
       'fetch',
+      '--no-auto-maintenance',
       '--quiet',
       '--depth=1',
       'origin',
@@ -244,6 +245,8 @@ export const prepareSource = async ({
     const checkout = join(temporary, 'source');
     await mkdir(checkout);
     run('git', ['init', '--quiet'], { cwd: checkout });
+    run('git', ['config', 'maintenance.auto', 'false'], { cwd: checkout });
+    run('git', ['config', 'gc.auto', '0'], { cwd: checkout });
     run(
       'git',
       [

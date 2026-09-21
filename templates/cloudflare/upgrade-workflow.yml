@@ -226,7 +226,7 @@ jobs:
 
           basic_auth="$(printf 'x-access-token:%s' "$REPOSITORY_WRITE_TOKEN" | base64 | tr -d '\n')"
           unset REPOSITORY_WRITE_TOKEN
-          export GIT_CONFIG_COUNT=4
+          export GIT_CONFIG_COUNT=6
           export GIT_CONFIG_KEY_0=core.hooksPath
           export GIT_CONFIG_VALUE_0=/dev/null
           export GIT_CONFIG_KEY_1=credential.helper
@@ -235,8 +235,12 @@ jobs:
           export GIT_CONFIG_VALUE_2=never
           export GIT_CONFIG_KEY_3=http.https://github.com/.extraheader
           export GIT_CONFIG_VALUE_3="AUTHORIZATION: basic ${basic_auth}"
+          export GIT_CONFIG_KEY_4=maintenance.auto
+          export GIT_CONFIG_VALUE_4=false
+          export GIT_CONFIG_KEY_5=gc.auto
+          export GIT_CONFIG_VALUE_5=0
 
-          git fetch --quiet --depth=1 origin "refs/heads/${DEFAULT_BRANCH}:refs/remotes/origin/${DEFAULT_BRANCH}"
+          git fetch --no-auto-maintenance --quiet --depth=1 origin "refs/heads/${DEFAULT_BRANCH}:refs/remotes/origin/${DEFAULT_BRANCH}"
           fetched_base="$(git rev-parse "refs/remotes/origin/${DEFAULT_BRANCH}")"
           [[ "$fetched_base" == "$BASE_SHA" ]]
 
