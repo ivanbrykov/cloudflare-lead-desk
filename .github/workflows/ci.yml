@@ -3,11 +3,16 @@ name: CI
 on:
   push:
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   verify:
     name: Lint, typecheck, test, build, and deploy dry-run
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -23,6 +28,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Install isolated template tooling
+        run: pnpm --dir templates/cloudflare install --frozen-lockfile
+
       - name: Lint
         run: pnpm run lint
 
@@ -37,3 +45,58 @@ jobs:
 
       - name: Deploy dry-run
         run: pnpm exec wrangler deploy --dry-run
+
+      - name: Release contract tests
+        run: pnpm run test:release
+
+      - name: Install Chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Template install and persistent D1 upgrade
+        run: pnpm run test:distribution
+
+      - name: Package this commit
+        env:
+          RELEASE_VERSION: 0.1.0-main.${{ github.run_number }}.${{ github.run_attempt }}
+        run: pnpm run release:build .release "$RELEASE_VERSION"
+
+      - name: Preserve release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: lead-desk-release
+          include-hidden-files: true
+          path: |
+            .release/lead-desk.tgz
+            .release/lead-desk.json
+          if-no-files-found: error
+
+  publish:
+    name: Publish tested main package
+    needs: verify
+    if: >-
+      github.repository == 'ivanbrykov/cloudflare-lead-desk' &&
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    concurrency:
+      group: lead-desk-release-main
+      cancel-in-progress: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+      - name: Download verified package
+        uses: actions/download-artifact@v4
+        with:
+          name: lead-desk-release
+          path: .release
+      - name: Publish without rewriting existing releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/release/publish.mjs .release

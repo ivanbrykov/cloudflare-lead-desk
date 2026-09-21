@@ -17,15 +17,19 @@ Every deployment is independent: the repo carries no account-specific values.
 
 ### One-click install
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/ivanbrykov/cloudflare-lead-desk)
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/ivanbrykov/cloudflare-lead-desk/tree/main/templates/cloudflare)
 
-The button clones this repository into your own GitHub or GitLab account, lets you choose the Worker name and the D1 database name on the setup page, prompts for the two secrets listed in `.dev.vars.example` (`BETTER_AUTH_SECRET`, `SETUP_TOKEN`), provisions the database in your Cloudflare account, runs the migrations as part of `pnpm run deploy`, and connects Workers Builds so every push to your copy deploys automatically.
+The button copies the self-contained [`templates/cloudflare`](templates/cloudflare) installation project into your own GitHub or GitLab account. It lets you choose the Worker and D1 names, prompts for the two secrets, provisions your database, and connects Workers Builds. The CRM is installed as a prebuilt package from GitHub Releases; your repository owns only the installation configuration.
+
+Use **build command `pnpm run build`** and **deploy command `pnpm run deploy`**. A new build resolves the latest published Lead Desk release, verifies its checksum, and prepares its Worker, UI, and migrations. Deployment applies pending migrations to your existing `DB` binding and updates the existing Worker. No source sync or bot commits to your repository are needed. Reactivating an old Worker version does not run an update.
+
+The package installer requires the first successful upstream main release to be published. See [package releases](docs/package-releases.md) for release setup, exact version pins, migration compatibility, and converting an existing full-source snapshot without replacing its database.
 
 The template leaves both secrets empty. Generate separate random values for `BETTER_AUTH_SECRET` (`openssl rand -base64 32`) and `SETUP_TOKEN` (`openssl rand -hex 32`). Generate these once per installation and keep them across redeployments. The auth URL is detected automatically from the incoming request; there is no URL field to fill in.
 
 After the first deploy, open the app, switch to sign-up, and create the first account using the invite token (`SETUP_TOKEN`). Registration is invitation-only by design: the bootstrap token creates the first account, and every later account requires a single-use invite that an authenticated staff member creates with `POST /v1/invites`. Only invited staff can create an account or reach data.
 
-### Manual install
+### Manual install from source
 
 Prerequisites: a Cloudflare account, Node.js 24.20.0 (see `.node-version`) and pnpm 10.34.5. Install the pinned pnpm version using `npm install --global pnpm@10.34.5` if needed.
 
@@ -335,13 +339,17 @@ Responses with a 5xx status, and failure lines, are written with `console.error`
 
 ## Continuous integration
 
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every push and pull request from a clean checkout. It uses no secrets and performs no deployment:
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) verifies every push and pull request from a clean checkout. Verification uses no cloud credentials and performs no deployment:
 
 1. `pnpm install --frozen-lockfile` — pnpm pinned by the `packageManager` field, Node from `.node-version`.
 2. `pnpm run typecheck`.
 3. `pnpm exec vitest run` — includes the Miniflare-backed D1 suites.
 4. `pnpm run build`.
 5. `pnpm exec wrangler deploy --dry-run` — validates the deployable bundle without authentication.
+6. Release contract tests and a real packaged-template upgrade test using local D1 and Chromium.
+7. Build the versioned `lead-desk.tgz` and checksum/migration manifest as CI artifacts.
+
+A separate, restricted job publishes those verified artifacts to GitHub Releases on upstream main only. It checks append-only migration history, stages assets in a draft, and advances latest after upload. It uses the workflow token for release publication, never a Cloudflare token. See [the release contract](docs/package-releases.md).
 
 ## Development
 

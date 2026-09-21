@@ -48,9 +48,11 @@ a deployment that already exists. Putting it in the PR body keeps it tied to the
 branch it describes and removes it when the PR closes; putting it in `README.md`
 leaves a stale link behind after every merge.
 
-The `README.md` button stays pointed at the repository root and deploys `main`.
-Do not add a `/tree/<branch>` path to it — a bare URL resolves to the default
-branch at clone time, which is correct for the permanent install path.
+The permanent `README.md` button points at `tree/main/templates/cloudflare`.
+That self-contained installation follows published packages. Never replace its
+stable template path with an ephemeral feature-branch path. PR source previews
+may still use the whole feature branch as shown above; an unpublished package
+cannot be installed through the latest-release template.
 
 ## Secrets
 
@@ -58,3 +60,15 @@ branch at clone time, which is correct for the permanent install path.
 fresh random values per installation; never commit one. `.dev.vars.example`
 lists them with empty values and is the template the installer reads — keep both
 secrets out of it.
+
+## Release distribution
+
+- Template scripts/config live in `templates/cloudflare/` and must work when
+  copied alone to a new repository. Do not use parent workspace imports there.
+- Published SQL migration names and contents are immutable; add new migrations.
+- Product packages bundle Worker/UI/migrations. Latest is resolved once per build,
+  with exact source commit and SHA-256 logged. Failed updates must block deploy.
+- CI publishes only verified upstream main builds. Never overwrite published
+  release assets, automatically merge a PR, or deploy a customer installation.
+- Validate with `pnpm run test:release` and `pnpm run test:distribution` in addition
+  to the app checks when changing packaging or installer behavior.
