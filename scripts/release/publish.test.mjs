@@ -16,6 +16,7 @@ const migrationDigest = 'c'.repeat(64);
 const priorMigrationDigest = 'd'.repeat(64);
 const repository = 'ivanbrykov/cloudflare-lead-desk';
 const tag = `build-${commit}`;
+const releaseId = 123;
 
 const manifest = (overrides = {}) => ({
   asset: 'lead-desk.tgz',
@@ -33,6 +34,7 @@ const manifest = (overrides = {}) => ({
 const githubRelease = (overrides = {}) => ({
   assets: [],
   draft: true,
+  id: releaseId,
   prerelease: false,
   tag_name: tag,
   ...overrides,
@@ -64,7 +66,7 @@ test('publishRelease creates a draft, uploads both assets without clobber, then 
   const { directory, metadata } = await artifact(context);
   const ghCalls = [];
   const requests = [];
-  let draftLookups = 0;
+  let created = false;
   const fetchImpl = async (url) => {
     requests.push(url);
     if (url === releaseUrl('git/ref/heads/main')) {
@@ -72,8 +74,15 @@ test('publishRelease creates a draft, uploads both assets without clobber, then 
     }
 
     if (url === releaseUrl(`releases/tags/${tag}`)) {
-      draftLookups += 1;
-      return draftLookups === 1 ? notFound() : jsonResponse(githubRelease());
+      return notFound(); // GitHub's by-tag endpoint does not return draft releases.
+    }
+
+    if (url === releaseUrl('releases?per_page=100&page=1')) {
+      return jsonResponse(created ? [githubRelease()] : []);
+    }
+
+    if (url === releaseUrl(`releases/${releaseId}`)) {
+      return jsonResponse(githubRelease());
     }
 
     if (url === releaseUrl('releases/latest')) {
@@ -88,7 +97,12 @@ test('publishRelease creates a draft, uploads both assets without clobber, then 
     directory,
     fetchImpl,
     repository,
-    runGh: (args) => ghCalls.push(args),
+    runGh: (args) => {
+      ghCalls.push(args);
+      if (args[1] === 'create') {
+        created = true;
+      }
+    },
     token: 'test-token',
   });
 
@@ -186,6 +200,10 @@ test('publishRelease rejects a rewritten migration before creating a release', a
       return notFound();
     }
 
+    if (url === releaseUrl('releases?per_page=100&page=1')) {
+      return jsonResponse([]);
+    }
+
     if (url === releaseUrl('releases/latest')) {
       return jsonResponse(
         githubRelease({
@@ -232,6 +250,14 @@ test('publishRelease rejects a mismatched pre-existing draft asset without mutat
     }
 
     if (url === releaseUrl(`releases/tags/${tag}`)) {
+      return notFound();
+    }
+
+    if (url === releaseUrl('releases?per_page=100&page=1')) {
+      return jsonResponse([githubRelease()]);
+    }
+
+    if (url === releaseUrl(`releases/${releaseId}`)) {
       return jsonResponse(
         githubRelease({
           assets: [
@@ -265,17 +291,22 @@ test('publishRelease rejects a mismatched pre-existing draft asset without mutat
 test('publishRelease stops when a draft is manually published before upload', async (context) => {
   const { directory } = await artifact(context);
   const ghCalls = [];
-  let tagLookups = 0;
+  let created = false;
   const fetchImpl = async (url) => {
     if (url === releaseUrl('git/ref/heads/main')) {
       return jsonResponse({ object: { sha: commit } });
     }
 
     if (url === releaseUrl(`releases/tags/${tag}`)) {
-      tagLookups += 1;
-      return tagLookups === 1
-        ? notFound()
-        : jsonResponse(githubRelease({ draft: false }));
+      return notFound();
+    }
+
+    if (url === releaseUrl('releases?per_page=100&page=1')) {
+      return jsonResponse(created ? [githubRelease()] : []);
+    }
+
+    if (url === releaseUrl(`releases/${releaseId}`)) {
+      return jsonResponse(githubRelease({ draft: false }));
     }
 
     if (url === releaseUrl('releases/latest')) {
@@ -291,7 +322,12 @@ test('publishRelease stops when a draft is manually published before upload', as
       directory,
       fetchImpl,
       repository,
-      runGh: (args) => ghCalls.push(args),
+      runGh: (args) => {
+        ghCalls.push(args);
+        if (args[1] === 'create') {
+          created = true;
+        }
+      },
       token: 'test-token',
     }),
     /changed state during publishing/iu,
@@ -300,4 +336,110 @@ test('publishRelease stops when a draft is manually published before upload', as
     ghCalls.map((args) => args.slice(0, 2)),
     [['release', 'create']],
   );
+});
+
+test('publishRelease resumes a draft on a later listing page without recreating or overwriting assets', async (context) => {
+  const { directory, metadata } = await artifact(context);
+  const ghCalls = [];
+  const requests = [];
+  const draft = githubRelease({
+    assets: [{ digest: `sha256:${metadata.sha256}`, name: 'lead-desk.tgz' }],
+  });
+  await publishRelease({
+    commit,
+    directory,
+    fetchImpl: async (url, options) => {
+      requests.push(url);
+      assert.equal(options.headers.Authorization, 'Bearer test-token');
+      if (url === releaseUrl('git/ref/heads/main')) {
+        return jsonResponse({ object: { sha: commit } });
+      }
+
+      if (url === releaseUrl(`releases/tags/${tag}`)) {
+        return notFound();
+      }
+
+      if (url === releaseUrl('releases?per_page=100&page=1')) {
+        return jsonResponse(
+          Array.from({ length: 100 }, (_, index) =>
+            githubRelease({
+              draft: false,
+              id: index + 1_000,
+              tag_name: `other-${index}`,
+            }),
+          ),
+        );
+      }
+
+      if (url === releaseUrl('releases?per_page=100&page=2')) {
+        return jsonResponse([draft]);
+      }
+
+      if (url === releaseUrl(`releases/${releaseId}`)) {
+        return jsonResponse(draft);
+      }
+
+      if (url === releaseUrl('releases/latest')) {
+        return notFound();
+      }
+
+      throw new Error(`Unexpected GitHub request: ${url}`);
+    },
+    repository,
+    runGh: (args) => ghCalls.push(args),
+    token: 'test-token',
+  });
+  assert(requests.includes(releaseUrl('releases?per_page=100&page=2')));
+  assert.deepEqual(ghCalls, [
+    [
+      'release',
+      'upload',
+      tag,
+      join(directory, 'lead-desk.json'),
+      '--repo',
+      repository,
+    ],
+    ['release', 'edit', tag, '--repo', repository, '--draft=false', '--latest'],
+  ]);
+});
+
+test('publishRelease refuses an ID lookup that returns a different release tag', async (context) => {
+  const { directory } = await artifact(context);
+  const ghCalls = [];
+  await assert.rejects(
+    publishRelease({
+      commit,
+      directory,
+      fetchImpl: async (url) => {
+        if (url === releaseUrl('git/ref/heads/main')) {
+          return jsonResponse({ object: { sha: commit } });
+        }
+
+        if (url === releaseUrl(`releases/tags/${tag}`)) {
+          return notFound();
+        }
+
+        if (url === releaseUrl('releases?per_page=100&page=1')) {
+          return jsonResponse([githubRelease()]);
+        }
+
+        if (url === releaseUrl(`releases/${releaseId}`)) {
+          return jsonResponse(
+            githubRelease({ tag_name: `build-${priorCommit}` }),
+          );
+        }
+
+        if (url === releaseUrl('releases/latest')) {
+          return notFound();
+        }
+
+        throw new Error(`Unexpected GitHub request: ${url}`);
+      },
+      repository,
+      runGh: (args) => ghCalls.push(args),
+      token: 'test-token',
+    }),
+    /changed state during publishing/iu,
+  );
+  assert.deepEqual(ghCalls, []);
 });
