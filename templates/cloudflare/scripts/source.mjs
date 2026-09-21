@@ -61,6 +61,15 @@ export const validateSourceManifest = (value) => {
   return value;
 };
 
+export const validateInstallationReceipt = (value) => {
+  validateSourceManifest(value);
+  validateConfiguration({
+    repository: value.repository,
+    revision: value.commit,
+  });
+  return value;
+};
+
 export const assertMigrationHistory = (previous, next) => {
   validateSourceManifest(previous);
   validateSourceManifest(next);

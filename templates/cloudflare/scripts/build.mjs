@@ -6,6 +6,7 @@ import {
   githubRepositoryUrl,
   sourceBuildFormat,
   validateConfiguration,
+  validateInstallationReceipt,
   validateSourceManifest,
 } from './source.mjs';
 import assert from 'node:assert/strict';
@@ -42,6 +43,35 @@ const run = (executable, args, options = {}) =>
     timeout: 600_000,
     ...options,
   });
+
+const gitOutput = (args, checkout, encoding = 'utf8') =>
+  execFileSync('git', args, {
+    cwd: checkout,
+    encoding,
+    env: buildEnvironment(),
+    timeout: 60_000,
+  });
+
+const fetchRevision = ({ checkout, revision }) => {
+  run(
+    'git',
+    [
+      '-c',
+      'http.https://github.com/.extraheader=',
+      'fetch',
+      '--quiet',
+      '--depth=1',
+      'origin',
+      revision,
+    ],
+    { cwd: checkout },
+  );
+  assert.equal(
+    gitOutput(['rev-parse', 'FETCH_HEAD'], checkout).trim(),
+    revision,
+    'Fetched the wrong source commit',
+  );
+};
 
 const plainTree = async (directory) => {
   for (const entry of await readdir(directory, { withFileTypes: true })) {
@@ -135,12 +165,32 @@ const validateCandidate = async ({ candidate, revision }) => {
   return manifest;
 };
 
+const manifestAtRevision = ({ checkout, revision, runtime }) => {
+  const paths = gitOutput(
+    ['ls-tree', '-r', '--name-only', revision, '--', 'drizzle'],
+    checkout,
+  )
+    .split('\n')
+    .filter((path) => /^drizzle\/\d{4}_[\w-]+\.sql$/u.test(path));
+  const migrations = paths.map((path) => ({
+    name: path.slice('drizzle/'.length),
+    sha256: checksum(
+      gitOutput(['show', `${revision}:${path}`], checkout, 'buffer'),
+    ),
+  }));
+  return validateSourceManifest({
+    ...runtime,
+    commit: revision,
+    migrations,
+  });
+};
+
 export const prepareSource = async ({
+  baselineConfiguration,
   configuration,
   repositoryUrl,
   root: installationRoot,
 }) => {
-  const selected = validateConfiguration(configuration);
   const root = resolve(installationRoot);
   const generated = join(root, '.lead-desk');
   const marker = join(generated, '.owned');
@@ -167,6 +217,21 @@ export const prepareSource = async ({
   let temporary;
   try {
     await rm(join(generated, 'ready.json'), { force: true });
+    const selected = validateConfiguration(
+      configuration ??
+        JSON.parse(await readFile(join(root, 'lead-desk.json'), 'utf8')),
+    );
+    const baseline = baselineConfiguration
+      ? validateConfiguration(baselineConfiguration)
+      : null;
+    if (baseline) {
+      assert.equal(
+        baseline.repository,
+        selected.repository,
+        'Upgrade cannot change the upstream source repository',
+      );
+    }
+
     const current = join(generated, 'current');
     const currentInfo = await inspect(current);
     assert(
@@ -189,33 +254,20 @@ export const prepareSource = async ({
       ],
       { cwd: checkout },
     );
-    run(
-      'git',
-      [
-        '-c',
-        'http.https://github.com/.extraheader=',
-        'fetch',
-        '--quiet',
-        '--depth=1',
-        'origin',
-        selected.revision,
-      ],
-      { cwd: checkout },
-    );
+    fetchRevision({ checkout, revision: selected.revision });
     run('git', ['checkout', '--quiet', '--detach', 'FETCH_HEAD'], {
       cwd: checkout,
     });
-    const resolved = execFileSync('git', ['rev-parse', 'HEAD'], {
-      cwd: checkout,
-      encoding: 'utf8',
-    }).trim();
+    const resolved = gitOutput(['rev-parse', 'HEAD'], checkout).trim();
     assert.equal(
       resolved,
       selected.revision,
       'Fetched the wrong source commit',
     );
 
-    run('pnpm', ['install', '--frozen-lockfile'], { cwd: checkout });
+    run('pnpm', ['install', '--frozen-lockfile', '--prod=false'], {
+      cwd: checkout,
+    });
     const descriptor = JSON.parse(
       await readFile(join(checkout, 'package.json'), 'utf8'),
     );
@@ -238,9 +290,29 @@ export const prepareSource = async ({
       revision: selected.revision,
     });
     await assertRuntimeConfig(root, manifest);
+    if (baseline && baseline.revision !== selected.revision) {
+      fetchRevision({ checkout, revision: baseline.revision });
+      const baselineManifest = manifestAtRevision({
+        checkout,
+        revision: baseline.revision,
+        runtime: {
+          compatibilityDate: manifest.compatibilityDate,
+          compatibilityFlags: manifest.compatibilityFlags,
+          format: sourceBuildFormat,
+          schemaVersion: 1,
+        },
+      });
+      assertMigrationHistory(baselineManifest, manifest);
+    }
+
     if (currentInfo) {
-      const previousManifest = validateSourceManifest(
+      const previousManifest = validateInstallationReceipt(
         JSON.parse(await readFile(join(current, 'installation.json'), 'utf8')),
+      );
+      assert.equal(
+        previousManifest.repository,
+        selected.repository,
+        'Prepared source repository differs from the configured repository',
       );
       assertMigrationHistory(previousManifest, manifest);
     }
@@ -279,8 +351,5 @@ export const prepareSource = async ({
 };
 
 if (process.argv[1] && import.meta.filename === resolve(process.argv[1])) {
-  const configuration = JSON.parse(
-    await readFile(join(process.cwd(), 'lead-desk.json'), 'utf8'),
-  );
-  await prepareSource({ configuration, root: process.cwd() });
+  await prepareSource({ root: process.cwd() });
 }

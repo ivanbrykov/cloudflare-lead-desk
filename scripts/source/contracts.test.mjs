@@ -1,7 +1,12 @@
+import { prepareSource } from '../../templates/cloudflare/scripts/build.mjs';
 import { commitUpgrade } from '../../templates/cloudflare/scripts/commitUpgrade.mjs';
-import { assertRuntimeConfig } from '../../templates/cloudflare/scripts/installed.mjs';
+import {
+  assertRuntimeConfig,
+  checkInstallation,
+} from '../../templates/cloudflare/scripts/installed.mjs';
 import {
   assertMigrationHistory,
+  checksum,
   validateConfiguration,
   validateSourceManifest,
 } from '../../templates/cloudflare/scripts/source.mjs';
@@ -9,7 +14,7 @@ import { upgradePin } from '../../templates/cloudflare/scripts/upgrade.mjs';
 import { assertAppendOnlyMigrations } from './checkMigrations.mjs';
 import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
@@ -28,6 +33,46 @@ const manifest = (overrides = {}) => ({
   schemaVersion: 1,
   ...overrides,
 });
+
+const installationFixture = async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), 'lead-desk-installation-'));
+  context.after(async () => rm(directory, { force: true, recursive: true }));
+  const generated = join(directory, '.lead-desk');
+  const current = join(generated, 'current');
+  await mkdir(current, { recursive: true });
+  await writeFile(
+    join(directory, 'wrangler.jsonc'),
+    JSON.stringify({
+      assets: { binding: 'ASSETS', directory: '.lead-desk/current/assets' },
+      compatibility_date: '2026-08-23',
+      compatibility_flags: ['nodejs_compat'],
+      d1_databases: [
+        { binding: 'DB', migrations_dir: '.lead-desk/current/migrations' },
+      ],
+    }),
+  );
+  const configuration = {
+    repository: 'ivanbrykov/cloudflare-lead-desk',
+    revision: commit,
+  };
+  await writeFile(
+    join(directory, 'lead-desk.json'),
+    `${JSON.stringify(configuration)}\n`,
+  );
+  await writeFile(
+    join(generated, '.owned'),
+    'Lead Desk generated source installation v1\n',
+  );
+  await writeFile(join(current, 'worker.mjs'), 'export default {};\n');
+  const receipt = { ...manifest(), repository: configuration.repository };
+  const receiptBytes = `${JSON.stringify(receipt)}\n`;
+  await writeFile(join(current, 'installation.json'), receiptBytes);
+  await writeFile(
+    join(generated, 'ready.json'),
+    `${JSON.stringify({ receiptSha256: checksum(receiptBytes) })}\n`,
+  );
+  return { configuration, directory, generated, receipt };
+};
 
 test('source configuration requires an exact immutable revision', () => {
   assert.deepEqual(
@@ -126,6 +171,96 @@ test('runtime validation refuses incompatible source requirements', async (conte
     assertRuntimeConfig(directory, manifest()),
     /compatibility_flags/u,
   );
+});
+
+test('deploy preflight binds prepared output to the tracked source pin', async (context) => {
+  await context.test('exact receipt passes', async (subcontext) => {
+    const fixture = await installationFixture(subcontext);
+    assert.equal((await checkInstallation(fixture.directory)).commit, commit);
+  });
+
+  await context.test('changed pin rejects old output', async (subcontext) => {
+    const fixture = await installationFixture(subcontext);
+    await writeFile(
+      join(fixture.directory, 'lead-desk.json'),
+      `${JSON.stringify({
+        ...fixture.configuration,
+        revision: nextCommit,
+      })}\n`,
+    );
+    await assert.rejects(
+      checkInstallation(fixture.directory),
+      /Prepared source revision does not match/iu,
+    );
+  });
+
+  await context.test(
+    'stale repository receipt is rejected',
+    async (subcontext) => {
+      const fixture = await installationFixture(subcontext);
+      const staleReceiptBytes = `${JSON.stringify({
+        ...fixture.receipt,
+        repository: 'other/project',
+      })}\n`;
+      await writeFile(
+        join(fixture.generated, 'current/installation.json'),
+        staleReceiptBytes,
+      );
+      await writeFile(
+        join(fixture.generated, 'ready.json'),
+        `${JSON.stringify({
+          receiptSha256: checksum(staleReceiptBytes),
+        })}\n`,
+      );
+      await assert.rejects(
+        checkInstallation(fixture.directory),
+        /Prepared source repository does not match/iu,
+      );
+    },
+  );
+
+  await context.test(
+    'malformed tracked configuration is rejected',
+    async (subcontext) => {
+      const fixture = await installationFixture(subcontext);
+      await writeFile(join(fixture.directory, 'lead-desk.json'), '{');
+      await assert.rejects(checkInstallation(fixture.directory), SyntaxError);
+    },
+  );
+});
+
+test('failed configuration validation invalidates deploy readiness', async (context) => {
+  await context.test(
+    'semantically invalid configuration',
+    async (subcontext) => {
+      const fixture = await installationFixture(subcontext);
+      await assert.rejects(
+        prepareSource({
+          configuration: {
+            repository: fixture.configuration.repository,
+            revision: 'main',
+          },
+          root: fixture.directory,
+        }),
+        /full 40-character source commit/u,
+      );
+      await assert.rejects(readFile(join(fixture.generated, 'ready.json')), {
+        code: 'ENOENT',
+      });
+    },
+  );
+
+  await context.test('malformed tracked JSON', async (subcontext) => {
+    const fixture = await installationFixture(subcontext);
+    await writeFile(join(fixture.directory, 'lead-desk.json'), '{');
+    await assert.rejects(
+      prepareSource({ root: fixture.directory }),
+      SyntaxError,
+    );
+    await assert.rejects(readFile(join(fixture.generated, 'ready.json')), {
+      code: 'ENOENT',
+    });
+  });
 });
 
 test('already-current upgrade does not rewrite the pin', async (context) => {

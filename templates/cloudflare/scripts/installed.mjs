@@ -1,4 +1,8 @@
-import { checksum, validateSourceManifest } from './source.mjs';
+import {
+  checksum,
+  validateConfiguration,
+  validateInstallationReceipt,
+} from './source.mjs';
 import { parse } from 'jsonc-parser';
 import assert from 'node:assert/strict';
 import { lstat, readFile } from 'node:fs/promises';
@@ -66,9 +70,24 @@ export const checkInstallation = async (root) => {
     !(await inspect(join(root, '.lead-desk/.lock'))),
     'An update is incomplete or still running; do not deploy until it finishes.',
   );
+  const configuration = validateConfiguration(
+    JSON.parse(await readFile(join(root, 'lead-desk.json'), 'utf8')),
+  );
   const current = join(root, '.lead-desk/current');
   const receiptBytes = await readFile(join(current, 'installation.json'));
-  const manifest = validateSourceManifest(JSON.parse(receiptBytes.toString()));
+  const manifest = validateInstallationReceipt(
+    JSON.parse(receiptBytes.toString()),
+  );
+  assert.equal(
+    manifest.repository,
+    configuration.repository,
+    'Prepared source repository does not match lead-desk.json. Run pnpm run build successfully before deploying.',
+  );
+  assert.equal(
+    manifest.commit,
+    configuration.revision,
+    'Prepared source revision does not match lead-desk.json. Run pnpm run build successfully before deploying.',
+  );
   const ready = JSON.parse(
     await readFile(join(root, '.lead-desk/ready.json'), 'utf8'),
   );

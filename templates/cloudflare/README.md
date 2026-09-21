@@ -16,7 +16,8 @@ both secrets across upgrades. Configure Workers Builds with:
 - **pnpm:** 10.34.5 (also pinned in `package.json`)
 
 The build fetches only the full source SHA recorded in `lead-desk.json`, installs
-that checkout with its frozen `pnpm-lock.yaml`, and runs its source-build command.
+that checkout with its frozen `pnpm-lock.yaml` (including build-time development
+dependencies even when `NODE_ENV=production`), and runs its source-build command.
 The compiled Worker, browser assets, migrations, runtime requirements, and source
 receipt are prepared under ignored `.lead-desk/current/`. The deploy command
 checks that receipt, applies pending migrations through your existing `DB`
@@ -34,9 +35,11 @@ that commit only. No GitHub Release or release asset is downloaded.
 2. Confirm the run on your repository's default branch.
 
 The workflow resolves upstream `main` once to a full commit SHA, compiles and
-validates that candidate, then changes only `revision` in `lead-desk.json`. If the
-pin is already current, it creates no commit. Otherwise it makes one normal
-`github-actions[bot]` commit and pushes without force. A concurrent update or
+validates that candidate, and compares its migration history with SQL fetched from
+the previously pinned commit even in a clean runner. It then changes only
+`revision` in `lead-desk.json`. If the pin is already current, it creates no
+commit. Otherwise it makes one normal `github-actions[bot]` commit and pushes
+without force. A concurrent update or
 branch-protection rule that rejects direct pushes makes the workflow fail rather
 than bypassing the rule.
 
@@ -73,8 +76,9 @@ pnpm run deploy
 ```
 
 Cloudflare installs this repository's small tooling dependency set before its
-build command. `pnpm run deploy` deliberately does not fetch source again: it
-deploys exactly the successful prepared build.
+build command. `pnpm run deploy` deliberately does not fetch source again: its
+preflight requires the prepared repository and commit to match `lead-desk.json`,
+then deploys exactly that successful prepared build.
 
 To work against local D1 and HTTPS workerd:
 

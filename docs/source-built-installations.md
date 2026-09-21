@@ -14,7 +14,8 @@ of installer scripts; it does not import the parent workspace.
 2. Initializes an isolated temporary Git checkout, fetches exactly the recorded
    commit, checks it out detached, and verifies `HEAD` equals the pin.
 3. Installs the fetched source's dependencies from its `pnpm-lock.yaml` with
-   `pnpm install --frozen-lockfile`.
+   `pnpm install --frozen-lockfile --prod=false`, so compilation tools remain
+   available even when the build environment sets `NODE_ENV=production`.
 4. Runs the upstream-owned `source:build` command. The template does not duplicate
    Vite, esbuild, Worker-entry, or dependency knowledge.
 5. Verifies the Worker, UI, runtime requirements, migration names and hashes, and
@@ -35,11 +36,13 @@ the stable source-build command.
 
 The copied repository includes `.github/workflows/upgrade.yml`. Its manual
 `workflow_dispatch` job checks out the repository's actual default branch, resolves
-upstream `main` once, builds and validates that exact candidate, changes only
-`lead-desk.json`, and pushes one ordinary commit. It grants only `contents: write`,
-uses no Cloudflare token, never force-pushes, and refuses to run in the upstream
-source repository. A concurrent branch advance or branch protection rejection is
-reported as a failed push. An already-current run produces no commit.
+upstream `main` once, builds and validates that exact candidate, fetches the old
+recorded revision and compares its immutable SQL history with the candidate even
+when generated output is absent, changes only `lead-desk.json`, and pushes one
+ordinary commit. It grants only `contents: write`, uses no Cloudflare token, never
+force-pushes, and refuses to run in the upstream source repository. A concurrent
+branch advance or branch protection rejection is reported as a failed push. An
+already-current run produces no commit.
 
 The installation README's Upgrade button uses
 `../../actions/workflows/upgrade.yml`. GitHub documents that relative links in a

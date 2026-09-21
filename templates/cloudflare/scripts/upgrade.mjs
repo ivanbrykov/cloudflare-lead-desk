@@ -51,6 +51,7 @@ export const upgradePin = async ({
   }
 
   const receipt = await prepareSource({
+    baselineConfiguration: configuration,
     configuration: { ...configuration, revision },
     repositoryUrl,
     root,

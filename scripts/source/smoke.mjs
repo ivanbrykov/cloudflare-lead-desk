@@ -1,5 +1,8 @@
 import { prepareSource } from '../../templates/cloudflare/scripts/build.mjs';
-import { checkInstallation } from '../../templates/cloudflare/scripts/installed.mjs';
+import {
+  checkInstallation,
+  inspect,
+} from '../../templates/cloudflare/scripts/installed.mjs';
 import { checksum } from '../../templates/cloudflare/scripts/source.mjs';
 import { upgradePin } from '../../templates/cloudflare/scripts/upgrade.mjs';
 import assert from 'node:assert/strict';
@@ -33,6 +36,7 @@ await cp(join(source, 'templates/cloudflare'), consumer, {
 const environment = {
   ...process.env,
   CI: '1',
+  NODE_ENV: 'development',
   WRANGLER_LOG_PATH: join(output, 'logs', 'wrangler'),
   WRANGLER_SEND_METRICS: 'false',
   XDG_CONFIG_HOME: join(output, 'config'),
@@ -57,6 +61,7 @@ const evidence = {
   node: process.version,
   revisions: [],
   sourceCommit: '',
+  sourceInstallNodeEnv: 'production',
 };
 let commandNumber = 0;
 const command = async (
@@ -137,17 +142,18 @@ const protectedPaths = [
   'package.json',
   'pnpm-lock.yaml',
 ];
-const fingerprints = async () =>
+const fingerprintsAt = async (root, paths = protectedPaths) =>
   Object.fromEntries(
     await Promise.all(
-      protectedPaths.map(async (path) => [
+      paths.map(async (path) => [
         path,
         createHash('sha256')
-          .update(await readFile(join(consumer, path)))
+          .update(await readFile(join(root, path)))
           .digest('hex'),
       ]),
     ),
   );
+const fingerprints = async () => fingerprintsAt(consumer);
 const configPath = join(consumer, 'wrangler.jsonc');
 const configuration = JSON.parse(await readFile(configPath, 'utf8'));
 await writeFile(
@@ -163,6 +169,7 @@ const originalFingerprints = await fingerprints();
 let server;
 let serverLog;
 let browser;
+const originalNodeEnvironment = process.env.NODE_ENV;
 const api = async (
   context,
   path,
@@ -366,6 +373,8 @@ try {
   const repositoryUrl = `file://${upstream}`;
 
   await command('pnpm', ['install', '--frozen-lockfile']);
+  environment.NODE_ENV = 'production';
+  process.env.NODE_ENV = 'production';
   await command('pnpm', ['run', 'build']);
   const bootstrapReceipt = await checkInstallation(consumer);
   assert.equal(
@@ -589,16 +598,56 @@ try {
   const rewrittenRevision = (
     await command('git', ['rev-parse', 'HEAD'], upstream)
   ).trim();
+  const cleanConsumer = join(output, 'clean-upgrade-consumer');
+  await cp(join(source, 'templates/cloudflare'), cleanConsumer, {
+    filter: (path) => !path.includes('node_modules'),
+    recursive: true,
+  });
+  await writeFile(
+    join(cleanConsumer, 'lead-desk.json'),
+    `${JSON.stringify(pinnedSecond, undefined, 2)}\n`,
+  );
+  await writeFile(
+    join(cleanConsumer, '.dev.vars'),
+    'BETTER_AUTH_SECRET=preserve-me\nSETUP_TOKEN=preserve-me-too\n',
+  );
+  await command('pnpm', ['install', '--frozen-lockfile'], cleanConsumer);
+  const cleanProtectedPaths = [
+    ...protectedPaths,
+    'README.md',
+    'lead-desk.json',
+  ];
+  const cleanFingerprints = await fingerprintsAt(
+    cleanConsumer,
+    cleanProtectedPaths,
+  );
+  assert.equal(
+    await inspect(join(cleanConsumer, '.lead-desk/current')),
+    null,
+    'Clean upgrade fixture unexpectedly has generated output',
+  );
   await assert.rejects(
-    prepareSource({
-      configuration: { ...pinnedSecond, revision: rewrittenRevision },
+    upgradePin({
       repositoryUrl,
-      root: consumer,
+      root: cleanConsumer,
+      targetRevision: rewrittenRevision,
     }),
     /Migration removed or rewritten/u,
   );
+  assert.deepEqual(
+    await fingerprintsAt(cleanConsumer, cleanProtectedPaths),
+    cleanFingerprints,
+  );
+  assert.equal(await inspect(join(cleanConsumer, '.lead-desk/current')), null);
+  assert.equal(
+    JSON.parse(await readFile(join(cleanConsumer, 'lead-desk.json'), 'utf8'))
+      .revision,
+    secondRevision,
+  );
   assert.equal(checksum(await readFile(installedWorker)), previousWorkerHash);
-  pass('rewritten historical SQL is rejected before replacing current output');
+  pass(
+    'clean-consumer upgrade rejects rewritten pinned history before changing the pin or user files',
+  );
 
   const descriptorPath = join(upstream, 'package.json');
   const descriptor = JSON.parse(await readFile(descriptorPath, 'utf8'));
@@ -654,6 +703,12 @@ try {
   evidence.error = error.message;
   throw error;
 } finally {
+  if (originalNodeEnvironment === undefined) {
+    delete process.env.NODE_ENV;
+  } else {
+    process.env.NODE_ENV = originalNodeEnvironment;
+  }
+
   await stop();
   if (browser) {
     await browser.close();
