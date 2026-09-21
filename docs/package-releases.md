@@ -112,3 +112,22 @@ pnpm run release:build /tmp/lead-desk-release-output 0.1.0-local.1
 Use a new output directory. The distribution test prints its evidence path and
 leaves results, logs, the isolated consumer, package artifacts and screenshots.
 It uses random local-only credentials and never deploys remote resources.
+
+## Live release API diagnostic
+
+The manual CI input `release_api_smoke=true` runs normal verification and then
+uses the workflow's own `GITHUB_TOKEN` to create a disposable draft, upload and
+check both package assets, verify non-overwriting resume, and remove that draft.
+It never publishes the draft or advances latest. Selecting this input also
+suppresses the normal publishing job, including on main.
+
+```sh
+gh workflow run ci.yml --ref <review-branch> -f release_api_smoke=true
+```
+
+This explicitly exercises GitHub API behavior that mocked tests cannot prove.
+The creation request's JSON response supplies the numeric release ID; no immediate
+listing/tag rediscovery is required. Subsequent state checks and asset operations
+address that ID. An interrupted diagnostic may leave a draft named
+`release-api-smoke-<run-id>-<attempt>`; inspect it before cleanup. The diagnostic
+only removes the draft it created and only while its ID/tag still identify a draft.

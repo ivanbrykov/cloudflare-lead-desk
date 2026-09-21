@@ -4,6 +4,11 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+    inputs:
+      release_api_smoke:
+        description: Test draft creation and asset uploads with the CI token, without publishing
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -76,6 +81,7 @@ jobs:
     if: >-
       github.repository == 'ivanbrykov/cloudflare-lead-desk' &&
       github.ref == 'refs/heads/main' &&
+      !inputs.release_api_smoke &&
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -100,3 +106,34 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: node scripts/release/publish.mjs .release
+
+  release-api-smoke:
+    name: Test disposable draft and release assets
+    needs: verify
+    if: >-
+      github.repository == 'ivanbrykov/cloudflare-lead-desk' &&
+      github.event_name == 'workflow_dispatch' && inputs.release_api_smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    concurrency:
+      group: lead-desk-release-api-smoke
+      cancel-in-progress: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+      - name: Download verified package
+        uses: actions/download-artifact@v4
+        with:
+          name: lead-desk-release
+          path: .release
+      - name: Create, upload, verify, and remove disposable draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LEAD_DESK_RELEASE_API_SMOKE: 'true'
+        run: node scripts/release/live.mjs .release
