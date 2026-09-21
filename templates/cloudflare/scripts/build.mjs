@@ -66,7 +66,6 @@ const legacyBootstrapBuild = async ({ candidate, checkout, temporary }) => {
     [
       'run',
       'release:build',
-      '--',
       releaseDirectory,
       `0.1.0-bootstrap.${bootstrapRevision.slice(0, 12)}`,
     ],
@@ -222,7 +221,7 @@ export const prepareSource = async ({
     );
     const candidate = join(temporary, 'candidate');
     if (typeof descriptor.scripts?.['source:build'] === 'string') {
-      run('pnpm', ['run', 'source:build', '--', candidate], {
+      run('pnpm', ['run', 'source:build', candidate], {
         cwd: checkout,
       });
     } else {
