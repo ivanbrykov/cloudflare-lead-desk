@@ -11,4 +11,5 @@ This is an installation repository, not the upstream CRM source.
   migrations to the existing DB; it must not provision a replacement database.
 - Use the pinned Node/pnpm tooling and review upstream migration/release notes.
 - The updater may commit only `lead-desk.json`, without force-pushing or adding a
-  Cloudflare credential. A source pin is not a database rollback.
+  Cloudflare credential. Candidate code must stay on a read-only runner isolated
+  from the fresh trusted write job. A source pin is not a database rollback.

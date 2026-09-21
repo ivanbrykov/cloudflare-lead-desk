@@ -27,7 +27,8 @@ export const resolveUpstreamMain = ({ repository, repositoryUrl, root }) => {
   return match[1];
 };
 
-export const upgradePin = async ({
+export const validateUpgradeCandidate = async ({
+  expectedConfiguration,
   repositoryUrl,
   root: installationRoot,
   targetRevision,
@@ -37,6 +38,14 @@ export const upgradePin = async ({
   const configuration = validateConfiguration(
     JSON.parse(await readFile(configurationPath, 'utf8')),
   );
+  if (expectedConfiguration) {
+    assert.deepEqual(
+      configuration,
+      validateConfiguration(expectedConfiguration),
+      'Tracked source configuration changed after resolution',
+    );
+  }
+
   const revision =
     targetRevision ??
     resolveUpstreamMain({
@@ -47,7 +56,12 @@ export const upgradePin = async ({
   assert.match(revision, /^[a-f0-9]{40}$/u, 'Invalid candidate revision');
   if (revision === configuration.revision) {
     log(`Lead Desk is already current at ${revision}`);
-    return { changed: false, newRevision: revision, oldRevision: revision };
+    return {
+      changed: false,
+      configuration,
+      newRevision: revision,
+      oldRevision: revision,
+    };
   }
 
   const receipt = await prepareSource({
@@ -61,15 +75,38 @@ export const upgradePin = async ({
     revision,
     'Validated source does not match the candidate revision',
   );
-  await writeFile(
-    configurationPath,
-    `${JSON.stringify({ ...configuration, revision }, undefined, 2)}\n`,
-  );
-  log(`Validated Lead Desk ${revision}; source pin is ready to commit`);
+  log(`Validated Lead Desk candidate ${revision}`);
   return {
     changed: true,
+    configuration,
     newRevision: revision,
     oldRevision: configuration.revision,
+  };
+};
+
+export const upgradePin = async (options) => {
+  const result = await validateUpgradeCandidate(options);
+  if (!result.changed) {
+    return {
+      changed: false,
+      newRevision: result.newRevision,
+      oldRevision: result.oldRevision,
+    };
+  }
+
+  await writeFile(
+    join(resolve(options.root), 'lead-desk.json'),
+    `${JSON.stringify(
+      { ...result.configuration, revision: result.newRevision },
+      undefined,
+      2,
+    )}\n`,
+  );
+  log(`Source pin is ready to commit at ${result.newRevision}`);
+  return {
+    changed: true,
+    newRevision: result.newRevision,
+    oldRevision: result.oldRevision,
   };
 };
 
@@ -80,31 +117,43 @@ if (process.argv[1] && import.meta.filename === resolve(process.argv[1])) {
     'Run upgrades through the installation repository workflow',
   );
   const root = process.cwd();
-  const defaultBranch = process.env.LEAD_DESK_DEFAULT_BRANCH;
-  assert(defaultBranch, 'Missing installation default branch');
+  const baseSha = process.env.LEAD_DESK_BASE_SHA;
+  const expectedConfiguration = {
+    repository: process.env.LEAD_DESK_OLD_REPOSITORY,
+    revision: process.env.LEAD_DESK_OLD_REVISION,
+  };
+  const targetRevision = process.env.LEAD_DESK_TARGET_REVISION;
+  assert.match(baseSha ?? '', /^[a-f0-9]{40}$/u, 'Invalid base commit');
   assert.equal(
-    gitOutput(['branch', '--show-current'], root).trim(),
-    defaultBranch,
-    'Upgrade checkout is not on the installation default branch',
+    gitOutput(['rev-parse', 'HEAD'], root).trim(),
+    baseSha,
+    'Validation checkout does not match the resolved base commit',
   );
   assert.equal(
     gitOutput(['status', '--porcelain', '--untracked-files=no'], root),
     '',
     'Installation has tracked changes before upgrade',
   );
-  const configuration = validateConfiguration(
-    JSON.parse(await readFile(join(root, 'lead-desk.json'), 'utf8')),
-  );
+  const configuration = validateConfiguration(expectedConfiguration);
   assert(
     process.env.GITHUB_REPOSITORY &&
       process.env.GITHUB_REPOSITORY !== configuration.repository,
     'Refusing to run the installation updater in the upstream source repository',
   );
-  const result = await upgradePin({ root });
+  assert.match(
+    targetRevision ?? '',
+    /^[a-f0-9]{40}$/u,
+    'Invalid target revision',
+  );
+  const result = await validateUpgradeCandidate({
+    expectedConfiguration: configuration,
+    root,
+    targetRevision,
+  });
   if (process.env.GITHUB_STEP_SUMMARY) {
     await appendFile(
       process.env.GITHUB_STEP_SUMMARY,
-      `## Lead Desk upgrade\n\n- Previous source: \`${result.oldRevision}\`\n- Candidate source: \`${result.newRevision}\`\n- Pin changed: ${result.changed ? 'yes' : 'no'}\n`,
+      `- Candidate validation: ${result.changed ? 'passed' : 'not required'}\n`,
     );
   }
 }

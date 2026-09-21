@@ -43,6 +43,14 @@ without force. A concurrent update or
 branch-protection rule that rejects direct pushes makes the workflow fail rather
 than bypassing the rule.
 
+Resolution, candidate validation, and the pin commit run as three isolated hosted
+jobs. Candidate install/build code receives read-only repository permissions and a
+checkout with credentials removed. The fresh write job consumes only immutable
+resolver outputs, executes no repository script, reconstructs only
+`lead-desk.json`, rechecks the default-branch SHA and old pin, and exposes the
+write token only to that trusted inline step. Workflow actions are pinned to full
+commit SHAs; no artifacts or caches cross the validation/write boundary.
+
 The button uses a repository-relative GitHub link, so it targets this copied
 repository rather than the upstream Lead Desk repository.
 

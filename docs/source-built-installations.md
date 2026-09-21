@@ -35,14 +35,25 @@ the stable source-build command.
 ## Explicit Upgrade workflow
 
 The copied repository includes `.github/workflows/upgrade.yml`. Its manual
-`workflow_dispatch` job checks out the repository's actual default branch, resolves
-upstream `main` once, builds and validates that exact candidate, fetches the old
-recorded revision and compares its immutable SQL history with the candidate even
-when generated output is absent, changes only `lead-desk.json`, and pushes one
-ordinary commit. It grants only `contents: write`, uses no Cloudflare token, never
-force-pushes, and refuses to run in the upstream source repository. A concurrent
-branch advance or branch protection rejection is reported as a failed push. An
-already-current run produces no commit.
+`workflow_dispatch` flow uses three fresh hosted runners:
+
+1. A read-only resolver checks out the actual default branch without persisted
+   credentials and records its SHA, old source configuration, and upstream-main
+   target before candidate code runs.
+2. A separate read-only validator compiles that exact candidate, fetches the old
+   recorded revision, and compares immutable SQL history even when generated output
+   is absent. It emits no artifact or output used by the writer.
+3. A fresh writer receives `contents: write` only after validation. It checks the
+   default branch still equals the resolved base, parses the old configuration from
+   that commit, reconstructs only `lead-desk.json` using Git plumbing, verifies the
+   one-path diff, rechecks the remote SHA, and performs a normal non-force push. It
+   executes no checked-out repository helper or candidate output.
+
+All referenced GitHub actions are pinned to full commit SHAs. Candidate code never
+shares a runner with repository write authority, and no artifact/cache crosses that
+boundary. The workflow uses no Cloudflare token, refuses to run in the upstream
+source repository, and reports concurrent branch advances or branch-protection
+rejections instead of bypassing them. An already-current run produces no commit.
 
 The installation README's Upgrade button uses
 `../../actions/workflows/upgrade.yml`. GitHub documents that relative links in a

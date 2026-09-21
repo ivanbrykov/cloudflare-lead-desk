@@ -1,5 +1,4 @@
 import { prepareSource } from '../../templates/cloudflare/scripts/build.mjs';
-import { commitUpgrade } from '../../templates/cloudflare/scripts/commitUpgrade.mjs';
 import {
   assertRuntimeConfig,
   checkInstallation,
@@ -14,15 +13,28 @@ import { upgradePin } from '../../templates/cloudflare/scripts/upgrade.mjs';
 import { assertAppendOnlyMigrations } from './checkMigrations.mjs';
 import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import process from 'node:process';
 import test from 'node:test';
 
 const commit = 'a'.repeat(40);
 const nextCommit = 'b'.repeat(40);
 const migrationDigest = 'c'.repeat(64);
 const root = resolve(import.meta.dirname, '../..');
+const workflowPath = join(
+  root,
+  'templates/cloudflare/.github/workflows/upgrade.yml',
+);
 
 const manifest = (overrides = {}) => ({
   commit,
@@ -72,6 +84,137 @@ const installationFixture = async (context) => {
     `${JSON.stringify({ receiptSha256: checksum(receiptBytes) })}\n`,
   );
   return { configuration, directory, generated, receipt };
+};
+
+const extractTrustedWriteScript = (workflow) => {
+  const commitJob = workflow.indexOf('\n  commit:\n');
+  assert.notEqual(commitJob, -1, 'Workflow has no commit job');
+  const marker = '        run: |\n';
+  const start = workflow.indexOf(marker, commitJob);
+  assert.notEqual(start, -1, 'Commit job has no inline write step');
+  return workflow
+    .slice(start + marker.length)
+    .split('\n')
+    .map((line) => {
+      assert(
+        line === '' || line.startsWith('          '),
+        'Unexpected content after trusted write block',
+      );
+      return line.slice(10);
+    })
+    .join('\n');
+};
+
+const runTrustedWrite = async (
+  context,
+  script,
+  { changedPaths = 'lead-desk.json', remoteSha = commit } = {},
+) => {
+  const directory = await mkdtemp(join(tmpdir(), 'lead-desk-write-job-'));
+  context.after(async () => rm(directory, { force: true, recursive: true }));
+  const binaryDirectory = join(directory, 'bin');
+  await mkdir(binaryDirectory);
+  const fakeGit = join(binaryDirectory, 'git');
+  await writeFile(
+    fakeGit,
+    `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> "$MOCK_GIT_TRACE"
+case "$1" in
+  check-ref-format|init|remote|fetch|read-tree|update-index)
+    exit 0
+    ;;
+  rev-parse)
+    if [[ "$2" == refs/remotes/origin/* ]]; then
+      printf '%s\\n' "$BASE_SHA"
+    else
+      printf '%040d\\n' 1
+    fi
+    ;;
+  show)
+    cat "$MOCK_ORIGINAL_CONFIG"
+    ;;
+  ls-tree)
+    printf '100644 blob %040d\\tlead-desk.json\\n' 2
+    ;;
+  hash-object)
+    printf '%040d\\n' 3
+    ;;
+  write-tree)
+    printf '%040d\\n' 4
+    ;;
+  commit-tree)
+    cat >/dev/null
+    printf '%040d\\n' 5
+    ;;
+  diff-tree)
+    printf '%b\\n' "$MOCK_CHANGED_PATHS"
+    ;;
+  ls-remote)
+    printf '%s\\trefs/heads/%s\\n' "$MOCK_REMOTE_SHA" "$DEFAULT_BRANCH"
+    ;;
+  push)
+    : > "$MOCK_PUSH_MARKER"
+    ;;
+  *)
+    printf 'unexpected git command: %s\\n' "$*" >&2
+    exit 97
+    ;;
+esac
+`,
+  );
+  await chmod(fakeGit, 0o755);
+  const originalConfig = join(directory, 'original.json');
+  await writeFile(
+    originalConfig,
+    `${JSON.stringify({
+      repository: 'upstream/source',
+      revision: nextCommit,
+    })}\n`,
+  );
+  const scriptPath = join(directory, 'trusted-write.sh');
+  const summaryPath = join(directory, 'summary.md');
+  const tracePath = join(directory, 'git.log');
+  const pushMarker = join(directory, 'pushed');
+  await writeFile(scriptPath, script);
+  const environment = {
+    ...process.env,
+    BASE_SHA: commit,
+    DEFAULT_BRANCH: 'trunk',
+    GITHUB_STEP_SUMMARY: summaryPath,
+    INSTALLATION_REPOSITORY: 'customer/installation',
+    MOCK_CHANGED_PATHS: changedPaths,
+    MOCK_GIT_TRACE: tracePath,
+    MOCK_ORIGINAL_CONFIG: originalConfig,
+    MOCK_PUSH_MARKER: pushMarker,
+    MOCK_REMOTE_SHA: remoteSha,
+    OLD_REPOSITORY: 'upstream/source',
+    OLD_REVISION: nextCommit,
+    PATH: `${binaryDirectory}:${process.env.PATH}`,
+    REPOSITORY_WRITE_TOKEN: 'fake-write-credential',
+    RUNNER_TEMP: directory,
+    TARGET_REVISION: 'c'.repeat(40),
+  };
+  let error;
+  try {
+    execFileSync('bash', [scriptPath], {
+      cwd: directory,
+      env: environment,
+      stdio: 'pipe',
+      timeout: 10_000,
+    });
+  } catch (error_) {
+    error = error_;
+  }
+
+  return {
+    error,
+    pushed: await readFile(pushMarker, 'utf8').then(
+      () => true,
+      () => false,
+    ),
+    trace: await readFile(tracePath, 'utf8'),
+  };
 };
 
 test('source configuration requires an exact immutable revision', () => {
@@ -279,66 +422,8 @@ test('already-current upgrade does not rewrite the pin', async (context) => {
   assert.deepEqual(JSON.parse(await readFile(path, 'utf8')), configuration);
 });
 
-test('upgrade commit stages only the pin and pushes without force', () => {
-  const calls = [];
-  const run = (args) => {
-    calls.push(args);
-    if (args[0] === 'diff' && args.includes('--cached')) {
-      return 'lead-desk.json\n';
-    }
-
-    if (args[0] === 'diff') {
-      return 'lead-desk.json\n';
-    }
-
-    return '';
-  };
-
-  assert.equal(
-    commitUpgrade({ defaultBranch: 'trunk', root: '/tmp', run }),
-    true,
-  );
-  assert.deepEqual(calls.at(-1), ['push', 'origin', 'HEAD:refs/heads/trunk']);
-  assert.equal(calls.flat().includes('--force'), false);
-});
-
-test('upgrade commit rejects unrelated files and surfaces push rejection', () => {
-  assert.throws(
-    () =>
-      commitUpgrade({
-        defaultBranch: 'main',
-        root: '/tmp',
-        run: (args) =>
-          args[0] === 'diff' ? 'lead-desk.json\nwrangler.jsonc\n' : '',
-      }),
-    /other than lead-desk\.json/u,
-  );
-  assert.throws(
-    () =>
-      commitUpgrade({
-        defaultBranch: 'main',
-        root: '/tmp',
-        run: (args) => {
-          if (args[0] === 'diff') {
-            return 'lead-desk.json\n';
-          }
-
-          if (args[0] === 'push') {
-            throw new Error('non-fast-forward');
-          }
-
-          return '';
-        },
-      }),
-    /non-fast-forward/u,
-  );
-});
-
 test('template workflow is reproducible and README link is repository-relative', async () => {
-  const workflow = await readFile(
-    join(root, 'templates/cloudflare/.github/workflows/upgrade.yml'),
-    'utf8',
-  );
+  const workflow = await readFile(workflowPath, 'utf8');
   const fallback = await readFile(
     join(root, 'templates/cloudflare/upgrade-workflow.yml'),
     'utf8',
@@ -348,7 +433,25 @@ test('template workflow is reproducible and README link is repository-relative',
     'utf8',
   );
   assert.equal(workflow, fallback);
-  assert.match(workflow, /permissions:\n {2}contents: write/u);
+  assert.match(workflow, /permissions:\n {2}contents: read/u);
+  assert.equal(workflow.match(/contents: write/gu)?.length, 1);
+  assert.equal(workflow.match(/persist-credentials: false/gu)?.length, 2);
+  assert.equal(workflow.match(/actions\/checkout@[a-f0-9]{40}/gu)?.length, 2);
+  assert.equal(workflow.match(/actions\/setup-node@[a-f0-9]{40}/gu)?.length, 2);
+  assert.equal(workflow.match(/pnpm\/action-setup@[a-f0-9]{40}/gu)?.length, 1);
+  assert.doesNotMatch(workflow, /uses: [^\n]+@v\d/u);
+  assert.match(
+    workflow,
+    /actions\/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4/u,
+  );
+  assert.match(
+    workflow,
+    /actions\/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4/u,
+  );
+  assert.match(
+    workflow,
+    /pnpm\/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4/u,
+  );
   assert.match(workflow, /github\.event\.repository\.default_branch/u);
   assert.doesNotMatch(workflow, /cloudflare.*token/iu);
   assert.match(readme, /\.\.\/\.\.\/actions\/workflows\/upgrade\.yml/u);
@@ -356,4 +459,59 @@ test('template workflow is reproducible and README link is repository-relative',
     readme,
     /github\.com\/ivanbrykov\/cloudflare-lead-desk\/actions/u,
   );
+});
+
+test('candidate validation is isolated from repository write authority', async () => {
+  const workflow = await readFile(workflowPath, 'utf8');
+  const commitJob = workflow.indexOf('\n  commit:\n');
+  const beforeCommit = workflow.slice(0, commitJob);
+  const writeJob = workflow.slice(commitJob);
+  assert.doesNotMatch(beforeCommit, /contents: write/u);
+  assert.doesNotMatch(beforeCommit, /github\.token/u);
+  assert.doesNotMatch(
+    beforeCommit,
+    /upload-artifact|download-artifact|cache/iu,
+  );
+  assert.doesNotMatch(writeJob, /uses:|node scripts\/|pnpm /u);
+  assert.doesNotMatch(writeJob, /commitUpgrade\.mjs/u);
+  assert.match(writeJob, /REPOSITORY_WRITE_TOKEN: \$\{\{ github\.token \}\}/u);
+  assert.match(writeJob, /changed_paths.*lead-desk\.json/su);
+  assert.match(writeJob, /remote_head.*BASE_SHA/su);
+});
+
+test('trusted write step pushes only one reconstructed pin change', async (context) => {
+  const workflow = await readFile(workflowPath, 'utf8');
+  const script = extractTrustedWriteScript(workflow);
+  assert.doesNotThrow(() =>
+    execFileSync('bash', ['-n'], { input: script, stdio: 'pipe' }),
+  );
+  const result = await runTrustedWrite(context, script);
+  assert.ifError(result.error);
+  assert.equal(result.pushed, true);
+  assert.match(result.trace, /push --porcelain/u);
+  assert.doesNotMatch(result.trace, /--force/u);
+});
+
+test('trusted write step rejects candidate tampering and a changed base', async (context) => {
+  await context.test('unexpected changed path', async (subcontext) => {
+    const workflow = await readFile(workflowPath, 'utf8');
+    const result = await runTrustedWrite(
+      subcontext,
+      extractTrustedWriteScript(workflow),
+      { changedPaths: 'lead-desk.json\nscripts/commitUpgrade.mjs' },
+    );
+    assert(result.error);
+    assert.equal(result.pushed, false);
+  });
+
+  await context.test('default branch advanced', async (subcontext) => {
+    const workflow = await readFile(workflowPath, 'utf8');
+    const result = await runTrustedWrite(
+      subcontext,
+      extractTrustedWriteScript(workflow),
+      { remoteSha: 'd'.repeat(40) },
+    );
+    assert(result.error);
+    assert.equal(result.pushed, false);
+  });
 });
