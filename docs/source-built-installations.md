@@ -36,8 +36,9 @@ build output and never contacts GitHub Releases.
 
 ## Explicit Upgrade workflow
 
-The installation README's Upgrade button leads to the [central Upgrade
-service](../apps/upgrade-service/README.md). The user authorizes the Lead Desk
+After activation, the installation README's Upgrade button leads to the [central
+Upgrade service](../apps/upgrade-service/README.md). Until then, the draft badge
+opens setup guidance rather than starting a run. The user authorizes the Lead Desk
 GitHub App once for their copied repository; each later click authenticates the
 user, checks their write permission and App repository scope, and dispatches
 `.github/workflows/cloudflare-upgrade.yml` in the upstream repository. The
