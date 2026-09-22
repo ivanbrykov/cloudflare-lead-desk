@@ -1,9 +1,12 @@
 # Source-built installation and upgrade contract
 
-`templates/cloudflare/` is an isolated installation project. Deploy to Cloudflare
-can treat that folder as the root of a user's new repository. It owns Wrangler
-configuration, D1 identity, secrets, the exact upstream source pin, and a small set
-of installer scripts; it does not import the parent workspace.
+`templates/cloudflare/` is the reviewed source for the dedicated public
+`ivanbrykov/cloudflare-lead-desk-template` repository. GitHub creates each
+installation from that template's complete default-branch tree, preserving the
+Upgrade workflow that Cloudflare's subdirectory-copy flow omitted. The generated
+repository owns Wrangler configuration, D1 identity, secrets, the exact upstream
+source pin, and a small set of installer scripts; it does not import the parent
+workspace.
 
 ## Pinned build
 
@@ -26,11 +29,11 @@ secrets. Installation files and `.dev.vars` are never copied into source. Failed
 fetches, installs, builds, runtime checks, and migration checks leave D1 and tracked
 configuration untouched and keep deployment blocked until a successful rebuild.
 
-The initial pin, `8c8f7cdede319c7ab1785a2917c8d0f73fa565ac`, is reachable
-on upstream main but predates `source:build`. The installer permits that commit
-alone to run its existing local release builder, then consumes the unpacked local
-build output. It does not contact GitHub Releases. Every later revision must expose
-the stable source-build command.
+The dedicated template's initial pin is merged upstream commit
+`ad31f24d22aff10c1a80447f1c2549f22e62f0e1`, which exposes the stable
+source-build command. For existing installations only, the installer retains a
+narrow adapter for historical pin `8c8f7cd...`; it consumes that commit's local
+build output and never contacts GitHub Releases.
 
 ## Explicit Upgrade workflow
 
@@ -55,16 +58,10 @@ boundary. The workflow uses no Cloudflare token, refuses to run in the upstream
 source repository, and reports concurrent branch advances or branch-protection
 rejections instead of bypassing them. An already-current run produces no commit.
 
-The installation README's Upgrade button uses
+The generated installation README's Upgrade button uses
 `../../actions/workflows/upgrade.yml`. GitHub documents that relative links in a
 rendered README are transformed for the current repository and branch, avoiding a
 hard-coded consumer repository name.
-
-Cloudflare's Deploy Button documentation says a referenced subdirectory is treated
-as the new repository root, but does not explicitly promise that
-`.github/workflows` is copied. The template therefore includes an identical root
-`upgrade-workflow.yml`; if the workflow is absent, the owner uses GitHub's **set up
-a workflow yourself** flow to commit it once as `.github/workflows/upgrade.yml`.
 
 Cloudflare documents that every push to the configured production branch triggers
 a Workers Build. Whether a push made with a workflow's `GITHUB_TOKEN` reaches that
@@ -87,8 +84,8 @@ compatible corrective revision when database rollback is required.
 
 ## Existing full-source snapshot installations
 
-Do not press the deploy button again for an installation whose D1 must survive.
-Migrate its repository in a review branch:
+Do not generate a replacement repository for an installation whose D1 must
+survive. Migrate its existing repository in a review branch:
 
 1. Back up D1 and record the Worker name, `DB` binding/name/ID, build settings,
    runtime variables, and secrets. Keep the existing Cloudflare resources.
@@ -113,13 +110,22 @@ It exercises two controlled commits, an additive migration, persistent applicati
 and authentication state, idempotent rebuild/upgrade, unreachable revisions, and
 rewritten migration rejection.
 
-Before claiming the complete one-click experience, run these live gates on an
+Before claiming the complete installation experience, run these live gates on an
 approved disposable target:
 
-1. Copy the template through the actual Deploy to Cloudflare flow.
-2. Confirm the workflow file and repository-relative README button in the copied
-   repository, or record the one-time fallback step.
+1. Generate a repository through the dedicated GitHub template and confirm
+   `.github/workflows/upgrade.yml` plus the repository-relative README button.
+2. Import that generated repository into Cloudflare, verify D1 provisioning occurs
+   before migrations/deployment, set the two runtime secrets, and redeploy.
 3. Run Upgrade and verify its bot commit triggers Workers Builds while the Worker
    name, D1 name/ID, secrets, and stored records remain unchanged.
 
 Mocks and local Git repositories are not evidence for those platform behaviors.
+
+## Publishing the dedicated template
+
+The upstream folder remains the source of truth. Publish only reviewed main content
+by splitting `templates/cloudflare/` into the dedicated repository's `main` branch,
+then verify its root tree, workflow syntax, template-repository setting, and commit
+SHA. Do not add release archives or a package registry. Changes to the dedicated
+repository should be traceable to an upstream reviewed commit.

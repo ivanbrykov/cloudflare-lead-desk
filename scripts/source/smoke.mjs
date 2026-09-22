@@ -13,7 +13,7 @@ import { createWriteStream } from 'node:fs';
 import { cp, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
-import { join, resolve as resolvePath } from 'node:path';
+import { join, relative, resolve as resolvePath, sep } from 'node:path';
 import process from 'node:process';
 import { clearTimeout, setTimeout } from 'node:timers';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -29,8 +29,16 @@ const output = resolvePath(
 const consumer = join(output, 'consumer');
 await mkdir(output, { recursive: false });
 await mkdir(join(output, 'logs'));
-await cp(join(source, 'templates/cloudflare'), consumer, {
-  filter: (path) => !path.includes('node_modules'),
+const templateSource = join(source, 'templates/cloudflare');
+const copyTemplateFile = (path) => {
+  const [topLevel] = relative(templateSource, path).split(sep);
+  return !['.dev.vars', '.lead-desk', '.wrangler', 'node_modules'].includes(
+    topLevel,
+  );
+};
+
+await cp(templateSource, consumer, {
+  filter: copyTemplateFile,
   recursive: true,
 });
 const environment = {
@@ -54,9 +62,9 @@ const evidence = {
   checks: [],
   consumer,
   limitations: [
-    'Local workerd/D1 and Wrangler dry-run only; no Cloudflare deployment or Deploy Button test.',
-    'The bootstrap fetch uses public GitHub; controlled upgrade revisions use a local standalone Git repository.',
-    'Workflow availability after the Deploy Button and workflow-token push delivery to Cloudflare are not exercised here.',
+    'Local workerd/D1 and Wrangler dry-run only; no Cloudflare deployment or GitHub template-generation test.',
+    'The initial source fetch uses public GitHub; controlled upgrade revisions use a local standalone Git repository.',
+    'The dedicated repository workflow is verified separately; generated-repository workflow and bot-push delivery to Cloudflare are not exercised here.',
   ],
   node: process.version,
   revisions: [],
@@ -376,13 +384,13 @@ try {
   environment.NODE_ENV = 'production';
   process.env.NODE_ENV = 'production';
   await command('pnpm', ['run', 'build']);
-  const bootstrapReceipt = await checkInstallation(consumer);
+  const initialReceipt = await checkInstallation(consumer);
   assert.equal(
-    bootstrapReceipt.commit,
-    '8c8f7cdede319c7ab1785a2917c8d0f73fa565ac',
+    initialReceipt.commit,
+    'ad31f24d22aff10c1a80447f1c2549f22e62f0e1',
   );
   pass(
-    'fresh consumer fetched and compiled the real reachable bootstrap commit',
+    'fresh consumer fetched and compiled the real reachable initial source pin',
   );
 
   const firstUpgrade = await upgradePin({
@@ -599,8 +607,8 @@ try {
     await command('git', ['rev-parse', 'HEAD'], upstream)
   ).trim();
   const cleanConsumer = join(output, 'clean-upgrade-consumer');
-  await cp(join(source, 'templates/cloudflare'), cleanConsumer, {
-    filter: (path) => !path.includes('node_modules'),
+  await cp(templateSource, cleanConsumer, {
+    filter: copyTemplateFile,
     recursive: true,
   });
   await writeFile(

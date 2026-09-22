@@ -1,5 +1,9 @@
 import { prepareSource } from '../../templates/cloudflare/scripts/build.mjs';
 import {
+  deploy as deployInstallation,
+  ensureDatabase,
+} from '../../templates/cloudflare/scripts/deploy.mjs';
+import {
   assertRuntimeConfig,
   checkInstallation,
 } from '../../templates/cloudflare/scripts/installed.mjs';
@@ -30,6 +34,7 @@ import test from 'node:test';
 const commit = 'a'.repeat(40);
 const nextCommit = 'b'.repeat(40);
 const migrationDigest = 'c'.repeat(64);
+const databaseId = '11111111-1111-4111-8111-111111111111';
 const root = resolve(import.meta.dirname, '../..');
 const workflowPath = join(
   root,
@@ -59,7 +64,12 @@ const installationFixture = async (context) => {
       compatibility_date: '2026-08-23',
       compatibility_flags: ['nodejs_compat'],
       d1_databases: [
-        { binding: 'DB', migrations_dir: '.lead-desk/current/migrations' },
+        {
+          binding: 'DB',
+          database_id: databaseId,
+          database_name: 'my-lead-desk',
+          migrations_dir: '.lead-desk/current/migrations',
+        },
       ],
     }),
   );
@@ -84,6 +94,30 @@ const installationFixture = async (context) => {
     `${JSON.stringify({ receiptSha256: checksum(receiptBytes) })}\n`,
   );
   return { configuration, directory, generated, receipt };
+};
+
+const databaseFixture = async (context, database = {}) => {
+  const directory = await mkdtemp(join(tmpdir(), 'lead-desk-database-'));
+  context.after(async () => rm(directory, { force: true, recursive: true }));
+  const path = join(directory, 'wrangler.jsonc');
+  await writeFile(
+    path,
+    `${JSON.stringify(
+      {
+        d1_databases: [
+          {
+            binding: 'DB',
+            database_name: 'my-lead-desk',
+            migrations_dir: '.lead-desk/current/migrations',
+            ...database,
+          },
+        ],
+      },
+      undefined,
+      2,
+    )}\n`,
+  );
+  return { directory, path };
 };
 
 const extractTrustedWriteScript = (workflow) => {
@@ -422,17 +456,12 @@ test('already-current upgrade does not rewrite the pin', async (context) => {
   assert.deepEqual(JSON.parse(await readFile(path, 'utf8')), configuration);
 });
 
-test('template workflow is reproducible and README link is repository-relative', async () => {
+test('dedicated template workflow and README are repository-relative', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
-  const fallback = await readFile(
-    join(root, 'templates/cloudflare/upgrade-workflow.yml'),
-    'utf8',
-  );
   const readme = await readFile(
     join(root, 'templates/cloudflare/README.md'),
     'utf8',
   );
-  assert.equal(workflow, fallback);
   assert.match(workflow, /permissions:\n {2}contents: read/u);
   assert.equal(workflow.match(/contents: write/gu)?.length, 1);
   assert.equal(workflow.match(/persist-credentials: false/gu)?.length, 2);
@@ -462,6 +491,102 @@ test('template workflow is reproducible and README link is repository-relative',
     readme,
     /github\.com\/ivanbrykov\/cloudflare-lead-desk\/actions/u,
   );
+  await assert.rejects(
+    readFile(join(root, 'templates/cloudflare/upgrade-workflow.yml')),
+    { code: 'ENOENT' },
+  );
+});
+
+test('deployment resolves or creates one durable D1 binding', async (context) => {
+  await context.test(
+    'preserves a configured database ID',
+    async (subcontext) => {
+      const fixture = await databaseFixture(subcontext, {
+        database_id: databaseId,
+      });
+      const calls = [];
+      assert.equal(
+        await ensureDatabase({
+          root: fixture.directory,
+          runWrangler: (...args) => calls.push(args),
+        }),
+        databaseId,
+      );
+      assert.deepEqual(calls, []);
+    },
+  );
+
+  await context.test(
+    'resolves an existing database by name',
+    async (subcontext) => {
+      const fixture = await databaseFixture(subcontext);
+      const calls = [];
+      assert.equal(
+        await ensureDatabase({
+          root: fixture.directory,
+          runWrangler: (args) => {
+            calls.push(args);
+            return JSON.stringify([{ name: 'my-lead-desk', uuid: databaseId }]);
+          },
+        }),
+        databaseId,
+      );
+      assert.deepEqual(calls, [['d1', 'list', '--json']]);
+      assert.equal(
+        JSON.parse(await readFile(fixture.path, 'utf8')).d1_databases[0]
+          .database_id,
+        databaseId,
+      );
+    },
+  );
+
+  await context.test(
+    'creates a missing database before migrations',
+    async (subcontext) => {
+      const fixture = await databaseFixture(subcontext);
+      const calls = [];
+      let listed = false;
+      assert.equal(
+        await ensureDatabase({
+          root: fixture.directory,
+          runWrangler: (args) => {
+            calls.push(args);
+            if (args[1] === 'list') {
+              if (listed) {
+                return JSON.stringify([
+                  { name: 'my-lead-desk', uuid: databaseId },
+                ]);
+              }
+
+              listed = true;
+              return '[]';
+            }
+
+            return undefined;
+          },
+        }),
+        databaseId,
+      );
+      assert.deepEqual(calls, [
+        ['d1', 'list', '--json'],
+        ['d1', 'create', 'my-lead-desk', '--binding', 'DB', '--update-config'],
+        ['d1', 'list', '--json'],
+      ]);
+    },
+  );
+});
+
+test('deployment applies migrations before activating the Worker', async (context) => {
+  const fixture = await installationFixture(context);
+  const calls = [];
+  await deployInstallation({
+    root: fixture.directory,
+    runWrangler: (args) => calls.push(args),
+  });
+  assert.deepEqual(calls, [
+    ['d1', 'migrations', 'apply', 'DB', '--remote'],
+    ['deploy'],
+  ]);
 });
 
 test('ephemeral source fetches disable detached Git maintenance', async () => {

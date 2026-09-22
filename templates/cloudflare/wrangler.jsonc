@@ -12,7 +12,6 @@
   "d1_databases": [{
     "binding": "DB",
     "database_name": "my-lead-desk",
-    "database_id": "",
     "migrations_dir": ".lead-desk/current/migrations"
   }],
   "vars": { "ENVIRONMENT": "production" },

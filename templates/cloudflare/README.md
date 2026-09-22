@@ -6,14 +6,24 @@ secrets. Lead Desk application code is compiled from the exact upstream commit i
 
 ## First deployment
 
-The Deploy to Cloudflare flow provisions the Worker and D1 database and prompts
-for `BETTER_AUTH_SECRET` and `SETUP_TOKEN`. Keep the Worker name, database ID, and
-both secrets across upgrades. Configure Workers Builds with:
+This repository was generated from the official Lead Desk GitHub template, so the
+Upgrade workflow is already present. Before importing it, optionally edit the
+Worker `name` and D1 `database_name` in `wrangler.jsonc`; keep those identities and
+both authentication secrets across upgrades.
 
-- **Build command:** `pnpm run build`
-- **Deploy command:** `pnpm run deploy`
-- **Node:** 24.20.0 or later within Node 24
-- **pnpm:** 10.34.5 (also pinned in `package.json`)
+1. In Cloudflare Workers & Pages, choose **Create application → Import a
+   repository** and select this repository.
+2. Configure Workers Builds with:
+
+   - **Build command:** `pnpm run build`
+   - **Deploy command:** `pnpm run deploy`
+   - **Node:** 24.20.0 or later within Node 24
+   - **pnpm:** 10.34.5 (also pinned in `package.json`)
+3. Save and deploy. The trusted deploy helper creates or resolves the named D1
+   database, records its ID in the ephemeral build checkout, applies migrations,
+   and then deploys the Worker.
+4. In the Worker's **Settings → Variables and Secrets**, add
+   `BETTER_AUTH_SECRET` and `SETUP_TOKEN`, then redeploy before using the app.
 
 The build fetches only the full source SHA recorded in `lead-desk.json`, installs
 that checkout with its frozen `pnpm-lock.yaml` (including build-time development
@@ -23,9 +33,8 @@ receipt are prepared under ignored `.lead-desk/current/`. The deploy command
 checks that receipt, applies pending migrations through your existing `DB`
 binding, and deploys to your existing Worker.
 
-The initial pin is a reachable bootstrap commit. It predates the stable
-`source:build` command, so the installer uses a narrowly scoped local adapter for
-that commit only. No GitHub Release or release asset is downloaded.
+The initial pin is a reachable, immutable upstream commit. No GitHub Release or
+release asset is downloaded.
 
 ## Upgrade Lead Desk
 
@@ -54,20 +63,6 @@ commit SHAs; no artifacts or caches cross the validation/write boundary.
 The button uses a repository-relative GitHub link, so it targets this copied
 repository rather than the upstream Lead Desk repository.
 
-### If the Upgrade workflow is missing
-
-Cloudflare documents that a template subdirectory becomes the copied repository
-root, but it does not document whether `.github/workflows` is preserved. If the
-button opens a 404 or the Actions tab has no **Upgrade Lead Desk** workflow:
-
-1. Open **Actions** and choose **set up a workflow yourself**.
-2. Copy the complete contents of [`upgrade-workflow.yml`](upgrade-workflow.yml)
-   into `.github/workflows/upgrade.yml`.
-3. Commit it to the default branch, then use the Upgrade button again.
-
-The fallback file is tested byte-for-byte against the bundled workflow. This is a
-one-time repository setup step and needs no Cloudflare token.
-
 Cloudflare documents that pushes to the configured production branch trigger a
 Workers Build. The specific workflow-token push path still needs a live copied
 repository verification. After the upgrade commit appears, confirm that a
@@ -86,7 +81,8 @@ pnpm run deploy
 Cloudflare installs this repository's small tooling dependency set before its
 build command. `pnpm run deploy` deliberately does not fetch source again: its
 preflight requires the prepared repository and commit to match `lead-desk.json`,
-then deploys exactly that successful prepared build.
+resolves the installation's D1 identity, applies pending migrations, and deploys
+exactly that successful prepared build.
 
 To work against local D1 and HTTPS workerd:
 
