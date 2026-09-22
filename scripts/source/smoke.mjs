@@ -376,13 +376,13 @@ try {
   environment.NODE_ENV = 'production';
   process.env.NODE_ENV = 'production';
   await command('pnpm', ['run', 'build']);
-  const bootstrapReceipt = await checkInstallation(consumer);
+  const initialReceipt = await checkInstallation(consumer);
   assert.equal(
-    bootstrapReceipt.commit,
-    '8c8f7cdede319c7ab1785a2917c8d0f73fa565ac',
+    initialReceipt.commit,
+    'ad31f24d22aff10c1a80447f1c2549f22e62f0e1',
   );
   pass(
-    'fresh consumer fetched and compiled the real reachable bootstrap commit',
+    'fresh consumer fetched and compiled the real reachable initial source pin',
   );
 
   const firstUpgrade = await upgradePin({

@@ -15,25 +15,31 @@ Companies, tasks, email sync, imports, reporting, workflows, custom objects, and
 
 Every deployment is independent: the repo carries no account-specific values.
 
-### One-click install
+### Installation repository
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/ivanbrykov/cloudflare-lead-desk/tree/main/templates/cloudflare)
+[![Use this template](https://img.shields.io/badge/Use_this_template-GitHub-2ea44f?logo=github)](https://github.com/new?template_owner=ivanbrykov&template_name=cloudflare-lead-desk-template)
 
-The button copies the self-contained [`templates/cloudflare`](templates/cloudflare)
-installation project into your own GitHub repository. It lets you choose the Worker
-and D1 names, prompts for the two secrets, provisions your database, and connects
-Workers Builds. Your repository owns only installation configuration; every build
+1. Create your own repository from the dedicated
+   [`cloudflare-lead-desk-template`](https://github.com/ivanbrykov/cloudflare-lead-desk-template).
+   GitHub copies the complete default-branch tree, including the Upgrade workflow.
+2. In Cloudflare Workers & Pages, choose **Create application → Import a
+   repository**, select the generated repository, and keep its root directory.
+3. Use **build command `pnpm run build`** and **deploy command
+   `pnpm run deploy`**. The first deploy creates or resolves the named D1 database,
+   applies migrations, and deploys the Worker; later deploys reuse it.
+4. In the Worker's **Settings → Variables and Secrets**, set
+   `BETTER_AUTH_SECRET` and `SETUP_TOKEN`, then redeploy before using the app.
+
+Your generated repository owns only installation configuration; every build
 compiles Lead Desk from the exact full source SHA recorded in `lead-desk.json`.
-
-Use **build command `pnpm run build`** and **deploy command `pnpm run deploy`**.
-Ordinary rebuilds repeat the recorded revision. The copied README has an **Upgrade
+Ordinary rebuilds repeat the recorded revision. The generated README has an **Upgrade
 Lead Desk** button that opens a manual GitHub workflow: after you select **Run
 workflow**, it validates upstream `main` and creates one source-pin commit only when
 the revision changes. Deployment applies pending migrations to the existing `DB`
 binding and updates the existing Worker.
 
 No GitHub Release package or publishing token is involved. See [source-built
-installations](docs/source-built-installations.md) for pinning, workflow enablement,
+installations](docs/source-built-installations.md) for pinning, template publishing,
 migration compatibility, live verification limits, and converting an existing
 full-source snapshot without replacing its database.
 

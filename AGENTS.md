@@ -48,11 +48,12 @@ a deployment that already exists. Putting it in the PR body keeps it tied to the
 branch it describes and removes it when the PR closes; putting it in `README.md`
 leaves a stale link behind after every merge.
 
-The permanent `README.md` button points at `tree/main/templates/cloudflare`.
-That self-contained installation compiles an exact recorded upstream source
-revision. Never replace its stable template path with an ephemeral feature-branch
-path. PR source previews may still use the whole feature branch as shown above;
-the template's initial pin remains a reachable main commit.
+The permanent `README.md` installation link points at the dedicated public GitHub
+template repository. That repository is published from reviewed
+`templates/cloudflare/` content and preserves `.github/workflows`; Cloudflare's
+subdirectory copy does not. PR source previews may still use the whole feature
+branch as shown above, but never restore the subdirectory Deploy Button as the
+supported installation path.
 
 ## Secrets
 
@@ -72,5 +73,8 @@ secrets out of it.
   Failed fetches, installs, builds, or validation must block deployment.
 - The manual updater may commit only the source pin, never force-push, bypass
   branch protection, or deploy a customer installation directly.
+- After a reviewed template change lands on main, publish the
+  `templates/cloudflare/` tree to `ivanbrykov/cloudflare-lead-desk-template` and
+  verify the dedicated repository's root tree before advertising the change.
 - Validate with `pnpm run test:source` and `pnpm run test:distribution` in addition
   to the app checks when changing source distribution or installer behavior.
