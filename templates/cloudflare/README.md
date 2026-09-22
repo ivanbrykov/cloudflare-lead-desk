@@ -6,9 +6,10 @@ secrets. Lead Desk application code is compiled from the exact upstream commit i
 
 ## First deployment
 
-This repository was generated from the official Lead Desk GitHub template, so the
-Upgrade workflow is already present. Before importing it, optionally edit the
-Worker `name` and D1 `database_name` in `wrangler.jsonc`; keep those identities and
+This repository was copied from the official Lead Desk Cloudflare folder
+template. Cloudflare does not copy `.github/workflows`; Upgrade runs centrally
+through the Lead Desk GitHub App. Optionally edit the Worker `name` and D1
+`database_name` in `wrangler.jsonc` before deployment; keep those identities and
 both authentication secrets across upgrades.
 
 1. In Cloudflare Workers & Pages, choose **Create application → Import a
@@ -38,37 +39,26 @@ release asset is downloaded.
 
 ## Upgrade Lead Desk
 
-[![Upgrade Lead Desk](https://img.shields.io/badge/Upgrade-Lead%20Desk-2088ff?logo=githubactions&logoColor=white)](../../actions/workflows/upgrade.yml)
+[![Upgrade Lead Desk — activation pending](https://img.shields.io/badge/Upgrade-activation%20pending-808080?logo=githubactions&logoColor=white)](https://github.com/ivanbrykov/cloudflare-lead-desk/blob/main/apps/upgrade-service/README.md)
 
-1. Select **Run workflow** on the page opened by the button.
-2. Confirm the run on your repository's default branch.
+The central service is being activated. Until its HTTPS URL and GitHub App are
+configured, the badge above opens setup information, not an Upgrade run. Do not
+change your pin by clicking a workflow in this copied repository: Cloudflare
+does not copy that workflow.
 
-The workflow resolves upstream `main` once to a full commit SHA, compiles and
-validates that candidate, and compares its migration history with SQL fetched from
-the previously pinned commit even in a clean runner. It then changes only
-`revision` in `lead-desk.json`. If the pin is already current, it creates no
-commit. Otherwise it makes one normal `github-actions[bot]` commit and pushes
-without force. A concurrent update or
-branch-protection rule that rejects direct pushes makes the workflow fail rather
-than bypassing the rule.
+Once activated, the button will open the central Upgrade page. Authorize the
+GitHub App once for this repository, select it, and confirm the manual upgrade.
+The upstream-hosted workflow resolves `main` to a full SHA, compiles and validates
+the candidate, checks old-pin SQL history even in a clean runner, and creates
+only one `lead-desk.json` pin commit if the revision changes. An already-current
+run makes no commit. A concurrent branch update or branch-protection rule fails
+closed rather than being bypassed.
 
-Resolution, candidate validation, and the pin commit run as three isolated hosted
-jobs. Candidate install/build code receives read-only repository permissions and a
-checkout with credentials removed. The fresh write job consumes only immutable
-resolver outputs, executes no repository script, reconstructs only
-`lead-desk.json`, rechecks the default-branch SHA and old pin, and exposes the
-write token only to that trusted inline step. Workflow actions are pinned to full
-commit SHAs; no artifacts or caches cross the validation/write boundary.
-
-The button uses a repository-relative GitHub link, so it targets this copied
-repository rather than the upstream Lead Desk repository.
-
-Cloudflare documents that pushes to the configured production branch trigger a
-Workers Build. The specific workflow-token push path still needs a live copied
-repository verification. After the upgrade commit appears, confirm that a
-Cloudflare build starts and retains the same Worker and D1 IDs. If it does not,
-push the pin commit with an owner credential or start the existing connected build
-manually; do not add a deploy-hook URL or Cloudflare credential to this workflow.
+Resolution, read-only candidate validation, and the App-authored pin commit run
+in separate hosted jobs. Candidate code never shares a runner with repository
+write authority. No Cloudflare token or deploy hook is added. After the pin
+commit appears, confirm that the connected Cloudflare build starts and retains
+the same Worker and D1 IDs; this App-push behavior requires a live test.
 
 ## Rebuild or deploy locally
 

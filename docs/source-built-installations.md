@@ -1,12 +1,11 @@
 # Source-built installation and upgrade contract
 
-`templates/cloudflare/` is the reviewed source for the dedicated public
-`ivanbrykov/cloudflare-lead-desk-template` repository. GitHub creates each
-installation from that template's complete default-branch tree, preserving the
-Upgrade workflow that Cloudflare's subdirectory-copy flow omitted. The generated
-repository owns Wrangler configuration, D1 identity, secrets, the exact upstream
-source pin, and a small set of installer scripts; it does not import the parent
-workspace.
+`templates/cloudflare/` is the installation project copied by Cloudflare's
+Deploy button from this repository. Cloudflare's copy omits `.github/workflows`,
+so the Upgrade workflow runs centrally in upstream Lead Desk rather than in the
+copied installation. The generated repository owns Wrangler configuration, D1
+identity, secrets, the exact upstream source pin, and a small set of installer
+scripts; it does not import the parent workspace.
 
 ## Pinned build
 
@@ -29,7 +28,7 @@ secrets. Installation files and `.dev.vars` are never copied into source. Failed
 fetches, installs, builds, runtime checks, and migration checks leave D1 and tracked
 configuration untouched and keep deployment blocked until a successful rebuild.
 
-The dedicated template's initial pin is merged upstream commit
+The template's initial pin is merged upstream commit
 `ad31f24d22aff10c1a80447f1c2549f22e62f0e1`, which exposes the stable
 source-build command. For existing installations only, the installer retains a
 narrow adapter for historical pin `8c8f7cd...`; it consumes that commit's local
@@ -37,36 +36,36 @@ build output and never contacts GitHub Releases.
 
 ## Explicit Upgrade workflow
 
-The copied repository includes `.github/workflows/upgrade.yml`. Its manual
-`workflow_dispatch` flow uses three fresh hosted runners:
+The installation README's Upgrade button leads to the [central Upgrade
+service](../apps/upgrade-service/README.md). The user authorizes the Lead Desk
+GitHub App once for their copied repository; each later click authenticates the
+user, checks their write permission and App repository scope, and dispatches
+`.github/workflows/cloudflare-upgrade.yml` in the upstream repository. The
+requester cannot directly dispatch that upstream workflow.
 
-1. A read-only resolver checks out the actual default branch without persisted
-   credentials and records its SHA, old source configuration, and upstream-main
-   target before candidate code runs.
-2. A separate read-only validator compiles that exact candidate, fetches the old
-   recorded revision, and compares immutable SQL history even when generated output
-   is absent. It emits no artifact or output used by the writer.
-3. A fresh writer receives `contents: write` only after validation. It checks the
-   default branch still equals the resolved base, parses the old configuration from
-   that commit, reconstructs only `lead-desk.json` using Git plumbing, verifies the
-   one-path diff, rechecks the remote SHA, and performs a normal non-force push. It
-   executes no checked-out repository helper or candidate output.
+The workflow uses three fresh hosted runners:
 
-All referenced GitHub actions are pinned to full commit SHAs. Candidate code never
-shares a runner with repository write authority, and no artifact/cache crosses that
-boundary. The workflow uses no Cloudflare token, refuses to run in the upstream
-source repository, and reports concurrent branch advances or branch-protection
-rejections instead of bypassing them. An already-current run produces no commit.
+1. A read-only resolver records the installation's repository ID, actual default
+   branch/SHA, current source pin, requester permission, and exact upstream-main
+   candidate before candidate code runs.
+2. A separate read-only validator checks out the installation without persisted
+   credentials, compiles the exact candidate, fetches SQL from the old recorded
+   revision, and rejects removed or rewritten migrations even without generated
+   output. It emits no artifact or output used by the writer.
+3. A fresh writer receives a single-repository App token with Contents write only
+   after validation. Trusted upstream code rereads the original configuration,
+   rechecks requester permission, pin and default-branch SHA, creates one
+   `lead-desk.json` blob/tree/commit through GitHub's Git Data API, and advances
+   the branch without force. It runs no candidate or installation scripts.
 
-The generated installation README's Upgrade button uses
-`../../actions/workflows/upgrade.yml`. GitHub documents that relative links in a
-rendered README are transformed for the current repository and branch, avoiding a
-hard-coded consumer repository name.
+All workflow actions are pinned to full commit SHAs. Candidate code never shares
+a runner with repository write authority, and no artifact/cache crosses that
+boundary. The workflow uses no Cloudflare token; concurrent branch advances and
+branch-protection rejections fail closed. An already-current run makes no commit.
 
-Cloudflare documents that every push to the configured production branch triggers
-a Workers Build. Whether a push made with a workflow's `GITHUB_TOKEN` reaches that
-external GitHub App is still a live integration gate; GitHub's suppression of
-recursive Actions workflows does not prove either outcome. Do not add a plaintext
+Whether this GitHub App-authored pin commit starts the installation's Cloudflare
+Workers Build is a live integration gate. The answer cannot be inferred from
+GitHub Actions `GITHUB_TOKEN` suppression behavior. Do not add a plaintext
 Cloudflare deploy hook or Cloudflare API token to solve that uncertainty.
 
 ## Migration and rollback boundary
@@ -113,19 +112,16 @@ rewritten migration rejection.
 Before claiming the complete installation experience, run these live gates on an
 approved disposable target:
 
-1. Generate a repository through the dedicated GitHub template and confirm
-   `.github/workflows/upgrade.yml` plus the repository-relative README button.
+1. Generate a repository through the Cloudflare folder button and confirm it
+   contains `lead-desk.json` and the README Upgrade button. The absence of
+   `.github/workflows` is expected.
 2. Import that generated repository into Cloudflare, verify D1 provisioning occurs
    before migrations/deployment, set the two runtime secrets, and redeploy.
-3. Run Upgrade and verify its bot commit triggers Workers Builds while the Worker
+3. Authorize the GitHub App once, run Upgrade, and verify its App commit triggers Workers Builds while the Worker
    name, D1 name/ID, secrets, and stored records remain unchanged.
 
 Mocks and local Git repositories are not evidence for those platform behaviors.
 
-## Publishing the dedicated template
-
-The upstream folder remains the source of truth. Publish only reviewed main content
-by splitting `templates/cloudflare/` into the dedicated repository's `main` branch,
-then verify its root tree, workflow syntax, template-repository setting, and commit
-SHA. Do not add release archives or a package registry. Changes to the dedicated
-repository should be traceable to an upstream reviewed commit.
+The former dedicated GitHub template repository is not part of this installation
+path. It need not be deleted to use the Cloudflare folder button; deleting it is
+a separate owner decision.
