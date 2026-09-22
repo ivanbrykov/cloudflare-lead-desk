@@ -62,9 +62,9 @@ const evidence = {
   checks: [],
   consumer,
   limitations: [
-    'Local workerd/D1 and Wrangler dry-run only; no Cloudflare deployment or Deploy Button test.',
-    'The bootstrap fetch uses public GitHub; controlled upgrade revisions use a local standalone Git repository.',
-    'Workflow availability after the Deploy Button and workflow-token push delivery to Cloudflare are not exercised here.',
+    'Local workerd/D1 and Wrangler dry-run only; no Cloudflare deployment or GitHub template-generation test.',
+    'The initial source fetch uses public GitHub; controlled upgrade revisions use a local standalone Git repository.',
+    'The dedicated repository workflow is verified separately; generated-repository workflow and bot-push delivery to Cloudflare are not exercised here.',
   ],
   node: process.version,
   revisions: [],
