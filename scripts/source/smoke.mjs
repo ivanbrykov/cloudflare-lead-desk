@@ -13,7 +13,7 @@ import { createWriteStream } from 'node:fs';
 import { cp, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
-import { join, resolve as resolvePath } from 'node:path';
+import { join, relative, resolve as resolvePath, sep } from 'node:path';
 import process from 'node:process';
 import { clearTimeout, setTimeout } from 'node:timers';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -29,8 +29,16 @@ const output = resolvePath(
 const consumer = join(output, 'consumer');
 await mkdir(output, { recursive: false });
 await mkdir(join(output, 'logs'));
-await cp(join(source, 'templates/cloudflare'), consumer, {
-  filter: (path) => !path.includes('node_modules'),
+const templateSource = join(source, 'templates/cloudflare');
+const copyTemplateFile = (path) => {
+  const [topLevel] = relative(templateSource, path).split(sep);
+  return !['.dev.vars', '.lead-desk', '.wrangler', 'node_modules'].includes(
+    topLevel,
+  );
+};
+
+await cp(templateSource, consumer, {
+  filter: copyTemplateFile,
   recursive: true,
 });
 const environment = {
@@ -599,8 +607,8 @@ try {
     await command('git', ['rev-parse', 'HEAD'], upstream)
   ).trim();
   const cleanConsumer = join(output, 'clean-upgrade-consumer');
-  await cp(join(source, 'templates/cloudflare'), cleanConsumer, {
-    filter: (path) => !path.includes('node_modules'),
+  await cp(templateSource, cleanConsumer, {
+    filter: copyTemplateFile,
     recursive: true,
   });
   await writeFile(
