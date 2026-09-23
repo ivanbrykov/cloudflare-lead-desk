@@ -11,13 +11,18 @@ pinned.
 
 ## Activate after review
 
-1. Choose the permanent HTTPS origin for this service, such as its `workers.dev`
-   URL or a custom domain. Set `PUBLIC_ORIGIN` in `wrangler.jsonc` to that exact
-   origin, with no path or trailing slash. Deploying this Worker requires an
-   authenticated Cloudflare account; a dry-run does not create a resource.
+1. The initial public origin is fixed to
+   `https://lead-desk-upgrade.ivbr.workers.dev` in `wrangler.jsonc`, using the
+   maintainer account's existing `ivbr.workers.dev` subdomain and Worker name
+   `lead-desk-upgrade`. This is an address selection, **not proof that the Worker
+   exists or responds**. The Cloudflare account was inspected read-only before
+   selecting it; no matching Lead Desk Worker was present. A custom domain can
+   replace this later, but would require updating the GitHub App callback and
+   the copied README button together.
 2. Register a **public GitHub App** owned by the Lead Desk maintainer. Use
-   `${PUBLIC_ORIGIN}/callback` as its exact OAuth callback and
-   `${PUBLIC_ORIGIN}/upgrade` as its setup URL. Keep OAuth user authorization
+   `https://lead-desk-upgrade.ivbr.workers.dev/callback` as its exact OAuth
+   callback and `https://lead-desk-upgrade.ivbr.workers.dev/upgrade` as its setup
+   URL. Keep OAuth user authorization
    enabled and expiring; disable webhook delivery (no webhook is used). Request
    repository permissions **Metadata: read**, **Contents: read and write**, and
    **Actions: read and write**. No organization or account permissions are
@@ -35,10 +40,19 @@ pinned.
    in a committed `.dev.vars` or Wrangler vars. Set upstream Actions secrets
    `LEAD_DESK_UPGRADE_APP_ID` and `LEAD_DESK_UPGRADE_APP_PRIVATE_KEY` to the same
    App identity/key. Rotate the private key if it leaks.
-5. Deploy the Worker, test its `/upgrade` sign-in and App installation on an
-   approved disposable repository, and only then put the actual service URL into
-   the copied template README's Upgrade button. A placeholder URL must never be
-   advertised as a live button.
+5. Create/deploy the `lead-desk-upgrade` Worker in the maintainer Cloudflare
+   account and connect it to the upstream GitHub repository's `main` branch as
+   a **separate Workers Builds project**. Set root directory to
+   `apps/upgrade-service`, build command to `pnpm install --frozen-lockfile`,
+   and deploy command to `pnpm run deploy`. Optionally include only
+   `apps/upgrade-service/*` in build watch paths, so CRM-only commits do not
+   redeploy this Worker. GitHub App secrets belong in the Worker's runtime
+   settings, not build logs or this repository. This is one shared deployment;
+   customer Lead Desk builds remain independent.
+6. Test `/upgrade` sign-in and App installation on an approved disposable
+   repository, and only then replace the copied template README's pending badge
+   with a link to this origin. A selected hostname alone must never be
+   advertised as a live Upgrade button.
 
 The App user OAuth code is protected by PKCE and an encrypted state cookie. The
 short-lived session cookie is encrypted, HttpOnly, Secure and SameSite=Lax; the
