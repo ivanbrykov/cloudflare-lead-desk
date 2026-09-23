@@ -44,6 +44,9 @@ release asset is downloaded.
 
 First, **[install the Upgrade workflow](../../new/main?filename=.github%2Fworkflows%2Fupgrade.yml&value=name%3A%20Upgrade%20Lead%20Desk%0A%0Aon%3A%0A%20%20workflow_dispatch%3A%0A%0Apermissions%3A%0A%20%20contents%3A%20write%0A%0Ajobs%3A%0A%20%20upgrade%3A%0A%20%20%20%20uses%3A%20ivanbrykov%2Fcloudflare-lead-desk%2F.github%2Fworkflows%2Fcloudflare-upgrade.yml%40main%0A)** once. Review the new file path (`.github/workflows/upgrade.yml`) and its contents, then commit it to this repository's default branch. GitHub's editor may not prefill the file; if it is blank, copy [the small workflow file](upgrade-workflow.yml) into that path. This one-time commit does not advance your source pin.
 
+If you renamed the default branch from `main`, create the file on your current
+default branch instead of using the prefilled link's `main` destination.
+
 [![Upgrade Lead Desk](https://img.shields.io/badge/Upgrade-Lead%20Desk-blue)](../../actions/workflows/upgrade.yml)
 
 After installation, the button opens this repository's Actions page. Select
