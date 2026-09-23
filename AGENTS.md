@@ -53,7 +53,8 @@ The permanent `README.md` installation link points at
 `.github/workflows`; source-pin upgrades are manual edits to the copied
 repository's `lead-desk.json`, as documented in its README. PR source previews
 still use the feature-branch folder as shown above. Do not rely on the copied
-repository containing a workflow.
+repository containing a workflow until its owner installs the small caller from
+the copied README. The reusable implementation lives upstream.
 
 ## Secrets
 
@@ -71,8 +72,8 @@ secrets out of it.
   `lead-desk.json`; only an explicit owner edit may advance that pin.
 - Keep Worker/UI/migration build details in the upstream `source:build` command.
   Failed fetches, installs, builds, or validation must block deployment.
-- The installation owner may manually change only the exact source pin after
-  backing up D1 and checking that old SQL migrations are unchanged. Never
-  force-push or bypass branch protection for an upgrade.
+- The installation owner may run the opt-in Upgrade workflow or manually change
+  only the exact source pin after backing up D1 and checking that old SQL
+  migrations are unchanged. Never force-push or bypass branch protection.
 - Validate with `pnpm run test:source` and `pnpm run test:distribution` in addition
   to the app checks when changing source distribution or installer behavior.
