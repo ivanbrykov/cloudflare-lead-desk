@@ -197,7 +197,8 @@ test('reusable upgrade keeps candidate code away from write authority', async ()
   assert.match(workflow, /baselineConfiguration: configuration/u);
   assert.match(workflow, /prepareSource\(/u);
   assert.match(workflow, /Candidate must descend from the current pin/u);
-  assert.match(workflow, /Candidate upstream main CI has not passed/u);
+  assert.match(workflow, /Waiting for upstream main CI/u);
+  assert.match(workflow, /retry Upgrade after CI finishes/u);
   assert.match(workflow, /git fetch --no-auto-maintenance/u);
   assert.match(workflow, /REPOSITORY_WRITE_TOKEN: \$\{\{ github\.token \}\}/u);
   assert.notEqual(commitJob, -1);
@@ -250,6 +251,105 @@ test('reusable upgrade keeps candidate code away from write authority', async ()
       input: trustedWriteScript(workflow),
       stdio: 'pipe',
     }),
+  );
+});
+
+test('resolver waits for exact upstream CI and rejects a failed run', async (context) => {
+  const workflow = await readFile(reusablePath, 'utf8');
+  const [, body] =
+    /node --input-type=module <<'NODE'\n([\s\S]*?)\n {10}NODE/u.exec(
+      workflow,
+    ) ?? [];
+  assert(body);
+  const source = body.replaceAll(/^ {10}/gmu, '');
+  const directory = await mkdtemp(join(tmpdir(), 'lead-desk-ci-gate-'));
+  context.after(async () => rm(directory, { force: true, recursive: true }));
+  await writeFile(
+    join(directory, 'lead-desk.json'),
+    `${JSON.stringify({
+      repository: 'ivanbrykov/cloudflare-lead-desk',
+      revision: oldRevision,
+    })}\n`,
+  );
+  const binaryDirectory = join(directory, 'bin');
+  await mkdir(binaryDirectory);
+  const fakeGit = join(binaryDirectory, 'git');
+  await writeFile(
+    fakeGit,
+    `#!/usr/bin/env bash
+case "$*" in
+  *'check-ref-format --branch main'*) exit 0 ;;
+  *'rev-parse HEAD'*) printf '%s\\n' "$BASE_SHA" ;;
+  *'ls-remote'*) printf '%s\\trefs/heads/main\\n' '${targetRevision}' ;;
+  *) exit 97 ;;
+esac
+`,
+  );
+  await chmod(fakeGit, 0o755);
+  const preload = join(directory, 'mock-fetch.mjs');
+  await writeFile(
+    preload,
+    `let checks = 0;
+globalThis.fetch = async (url) => {
+  if (url.includes('/compare/')) {
+    return { status: 200, json: async () => ({
+      status: 'ahead', merge_base_commit: { sha: process.env.OLD_REVISION },
+    }) };
+  }
+  if (url.includes('/actions/workflows/ci.yml/runs')) {
+    checks += 1;
+    const done = process.env.MOCK_CI_OUTCOME === 'failure' || checks > 1;
+    return { status: 200, json: async () => ({ workflow_runs: [{
+      head_sha: process.env.TARGET_REVISION,
+      head_branch: 'main',
+      event: 'push',
+      status: done ? 'completed' : 'in_progress',
+      conclusion: done ? (process.env.MOCK_CI_OUTCOME === 'failure' ? 'failure' : 'success') : null,
+    }] }) };
+  }
+  throw new Error('Unexpected API request');
+};
+globalThis.setTimeout = (callback) => { callback(); return 0; };
+`,
+  );
+  const outputPath = join(directory, 'output');
+  const environment = {
+    ...process.env,
+    BASE_SHA: baseSha,
+    DEFAULT_BRANCH: 'main',
+    GITHUB_OUTPUT: outputPath,
+    GITHUB_READ_TOKEN: 'fake-read-token',
+    GITHUB_STEP_SUMMARY: join(directory, 'summary'),
+    INSTALLATION_REPOSITORY: 'customer/installation',
+    MOCK_CI_OUTCOME: 'success',
+    OLD_REVISION: oldRevision,
+    PATH: `${binaryDirectory}:${process.env.PATH}`,
+    RUNNER_TEMP: directory,
+    TARGET_REVISION: targetRevision,
+  };
+  assert.doesNotThrow(() =>
+    execFileSync('node', ['--import', preload, '--input-type=module'], {
+      cwd: directory,
+      env: environment,
+      input: source,
+      stdio: 'pipe',
+      timeout: 10_000,
+    }),
+  );
+  assert.match(
+    await readFile(outputPath, 'utf8'),
+    new RegExp(`target_revision=${targetRevision}`, 'u'),
+  );
+  assert.throws(
+    () =>
+      execFileSync('node', ['--import', preload, '--input-type=module'], {
+        cwd: directory,
+        env: { ...environment, MOCK_CI_OUTCOME: 'failure' },
+        input: source,
+        stdio: 'pipe',
+        timeout: 10_000,
+      }),
+    /Upstream main CI failed or was cancelled/u,
   );
 });
 

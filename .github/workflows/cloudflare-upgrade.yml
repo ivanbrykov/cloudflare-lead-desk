@@ -14,7 +14,7 @@ jobs:
   resolve:
     name: Resolve trusted upgrade inputs
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 12
     permissions:
       contents: read
     outputs:
@@ -138,15 +138,30 @@ jobs:
             );
             assert.equal(comparison.status, "ahead", "Candidate must descend from the current pin");
             assert.equal(comparison.merge_base_commit?.sha, configuration.revision);
-            const runs = await upstreamApi(
-              `/actions/workflows/ci.yml/runs?head_sha=${match[1]}&branch=main&event=push&status=completed&per_page=10`,
-            );
-            assert(
-              runs.workflow_runs?.some(
-                (run) => run.head_sha === match[1] && run.conclusion === "success",
-              ),
-              "Candidate upstream main CI has not passed",
-            );
+            const ciDeadline = Date.now() + 9 * 60_000;
+            for (;;) {
+              const runs = await upstreamApi(
+                `/actions/workflows/ci.yml/runs?head_sha=${match[1]}&branch=main&event=push&per_page=10`,
+              );
+              const exactRuns = runs.workflow_runs?.filter(
+                (run) => run.head_sha === match[1] && run.head_branch === "main" && run.event === "push",
+              );
+              assert(Array.isArray(exactRuns), "Invalid upstream CI response");
+              if (exactRuns.some((run) => run.conclusion === "success")) {
+                console.log("Upstream main CI passed for the exact candidate commit");
+                break;
+              }
+              assert(
+                !exactRuns.some((run) => run.status === "completed"),
+                "Upstream main CI failed or was cancelled; no pin was changed",
+              );
+              assert(
+                Date.now() < ciDeadline,
+                "Upstream main CI did not pass within 9 minutes; retry Upgrade after CI finishes",
+              );
+              console.log("Waiting for upstream main CI; checking again in 20 seconds");
+              await new Promise((resolve) => setTimeout(resolve, 20_000));
+            }
           }
 
           await appendFile(
