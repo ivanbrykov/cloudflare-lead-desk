@@ -79,7 +79,6 @@
     "lint:fix": "eslint . --fix",
     "source:build": "node scripts/source/build.mjs",
     "test": "vitest run",
-    "test:central-upgrade": "node --test scripts/central-upgrade/contracts.test.mjs && pnpm --dir apps/upgrade-service run test",
     "test:distribution": "node scripts/source/smoke.mjs",
     "test:source": "node --test --test-isolation=none scripts/source/contracts.test.mjs",
     "test:watch": "vitest",

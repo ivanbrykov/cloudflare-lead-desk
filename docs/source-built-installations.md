@@ -2,10 +2,10 @@
 
 `templates/cloudflare/` is the installation project copied by Cloudflare's
 Deploy button from this repository. Cloudflare's copy omits `.github/workflows`,
-so the Upgrade workflow runs centrally in upstream Lead Desk rather than in the
-copied installation. The generated repository owns Wrangler configuration, D1
-identity, secrets, the exact upstream source pin, and a small set of installer
-scripts; it does not import the parent workspace.
+but none is needed for a manual source-pin upgrade. The generated repository
+owns Wrangler configuration, D1 identity, secrets, the exact upstream source
+pin, and a small set of installer scripts; it does not import the parent
+workspace.
 
 ## Pinned build
 
@@ -34,40 +34,33 @@ source-build command. For existing installations only, the installer retains a
 narrow adapter for historical pin `8c8f7cd...`; it consumes that commit's local
 build output and never contacts GitHub Releases.
 
-## Explicit Upgrade workflow
+## Manual pin update
 
-After activation, the installation README's Upgrade button leads to the [central
-Upgrade service](../apps/upgrade-service/README.md). Until then, the draft badge
-opens setup guidance rather than starting a run. The user authorizes the Lead Desk
-GitHub App once for their copied repository; each later click authenticates the
-user, checks their write permission and App repository scope, and dispatches
-`.github/workflows/cloudflare-upgrade.yml` in the upstream repository. The
-requester cannot directly dispatch that upstream workflow.
+An ordinary rebuild never advances the pin. The installation owner deliberately
+chooses a full upstream commit SHA from `main` after its CI has passed, backs up
+D1, and compares that candidate with the current `lead-desk.json` revision.
+Check that the old revision is an ancestor of the candidate and that every
+published `drizzle/*.sql` file is unchanged. In a separate checkout of the
+upstream source, substitute the two full SHAs in:
 
-The workflow uses three fresh hosted runners:
+```sh
+git merge-base --is-ancestor OLD_SHA NEW_SHA
+git diff --name-status OLD_SHA NEW_SHA -- 'drizzle/*.sql'
+```
 
-1. A read-only resolver records the installation's repository ID, actual default
-   branch/SHA, current source pin, requester permission, and exact upstream-main
-   candidate before candidate code runs.
-2. A separate read-only validator checks out the installation without persisted
-   credentials, compiles the exact candidate, fetches SQL from the old recorded
-   revision, and rejects removed or rewritten migrations even without generated
-   output. It emits no artifact or output used by the writer.
-3. A fresh writer receives a single-repository App token with Contents write only
-   after validation. Trusted upstream code rereads the original configuration,
-   rechecks requester permission, pin and default-branch SHA, creates one
-   `lead-desk.json` blob/tree/commit through GitHub's Git Data API, and advances
-   the branch without force. It runs no candidate or installation scripts.
+The first command must succeed. The second may show only added (`A`) migration
+files, with names after the old history; modified, deleted, renamed, or reordered
+migrations are a stop condition. A clean Cloudflare build has no old generated
+receipt to compare against, so this check is required before changing the pin.
 
-All workflow actions are pinned to full commit SHAs. Candidate code never shares
-a runner with repository write authority, and no artifact/cache crosses that
-boundary. The workflow uses no Cloudflare token; concurrent branch advances and
-branch-protection rejections fail closed. An already-current run makes no commit.
-
-Whether this GitHub App-authored pin commit starts the installation's Cloudflare
-Workers Build is a live integration gate. The answer cannot be inferred from
-GitHub Actions `GITHUB_TOKEN` suppression behavior. Do not add a plaintext
-Cloudflare deploy hook or Cloudflare API token to solve that uncertainty.
+Change only `revision` in the installation's `lead-desk.json`. Optionally run
+`pnpm install --frozen-lockfile`, `pnpm run build`, and
+`pnpm run deploy:dry-run` in a local installation checkout before committing.
+Commit only that file to the Cloudflare-connected branch. Workers Builds uses
+the exact new SHA, applies pending migrations to the existing `DB` binding,
+and deploys the existing Worker. Check the build and unchanged Worker/D1
+identities, secrets, and stored records. No GitHub App, Actions workflow,
+Release asset, publishing token, or Cloudflare deploy hook is required.
 
 ## Migration and rollback boundary
 
@@ -114,15 +107,16 @@ Before claiming the complete installation experience, run these live gates on an
 approved disposable target:
 
 1. Generate a repository through the Cloudflare folder button and confirm it
-   contains `lead-desk.json` and the README Upgrade button. The absence of
-   `.github/workflows` is expected.
+   contains `lead-desk.json` and the README's manual upgrade instructions. The
+   absence of `.github/workflows` is expected.
 2. Inspect the Cloudflare application already created by the folder button;
    do not import the repository again. Confirm D1 provisioning occurs before
    migrations/deployment, set the two runtime secrets, and redeploy that
    existing application. Import a repository only when it was created without
    the Deploy button.
-3. Authorize the GitHub App once, run Upgrade, and verify its App commit triggers Workers Builds while the Worker
-   name, D1 name/ID, secrets, and stored records remain unchanged.
+3. On an approved disposable installation, manually commit a reviewed pin
+   change and verify its ordinary Git push triggers Workers Builds while the
+   Worker name, D1 name/ID, secrets, and stored records remain unchanged.
 
 Mocks and local Git repositories are not evidence for those platform behaviors.
 

@@ -50,9 +50,9 @@ leaves a stale link behind after every merge.
 
 The permanent `README.md` installation link points at
 `tree/main/templates/cloudflare`. Cloudflare copies that folder but omits
-`.github/workflows`; the manual Upgrade workflow is hosted in this upstream
-repository and dispatched through the central GitHub App service. PR source
-previews still use the feature-branch folder as shown above. Do not rely on the copied
+`.github/workflows`; source-pin upgrades are manual edits to the copied
+repository's `lead-desk.json`, as documented in its README. PR source previews
+still use the feature-branch folder as shown above. Do not rely on the copied
 repository containing a workflow.
 
 ## Secrets
@@ -68,13 +68,11 @@ secrets out of it.
   copied alone to a new repository. Do not use parent workspace imports there.
 - Published SQL migration names and contents are immutable; add new migrations.
 - Ordinary template builds fetch and compile only the full SHA recorded in
-  `lead-desk.json`; only the explicit Upgrade workflow may advance that pin.
+  `lead-desk.json`; only an explicit owner edit may advance that pin.
 - Keep Worker/UI/migration build details in the upstream `source:build` command.
   Failed fetches, installs, builds, or validation must block deployment.
-- The central manual updater may commit only the source pin, never force-push,
-  bypass branch protection, or deploy a customer installation directly.
-- The GitHub App needs explicit authorization on each installation. Keep App
-  tokens scoped to one repository and isolate candidate compilation from the
-  fresh Contents-write job; never put Cloudflare credentials in the updater.
+- The installation owner may manually change only the exact source pin after
+  backing up D1 and checking that old SQL migrations are unchanged. Never
+  force-push or bypass branch protection for an upgrade.
 - Validate with `pnpm run test:source` and `pnpm run test:distribution` in addition
   to the app checks when changing source distribution or installer behavior.

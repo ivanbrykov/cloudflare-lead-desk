@@ -1,4 +1,4 @@
-// Integration-test helper only. Production upgrades use the central workflow.
+// Integration-test helper only. Production installations change the pin manually.
 import { prepareSource } from '../../templates/cloudflare/scripts/build.mjs';
 import { validateConfiguration } from '../../templates/cloudflare/scripts/source.mjs';
 import assert from 'node:assert/strict';

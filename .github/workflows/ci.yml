@@ -33,9 +33,6 @@ jobs:
       - name: Install isolated template tooling
         run: pnpm --dir templates/cloudflare install --frozen-lockfile
 
-      - name: Install central Upgrade service tooling
-        run: pnpm --dir apps/upgrade-service install --frozen-lockfile
-
       - name: Lint
         run: pnpm run lint
 
@@ -58,9 +55,6 @@ jobs:
 
       - name: Source distribution contract tests
         run: pnpm run test:source
-
-      - name: Central Upgrade security contracts and Worker dry-run
-        run: pnpm run test:central-upgrade && pnpm --dir apps/upgrade-service run check
 
       - name: Install Chromium
         run: pnpm exec playwright install --with-deps chromium
