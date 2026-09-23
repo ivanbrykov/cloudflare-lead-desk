@@ -48,8 +48,10 @@ install it automatically. Future clicks on the README Upgrade button open the
 installation's Actions page for a deliberate **Run workflow** click.
 
 The reusable workflow resolves the installation's default-branch SHA, old pin,
-and exact upstream `main` SHA before candidate execution. It checks and compiles
-the candidate on a read-only runner, comparing migrations with the old pinned
+and exact upstream `main` SHA before candidate execution. It waits up to nine
+minutes for exact-SHA upstream push CI to pass; failure or timeout leaves the
+pin unchanged. Then it compiles and checks the candidate on a read-only runner,
+comparing migrations with the old pinned
 source even in a clean checkout. A fresh runner reconstructs only
 `lead-desk.json`, rejects a changed base or extra path, and pushes without
 force using the caller repository's `GITHUB_TOKEN`. No GitHub App, central

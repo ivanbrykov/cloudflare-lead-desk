@@ -55,6 +55,8 @@ upstream `main` commit, builds and checks it without write credentials, checks
 your old SQL migration history, and commits only the new `lead-desk.json` pin
 from a separate runner. It calls a reusable workflow maintained in the
 [upstream Lead Desk repository](https://github.com/ivanbrykov/cloudflare-lead-desk/blob/main/.github/workflows/cloudflare-upgrade.yml).
+If upstream CI is still running, Upgrade waits for it; failed CI leaves your
+source pin unchanged.
 
 Back up D1 before running Upgrade. After it finishes, confirm the pin commit
 and the connected Cloudflare build, Worker name, D1 ID, secrets, and stored
