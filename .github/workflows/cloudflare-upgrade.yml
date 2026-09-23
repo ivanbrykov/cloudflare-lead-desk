@@ -1,0 +1,137 @@
+name: Upgrade a Lead Desk installation
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_repository:
+        description: GitHub repository to upgrade
+        required: true
+        type: string
+      target_repository_id:
+        description: Immutable GitHub repository ID
+        required: true
+        type: string
+      actor_login:
+        description: GitHub user who requested the upgrade
+        required: true
+        type: string
+      actor_id:
+        description: Immutable GitHub user ID
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lead-desk-central-upgrade-${{ inputs.target_repository_id }}
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    if: github.repository == 'ivanbrykov/cloudflare-lead-desk' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      baseSha: ${{ steps.resolve.outputs.baseSha }}
+      branch: ${{ steps.resolve.outputs.branch }}
+      oldRevision: ${{ steps.resolve.outputs.oldRevision }}
+      repository: ${{ steps.resolve.outputs.repository }}
+      repositoryId: ${{ steps.resolve.outputs.repositoryId }}
+      actorLogin: ${{ steps.resolve.outputs.actorLogin }}
+      actorId: ${{ steps.resolve.outputs.actorId }}
+      targetRevision: ${{ steps.resolve.outputs.targetRevision }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24.20.0
+      - name: Resolve installation and authorize requester
+        id: resolve
+        env:
+          LEAD_DESK_APP_ID: ${{ secrets.LEAD_DESK_UPGRADE_APP_ID }}
+          LEAD_DESK_APP_PRIVATE_KEY: ${{ secrets.LEAD_DESK_UPGRADE_APP_PRIVATE_KEY }}
+          INPUT_TARGET_REPOSITORY: ${{ inputs.target_repository }}
+          INPUT_TARGET_REPOSITORY_ID: ${{ inputs.target_repository_id }}
+          INPUT_ACTOR_LOGIN: ${{ inputs.actor_login }}
+          INPUT_ACTOR_ID: ${{ inputs.actor_id }}
+        run: node scripts/central-upgrade/resolve.mjs
+
+  validate:
+    needs: resolve
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24.20.0
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 10.34.5
+      - name: Create repository-scoped read token
+        id: read-token
+        env:
+          LEAD_DESK_APP_ID: ${{ secrets.LEAD_DESK_UPGRADE_APP_ID }}
+          LEAD_DESK_APP_PRIVATE_KEY: ${{ secrets.LEAD_DESK_UPGRADE_APP_PRIVATE_KEY }}
+          TARGET_REPOSITORY: ${{ needs.resolve.outputs.repository }}
+          TARGET_REPOSITORY_ID: ${{ needs.resolve.outputs.repositoryId }}
+          TARGET_PERMISSION: read
+        run: node scripts/central-upgrade/token.mjs
+      - name: Checkout installation without persisted credentials
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: ${{ needs.resolve.outputs.repository }}
+          ref: ${{ needs.resolve.outputs.baseSha }}
+          token: ${{ steps.read-token.outputs.token }}
+          path: consumer
+          persist-credentials: false
+      - name: Install trusted template tooling
+        run: pnpm --dir templates/cloudflare install --frozen-lockfile
+      - name: Validate exact candidate without write authority
+        env:
+          BASE_SHA: ${{ needs.resolve.outputs.baseSha }}
+          OLD_REVISION: ${{ needs.resolve.outputs.oldRevision }}
+          TARGET_REVISION: ${{ needs.resolve.outputs.targetRevision }}
+        run: node scripts/central-upgrade/validate.mjs
+
+  commit:
+    needs: [resolve, validate]
+    if: needs.resolve.outputs.oldRevision != needs.resolve.outputs.targetRevision
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24.20.0
+      - name: Create repository-scoped write token
+        id: write-token
+        env:
+          LEAD_DESK_APP_ID: ${{ secrets.LEAD_DESK_UPGRADE_APP_ID }}
+          LEAD_DESK_APP_PRIVATE_KEY: ${{ secrets.LEAD_DESK_UPGRADE_APP_PRIVATE_KEY }}
+          TARGET_REPOSITORY: ${{ needs.resolve.outputs.repository }}
+          TARGET_REPOSITORY_ID: ${{ needs.resolve.outputs.repositoryId }}
+          TARGET_PERMISSION: write
+        run: node scripts/central-upgrade/token.mjs
+      - name: Commit only the validated pin
+        env:
+          TARGET_WRITE_TOKEN: ${{ steps.write-token.outputs.token }}
+          TARGET_REPOSITORY: ${{ needs.resolve.outputs.repository }}
+          TARGET_REPOSITORY_ID: ${{ needs.resolve.outputs.repositoryId }}
+          ACTOR_LOGIN: ${{ needs.resolve.outputs.actorLogin }}
+          ACTOR_ID: ${{ needs.resolve.outputs.actorId }}
+          BASE_SHA: ${{ needs.resolve.outputs.baseSha }}
+          DEFAULT_BRANCH: ${{ needs.resolve.outputs.branch }}
+          OLD_REVISION: ${{ needs.resolve.outputs.oldRevision }}
+          TARGET_REVISION: ${{ needs.resolve.outputs.targetRevision }}
+        run: node scripts/central-upgrade/commit.mjs

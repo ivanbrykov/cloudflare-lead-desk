@@ -32,13 +32,13 @@ The URL is a static string with no way to discover the branch, so substitute the
 branch name by hand — this is the one step that must not be skipped:
 
 ```md
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/ivanbrykov/cloudflare-lead-desk/tree/<BRANCH>)
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/ivanbrykov/cloudflare-lead-desk/tree/<BRANCH>/templates/cloudflare)
 ```
 
 Replace `<BRANCH>` with the head branch of the PR, for example:
 
 ```md
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/ivanbrykov/cloudflare-lead-desk/tree/feature/single-use-invitations)
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/ivanbrykov/cloudflare-lead-desk/tree/feature/single-use-invitations/templates/cloudflare)
 ```
 
 Why the PR body and not the repo: the button clones the repo into the
@@ -48,12 +48,12 @@ a deployment that already exists. Putting it in the PR body keeps it tied to the
 branch it describes and removes it when the PR closes; putting it in `README.md`
 leaves a stale link behind after every merge.
 
-The permanent `README.md` installation link points at the dedicated public GitHub
-template repository. That repository is published from reviewed
-`templates/cloudflare/` content and preserves `.github/workflows`; Cloudflare's
-subdirectory copy does not. PR source previews may still use the whole feature
-branch as shown above, but never restore the subdirectory Deploy Button as the
-supported installation path.
+The permanent `README.md` installation link points at
+`tree/main/templates/cloudflare`. Cloudflare copies that folder but omits
+`.github/workflows`; the manual Upgrade workflow is hosted in this upstream
+repository and dispatched through the central GitHub App service. PR source
+previews still use the feature-branch folder as shown above. Do not rely on the copied
+repository containing a workflow.
 
 ## Secrets
 
@@ -71,10 +71,10 @@ secrets out of it.
   `lead-desk.json`; only the explicit Upgrade workflow may advance that pin.
 - Keep Worker/UI/migration build details in the upstream `source:build` command.
   Failed fetches, installs, builds, or validation must block deployment.
-- The manual updater may commit only the source pin, never force-push, bypass
-  branch protection, or deploy a customer installation directly.
-- After a reviewed template change lands on main, publish the
-  `templates/cloudflare/` tree to `ivanbrykov/cloudflare-lead-desk-template` and
-  verify the dedicated repository's root tree before advertising the change.
+- The central manual updater may commit only the source pin, never force-push,
+  bypass branch protection, or deploy a customer installation directly.
+- The GitHub App needs explicit authorization on each installation. Keep App
+  tokens scoped to one repository and isolate candidate compilation from the
+  fresh Contents-write job; never put Cloudflare credentials in the updater.
 - Validate with `pnpm run test:source` and `pnpm run test:distribution` in addition
   to the app checks when changing source distribution or installer behavior.

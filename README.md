@@ -17,26 +17,28 @@ Every deployment is independent: the repo carries no account-specific values.
 
 ### Installation repository
 
-[![Use this template](https://img.shields.io/badge/Use_this_template-GitHub-2ea44f?logo=github)](https://github.com/new?template_owner=ivanbrykov&template_name=cloudflare-lead-desk-template)
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/ivanbrykov/cloudflare-lead-desk/tree/main/templates/cloudflare)
 
-1. Create your own repository from the dedicated
-   [`cloudflare-lead-desk-template`](https://github.com/ivanbrykov/cloudflare-lead-desk-template).
-   GitHub copies the complete default-branch tree, including the Upgrade workflow.
-2. In Cloudflare Workers & Pages, choose **Create application → Import a
-   repository**, select the generated repository, and keep its root directory.
-3. Use **build command `pnpm run build`** and **deploy command
+1. Click the button to copy only [`templates/cloudflare`](templates/cloudflare)
+   into a new repository in your GitHub account and connect it to Cloudflare.
+   Cloudflare's copy omits `.github/workflows`; this installation needs no local
+   Actions workflow.
+2. Use **build command `pnpm run build`** and **deploy command
    `pnpm run deploy`**. The first deploy creates or resolves the named D1 database,
    applies migrations, and deploys the Worker; later deploys reuse it.
-4. In the Worker's **Settings → Variables and Secrets**, set
+3. In the Worker's **Settings → Variables and Secrets**, set
    `BETTER_AUTH_SECRET` and `SETUP_TOKEN`, then redeploy before using the app.
 
 Your generated repository owns only installation configuration; every build
 compiles Lead Desk from the exact full source SHA recorded in `lead-desk.json`.
-Ordinary rebuilds repeat the recorded revision. The generated README has an **Upgrade
-Lead Desk** button that opens a manual GitHub workflow: after you select **Run
-workflow**, it validates upstream `main` and creates one source-pin commit only when
-the revision changes. Deployment applies pending migrations to the existing `DB`
-binding and updates the existing Worker.
+Ordinary rebuilds repeat the recorded revision. The generated README's **Upgrade
+Lead Desk** button will open the centrally hosted Upgrade service after its
+GitHub App is activated. The installation owner authorizes the App once for that
+repository; each manual click then validates upstream `main` and creates one
+source-pin commit only when the revision changes. Deployment applies pending
+migrations to the existing `DB` binding and updates the existing Worker. Until
+the service is activated, use the existing dedicated-template path for a live
+upgrade button; do not treat this draft folder path as launched.
 
 No GitHub Release package or publishing token is involved. See [source-built
 installations](docs/source-built-installations.md) for pinning, template publishing,

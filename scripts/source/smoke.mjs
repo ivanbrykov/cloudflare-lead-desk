@@ -4,7 +4,7 @@ import {
   inspect,
 } from '../../templates/cloudflare/scripts/installed.mjs';
 import { checksum } from '../../templates/cloudflare/scripts/source.mjs';
-import { upgradePin } from '../../templates/cloudflare/scripts/upgrade.mjs';
+import { upgradePin } from './localUpgrade.mjs';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { log as print } from 'node:console';
@@ -64,7 +64,7 @@ const evidence = {
   limitations: [
     'Local workerd/D1 and Wrangler dry-run only; no Cloudflare deployment or GitHub template-generation test.',
     'The initial source fetch uses public GitHub; controlled upgrade revisions use a local standalone Git repository.',
-    'The dedicated repository workflow is verified separately; generated-repository workflow and bot-push delivery to Cloudflare are not exercised here.',
+    'The central GitHub App workflow is verified separately; live App authorization, copied-repository behavior, and App-push delivery to Cloudflare are not exercised here.',
   ],
   node: process.version,
   revisions: [],
