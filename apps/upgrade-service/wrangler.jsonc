@@ -6,7 +6,8 @@
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": true,
   "vars": {
-    "GITHUB_CLIENT_ID": "SET_AFTER_APP_REGISTRATION",
+    "GITHUB_APP_ID": "5040911",
+    "GITHUB_CLIENT_ID": "Iv23ligUWrUXVh2xZuEh",
     "GITHUB_APP_SLUG": "SET_AFTER_APP_REGISTRATION",
     "PUBLIC_ORIGIN": "https://lead-desk-upgrade.ivbr.workers.dev"
   },

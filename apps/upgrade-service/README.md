@@ -34,9 +34,10 @@ pinned.
    during that one-time authorization. The App can have broad declared
    permissions, but each workflow access token is narrowed to one repository and
    either read-only contents, contents write, or upstream Actions write.
-4. Set `GITHUB_CLIENT_ID` and `GITHUB_APP_SLUG` as Worker vars. Add Worker secrets
-   `GITHUB_APP_ID`, `GITHUB_CLIENT_SECRET`, `GITHUB_APP_PRIVATE_KEY` (downloaded
-   PEM), and `SESSION_SECRET` (at least 32 random characters). Do not put these
+4. App ID `5040911` and Client ID `Iv23ligUWrUXVh2xZuEh` are already recorded as
+   public Worker vars. Set `GITHUB_APP_SLUG` to the App's actual public slug.
+   Add Worker secrets `GITHUB_CLIENT_SECRET`, `GITHUB_APP_PRIVATE_KEY`
+   (downloaded PEM), and `SESSION_SECRET` (at least 32 random characters). Do not put these
    in a committed `.dev.vars` or Wrangler vars. Set upstream Actions secrets
    `LEAD_DESK_UPGRADE_APP_ID` and `LEAD_DESK_UPGRADE_APP_PRIVATE_KEY` to the same
    App identity/key. Rotate the private key if it leaks.
