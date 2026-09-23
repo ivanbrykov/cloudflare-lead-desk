@@ -57,7 +57,9 @@ Back up D1 before running Upgrade. After it finishes, confirm the pin commit
 and the connected Cloudflare build, Worker name, D1 ID, secrets, and stored
 records. If your repository blocks Actions from writing, review its Actions
 permissions and branch rules. The installed workflow calls upstream `@main`,
-so each manual run uses the current upstream upgrade logic.
+so each manual run uses the current upstream upgrade logic with temporary
+write permission to this repository. Review that upstream workflow before
+enabling it and run it only when you are ready to upgrade.
 
 ### Manual alternative
 

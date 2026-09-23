@@ -54,8 +54,10 @@ source even in a clean checkout. A fresh runner reconstructs only
 `lead-desk.json`, rejects a changed base or extra path, and pushes without
 force using the caller repository's `GITHUB_TOKEN`. No GitHub App, central
 Worker, or Cloudflare credential is required. The caller uses `@main`, so its
-manual runs use the current upstream workflow logic. The owner should back up
-D1 first and confirm the resulting Cloudflare build and resource identity.
+manual runs use the current upstream workflow logic. That upstream code has
+temporary Contents-write permission in the caller during a run; the owner
+should review it, back up D1 first, and confirm the resulting Cloudflare build
+and resource identity.
 
 Whether a `GITHUB_TOKEN` pin push triggers Cloudflare's separate GitHub App is
 still a live verification gate; local tests cannot establish it.
