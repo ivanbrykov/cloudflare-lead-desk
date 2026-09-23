@@ -1,0 +1,11 @@
+name: Upgrade Lead Desk
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  upgrade:
+    uses: ivanbrykov/cloudflare-lead-desk/.github/workflows/cloudflare-upgrade.yml@main

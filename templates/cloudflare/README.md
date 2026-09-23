@@ -7,8 +7,8 @@ secrets. Lead Desk application code is compiled from the exact upstream commit i
 ## First deployment
 
 This repository was copied from the official Lead Desk Cloudflare folder
-template. Cloudflare does not copy `.github/workflows`; none is needed to build
-or upgrade this installation. Optionally edit the Worker `name` and D1
+template. Cloudflare does not copy `.github/workflows`; the optional Upgrade
+workflow takes one setup commit. Optionally edit the Worker `name` and D1
 `database_name` in `wrangler.jsonc` before deployment; keep those identities and
 both authentication secrets across upgrades.
 
@@ -40,7 +40,31 @@ binding, and deploys to your existing Worker.
 The initial pin is a reachable, immutable upstream commit. No GitHub Release or
 release asset is downloaded.
 
-## Upgrade Lead Desk manually
+## Upgrade Lead Desk
+
+First, **[install the Upgrade workflow](../../new/main?filename=.github%2Fworkflows%2Fupgrade.yml&value=name%3A%20Upgrade%20Lead%20Desk%0A%0Aon%3A%0A%20%20workflow_dispatch%3A%0A%0Apermissions%3A%0A%20%20contents%3A%20write%0A%0Ajobs%3A%0A%20%20upgrade%3A%0A%20%20%20%20uses%3A%20ivanbrykov%2Fcloudflare-lead-desk%2F.github%2Fworkflows%2Fcloudflare-upgrade.yml%40main%0A)** once. Review the new file path (`.github/workflows/upgrade.yml`) and its contents, then commit it to this repository's default branch. GitHub's editor may not prefill the file; if it is blank, copy [the small workflow file](upgrade-workflow.yml) into that path. This one-time commit does not advance your source pin.
+
+If you renamed the default branch from `main`, create the file on your current
+default branch instead of using the prefilled link's `main` destination.
+
+[![Upgrade Lead Desk](https://img.shields.io/badge/Upgrade-Lead%20Desk-blue)](../../actions/workflows/upgrade.yml)
+
+After installation, the button opens this repository's Actions page. Select
+**Run workflow** on the default branch. The workflow resolves the latest
+upstream `main` commit, builds and checks it without write credentials, checks
+your old SQL migration history, and commits only the new `lead-desk.json` pin
+from a separate runner. It calls a reusable workflow maintained in the
+[upstream Lead Desk repository](https://github.com/ivanbrykov/cloudflare-lead-desk/blob/main/.github/workflows/cloudflare-upgrade.yml).
+
+Back up D1 before running Upgrade. After it finishes, confirm the pin commit
+and the connected Cloudflare build, Worker name, D1 ID, secrets, and stored
+records. If your repository blocks Actions from writing, review its Actions
+permissions and branch rules. The installed workflow calls upstream `@main`,
+so each manual run uses the current upstream upgrade logic with temporary
+write permission to this repository. Review that upstream workflow before
+enabling it and run it only when you are ready to upgrade.
+
+### Manual alternative
 
 An ordinary rebuild uses the exact source commit in `lead-desk.json`; it does
 not pick up new upstream changes. To upgrade:
@@ -67,8 +91,8 @@ not pick up new upstream changes. To upgrade:
    secrets, and stored records are unchanged. If the build fails, fix the cause
    before retrying; do not treat an older source pin as a D1 rollback.
 
-There is no GitHub App, local Actions workflow, Release package, or publishing
-token in this upgrade path. See [source-built installation details](https://github.com/ivanbrykov/cloudflare-lead-desk/blob/main/docs/source-built-installations.md)
+There is no GitHub App, separate Upgrade Worker, Release package, or publishing
+token in either upgrade path. See [source-built installation details](https://github.com/ivanbrykov/cloudflare-lead-desk/blob/main/docs/source-built-installations.md)
 for the migration and recovery boundaries.
 
 ## Rebuild or deploy locally

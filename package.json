@@ -80,7 +80,7 @@
     "source:build": "node scripts/source/build.mjs",
     "test": "vitest run",
     "test:distribution": "node scripts/source/smoke.mjs",
-    "test:source": "node --test --test-isolation=none scripts/source/contracts.test.mjs",
+    "test:source": "node --test --test-isolation=none scripts/source/contracts.test.mjs scripts/source/workflow.test.mjs",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit"
   },

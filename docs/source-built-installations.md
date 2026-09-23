@@ -2,7 +2,8 @@
 
 `templates/cloudflare/` is the installation project copied by Cloudflare's
 Deploy button from this repository. Cloudflare's copy omits `.github/workflows`,
-but none is needed for a manual source-pin upgrade. The generated repository
+so the owner installs a small caller workflow once through a link in the copied
+README. The generated repository
 owns Wrangler configuration, D1 identity, secrets, the exact upstream source
 pin, and a small set of installer scripts; it does not import the parent
 workspace.
@@ -34,6 +35,33 @@ source-build command. For existing installations only, the installer retains a
 narrow adapter for historical pin `8c8f7cd...`; it consumes that commit's local
 build output and never contacts GitHub Releases.
 
+## Optional Upgrade workflow
+
+The copied README links to GitHub's new-file editor for
+`.github/workflows/upgrade.yml`. The prefilled content is a small
+`workflow_dispatch` caller of the reusable upstream
+`.github/workflows/cloudflare-upgrade.yml@main`. GitHub's editor prefill query
+parameters are not a documented API, so the copied root
+`upgrade-workflow.yml` is a copy/paste fallback. The owner reviews and commits
+the file to the installation's default branch once; Cloudflare's copy does not
+install it automatically. Future clicks on the README Upgrade button open the
+installation's Actions page for a deliberate **Run workflow** click.
+
+The reusable workflow resolves the installation's default-branch SHA, old pin,
+and exact upstream `main` SHA before candidate execution. It checks and compiles
+the candidate on a read-only runner, comparing migrations with the old pinned
+source even in a clean checkout. A fresh runner reconstructs only
+`lead-desk.json`, rejects a changed base or extra path, and pushes without
+force using the caller repository's `GITHUB_TOKEN`. No GitHub App, central
+Worker, or Cloudflare credential is required. The caller uses `@main`, so its
+manual runs use the current upstream workflow logic. That upstream code has
+temporary Contents-write permission in the caller during a run; the owner
+should review it, back up D1 first, and confirm the resulting Cloudflare build
+and resource identity.
+
+Whether a `GITHUB_TOKEN` pin push triggers Cloudflare's separate GitHub App is
+still a live verification gate; local tests cannot establish it.
+
 ## Manual pin update
 
 An ordinary rebuild never advances the pin. The installation owner deliberately
@@ -59,8 +87,9 @@ Change only `revision` in the installation's `lead-desk.json`. Optionally run
 Commit only that file to the Cloudflare-connected branch. Workers Builds uses
 the exact new SHA, applies pending migrations to the existing `DB` binding,
 and deploys the existing Worker. Check the build and unchanged Worker/D1
-identities, secrets, and stored records. No GitHub App, Actions workflow,
-Release asset, publishing token, or Cloudflare deploy hook is required.
+identities, secrets, and stored records. This manual alternative requires no
+Actions workflow, GitHub App, Release asset, publishing token, or Cloudflare
+deploy hook.
 
 ## Migration and rollback boundary
 
@@ -107,16 +136,17 @@ Before claiming the complete installation experience, run these live gates on an
 approved disposable target:
 
 1. Generate a repository through the Cloudflare folder button and confirm it
-   contains `lead-desk.json` and the README's manual upgrade instructions. The
-   absence of `.github/workflows` is expected.
+   contains `lead-desk.json`, the README's workflow setup link, and the root
+   fallback YAML. The absence of `.github/workflows` is expected.
 2. Inspect the Cloudflare application already created by the folder button;
    do not import the repository again. Confirm D1 provisioning occurs before
    migrations/deployment, set the two runtime secrets, and redeploy that
    existing application. Import a repository only when it was created without
    the Deploy button.
-3. On an approved disposable installation, manually commit a reviewed pin
-   change and verify its ordinary Git push triggers Workers Builds while the
-   Worker name, D1 name/ID, secrets, and stored records remain unchanged.
+3. On an approved disposable installation, use the setup link to commit the
+   caller workflow, then run Upgrade. Confirm its pin-only `GITHUB_TOKEN` commit
+   triggers Workers Builds while the Worker name, D1 name/ID, secrets, and
+   stored records remain unchanged. Test the manual pin-edit fallback too.
 
 Mocks and local Git repositories are not evidence for those platform behaviors.
 
