@@ -38,14 +38,13 @@ pinned.
 4. App ID `5040911`, Client ID `Iv23ligUWrUXVh2xZuEh`, and public slug
    `lead-desk-upgrade` are already recorded as Worker vars. The App identity,
    owner, and Metadata-read/Contents-write/Actions-write permissions were
-   verified through GitHub's public App API.
-   `SESSION_SECRET` was generated with a cryptographically secure random source
-   and installed as a Worker secret on 2026-09-23. Add the remaining Worker
-   secrets `GITHUB_CLIENT_SECRET` and `GITHUB_APP_PRIVATE_KEY` (the complete
-   downloaded PEM). Do not put these in a committed `.dev.vars` or Wrangler
-   vars. Upstream Actions secret `LEAD_DESK_UPGRADE_APP_ID` is already set to
-   `5040911`; add `LEAD_DESK_UPGRADE_APP_PRIVATE_KEY` with the same complete
-   PEM. Rotate the private key if it leaks. Never paste either secret into chat.
+   verified through GitHub's public App API. On 2026-09-23, the Worker secret
+   names `SESSION_SECRET`, `GITHUB_CLIENT_SECRET`, and
+   `GITHUB_APP_PRIVATE_KEY` were confirmed, along with upstream Actions secret
+   names `LEAD_DESK_UPGRADE_APP_ID` and `LEAD_DESK_UPGRADE_APP_PRIVATE_KEY`.
+   The values were not read and PEM signing has not yet been live-tested. Do not
+   put secrets in a committed `.dev.vars`, Wrangler vars, or chat; rotate the
+   App private key if it leaks.
 5. The `lead-desk-upgrade` Worker now exists in the maintainer Cloudflare
    account. After the reviewed source reaches upstream `main`, connect it to
    that GitHub repository's `main` branch as
