@@ -54,6 +54,12 @@ pinned.
    with a link to this origin. A selected hostname alone must never be
    advertised as a live Upgrade button.
 
+GitHub only dispatches a `workflow_dispatch` workflow after its YAML exists on
+the upstream default branch. Therefore, after security review and explicit
+merge approval, first merge the central workflow **with the Upgrade badge still
+inactive**. Then complete the disposable live test and activate the badge in a
+follow-up change. The draft PR must not be described as end-to-end verified.
+
 The App user OAuth code is protected by PKCE and an encrypted state cookie. The
 short-lived session cookie is encrypted, HttpOnly, Secure and SameSite=Lax; the
 POST also requires a CSRF token and same-origin request. The service never accepts
