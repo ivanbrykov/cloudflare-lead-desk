@@ -3,6 +3,7 @@ import {
   exchangeUserCode,
   getUser,
   listUserRepositories,
+  OAuthExchangeError,
   verifyUpgradeTarget,
 } from './github.mjs';
 import { cookie, open, random, readCookie, seal } from './session.mjs';
@@ -18,6 +19,13 @@ const knownRoutes = new Set([
 ]);
 
 const failureCategory = (error) => {
+  if (error instanceof OAuthExchangeError) {
+    return {
+      kind: error.kind,
+      ...(error.upstreamStatus && { upstreamStatus: error.upstreamStatus }),
+    };
+  }
+
   const message = typeof error?.message === 'string' ? error.message : '';
   if (message === 'App JWT signing failed') {
     return { kind: 'app_jwt_signing' };
@@ -350,4 +358,8 @@ export const handle = async (
   }
 };
 
-export default { fetch: handle };
+// Cloudflare supplies ExecutionContext as the third handler argument. Keep the
+// injectable HTTP fetch parameter on handle() separate from that runtime API.
+export default {
+  fetch: (request, environment) => handle(request, environment),
+};

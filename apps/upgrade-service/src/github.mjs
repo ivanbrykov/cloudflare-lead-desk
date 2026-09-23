@@ -8,6 +8,15 @@ const repositoryPattern = /^[\w.-]+\/[\w.-]+$/u;
 const encode = (value) =>
   Buffer.from(JSON.stringify(value)).toString('base64url');
 
+export class OAuthExchangeError extends Error {
+  constructor(kind, upstreamStatus) {
+    super('GitHub OAuth exchange failed');
+    this.name = 'OAuthExchangeError';
+    this.kind = kind;
+    this.upstreamStatus = upstreamStatus;
+  }
+}
+
 export const createAppJwt = async (appId, privateKey) => {
   assert(/^\d+$/u.test(String(appId)), 'Invalid GitHub App ID');
   const now = Math.floor(Date.now() / 1_000);
@@ -61,9 +70,16 @@ export const exchangeUserCode = async (
   { clientId, clientSecret, code, codeVerifier, redirectUri },
   fetchImpl = globalThis.fetch,
 ) => {
-  const response = await fetchImpl(
-    'https://github.com/login/oauth/access_token',
-    {
+  let signal;
+  try {
+    signal = globalThis.AbortSignal.timeout(15_000);
+  } catch {
+    throw new OAuthExchangeError('oauth_timeout_signal');
+  }
+
+  let response;
+  try {
+    response = await fetchImpl('https://github.com/login/oauth/access_token', {
       body: new globalThis.URLSearchParams({
         client_id: clientId,
         client_secret: clientSecret,
@@ -76,12 +92,38 @@ export const exchangeUserCode = async (
         'Content-Type': 'application/x-www-form-urlencoded',
       },
       method: 'POST',
-      signal: globalThis.AbortSignal.timeout(15_000),
-    },
-  );
-  assert(response.ok, `GitHub authorization failed: HTTP ${response.status}`);
-  const value = await response.json();
-  assert(value.access_token, 'GitHub authorization returned no token');
+      signal,
+    });
+  } catch (error) {
+    throw new OAuthExchangeError(
+      error?.name === 'TimeoutError'
+        ? 'oauth_transport_timeout'
+        : 'oauth_transport_error',
+    );
+  }
+
+  if (!response.ok) {
+    throw new OAuthExchangeError('oauth_http', response.status);
+  }
+
+  let value;
+  try {
+    value = await response.json();
+  } catch {
+    throw new OAuthExchangeError('oauth_response_json');
+  }
+
+  if (typeof value?.access_token !== 'string' || !value.access_token) {
+    const known = new Set([
+      'bad_verification_code',
+      'incorrect_client_credentials',
+      'redirect_uri_mismatch',
+      'unverified_user_email',
+    ]);
+    const reason = known.has(value?.error) ? value.error : 'unknown';
+    throw new OAuthExchangeError(`oauth_response_${reason}`);
+  }
+
   return value.access_token;
 };
 

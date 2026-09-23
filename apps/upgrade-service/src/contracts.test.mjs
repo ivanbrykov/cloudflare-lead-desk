@@ -1,6 +1,7 @@
+import { exchangeUserCode, OAuthExchangeError } from './github.mjs';
 // Node ESM does not resolve a directory import to index.mjs.
 // eslint-disable-next-line import/no-useless-path-segments
-import { handle } from './index.mjs';
+import upgradeWorker, { handle } from './index.mjs';
 import { open, seal } from './session.mjs';
 import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
@@ -350,5 +351,142 @@ test('failure diagnostics distinguish causes without logging credentials or repo
       `${records.join(' ')} ${await result.text()}`,
       /TOP_SECRET|ld_session|client-secret-sentinel/u,
     );
+  }
+});
+
+test('OAuth exchange reports only allowlisted failure details', async () => {
+  const input = {
+    clientId: environment.GITHUB_CLIENT_ID,
+    clientSecret: environment.GITHUB_CLIENT_SECRET,
+    code: 'TOP_SECRET_AUTH_CODE',
+    codeVerifier: 'TOP_SECRET_VERIFIER',
+    redirectUri: `${origin}/callback`,
+  };
+  await assert.rejects(
+    exchangeUserCode(input, async () =>
+      response({
+        error: 'incorrect_client_credentials',
+        error_description: 'TOP_SECRET_GITHUB_DESCRIPTION',
+      }),
+    ),
+    (error) =>
+      error instanceof OAuthExchangeError &&
+      error.kind === 'oauth_response_incorrect_client_credentials' &&
+      !error.message.includes('TOP_SECRET'),
+  );
+  await assert.rejects(
+    exchangeUserCode(input, async () => {
+      throw new TypeError('TOP_SECRET_TRANSPORT_DETAIL');
+    }),
+    (error) =>
+      error instanceof OAuthExchangeError &&
+      error.kind === 'oauth_transport_error' &&
+      !error.message.includes('TOP_SECRET'),
+  );
+});
+
+test('callback logs a sanitized GitHub OAuth response category', async () => {
+  const start = await handle(
+    new globalThis.Request(`${origin}/upgrade`),
+    environment,
+  );
+  const state = new globalThis.URL(
+    start.headers.get('location'),
+  ).searchParams.get('state');
+  const oauthCookie = cookieValue(start, 'ld_oauth');
+  const records = [];
+  const original = globalThis.console.error;
+  Object.defineProperty(globalThis.console, 'error', {
+    configurable: true,
+    value: (entry) => records.push(entry),
+    writable: true,
+  });
+  let result;
+  try {
+    result = await handle(
+      new globalThis.Request(
+        `${origin}/callback?state=${state}&code=TOP_SECRET_AUTH_CODE`,
+        {
+          headers: { cookie: `ld_oauth=${oauthCookie}` },
+        },
+      ),
+      environment,
+      async () =>
+        response({
+          error: 'incorrect_client_credentials',
+          error_description: 'TOP_SECRET_GITHUB_DESCRIPTION',
+        }),
+    );
+  } finally {
+    Object.defineProperty(globalThis.console, 'error', {
+      configurable: true,
+      value: original,
+      writable: true,
+    });
+  }
+
+  const diagnostic = JSON.parse(records.at(-1));
+  assert.equal(result.status, 502);
+  assert.equal(diagnostic.kind, 'oauth_response_incorrect_client_credentials');
+  assert.equal(diagnostic.route, '/callback');
+  assert.doesNotMatch(
+    `${records.join(' ')} ${await result.text()}`,
+    /TOP_SECRET/u,
+  );
+});
+
+test('Cloudflare entry point does not use ExecutionContext as outbound fetch', async () => {
+  const calls = [];
+  const original = globalThis.fetch;
+  Object.defineProperty(globalThis, 'fetch', {
+    configurable: true,
+    value: async (url) => {
+      const path = new globalThis.URL(url).pathname;
+      calls.push(path);
+      if (path === '/login/oauth/access_token') {
+        return response({ access_token: 'user-token-sentinel' });
+      }
+
+      if (path === '/user') {
+        return response({ id: 7, login: 'owner' });
+      }
+
+      throw new Error(`Unexpected outbound path ${path}`);
+    },
+    writable: true,
+  });
+  try {
+    const executionContext = { waitUntil() {} };
+    const start = await upgradeWorker.fetch(
+      new globalThis.Request(`${origin}/upgrade`),
+      environment,
+      executionContext,
+    );
+    const state = new globalThis.URL(
+      start.headers.get('location'),
+    ).searchParams.get('state');
+    const oauthCookie = cookieValue(start, 'ld_oauth');
+    const result = await upgradeWorker.fetch(
+      new globalThis.Request(
+        `${origin}/callback?state=${state}&code=diagnostic-only`,
+        {
+          headers: { cookie: `ld_oauth=${oauthCookie}` },
+        },
+      ),
+      environment,
+      executionContext,
+    );
+    assert.equal(result.status, 303);
+    assert.equal(
+      new globalThis.URL(result.headers.get('location')).pathname,
+      '/choose',
+    );
+    assert.deepEqual(calls, ['/login/oauth/access_token', '/user']);
+  } finally {
+    Object.defineProperty(globalThis, 'fetch', {
+      configurable: true,
+      value: original,
+      writable: true,
+    });
   }
 });
