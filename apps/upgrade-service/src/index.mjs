@@ -243,15 +243,18 @@ const choose = async (request, environment, fetchImpl) => {
     );
   }
 
-  const options = repositories
-    .map(
-      (repository) =>
-        `<option value="${escapeHtml(repository.full_name)}">${escapeHtml(repository.full_name)}</option>`,
-    )
-    .join('');
+  const selection =
+    repositories.length === 1
+      ? `<p>Confirm this is the Lead Desk installation you want to upgrade: <strong>${escapeHtml(repositories[0].full_name)}</strong>.</p><input type="hidden" name="repository" value="${escapeHtml(repositories[0].full_name)}">`
+      : `<p>Select the installation to validate against the latest upstream main commit.</p><label>Installation <select name="repository" required>${repositories
+          .map(
+            (repository) =>
+              `<option value="${escapeHtml(repository.full_name)}">${escapeHtml(repository.full_name)}</option>`,
+          )
+          .join('')}</select></label>`;
   return html(
     'Upgrade Lead Desk',
-    `<p>Select the installation to validate against the latest upstream main commit.</p><form action="/confirm" method="post"><input type="hidden" name="csrf" value="${escapeHtml(session.csrf)}"><label>Installation <select name="repository" required>${options}</select></label><p><button type="submit">Validate and upgrade</button></p></form>`,
+    `<form action="/confirm" method="post"><input type="hidden" name="csrf" value="${escapeHtml(session.csrf)}">${selection}<p><button type="submit">Validate and upgrade</button></p></form>`,
   );
 };
 

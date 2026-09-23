@@ -33,6 +33,7 @@ const cookieValue = (responseObject, name) =>
 const fixture = ({
   collaboratorStatus,
   configurationBody,
+  installedRepositories = [{ full_name: repository, id: 42 }],
   permission = 'write',
   source = 'ivanbrykov/cloudflare-lead-desk',
 } = {}) => {
@@ -62,8 +63,8 @@ const fixture = ({
 
     if (address.pathname === '/user/installations/99/repositories') {
       return response({
-        repositories: [{ full_name: repository, id: 42 }],
-        total_count: 1,
+        repositories: installedRepositories,
+        total_count: installedRepositories.length,
       });
     }
 
@@ -213,6 +214,86 @@ test('OAuth state, CSRF and App scope gate a central dispatch', async () => {
     },
     ref: 'main',
   });
+});
+
+test('one consumer repository is preselected without dispatching from GET', async () => {
+  const { fetchImpl, requests } = fixture({
+    installedRepositories: [
+      { full_name: 'ivanbrykov/cloudflare-lead-desk', id: 1 },
+      { full_name: repository, id: 42 },
+    ],
+  });
+  const session = await seal(
+    {
+      accessToken: 'user-token-sentinel',
+      csrf: 'csrf-sentinel',
+      expires: Date.now() + 60_000,
+      userId: 7,
+      userLogin: 'owner',
+    },
+    environment.SESSION_SECRET,
+  );
+  const result = await handle(
+    new globalThis.Request(`${origin}/choose`, {
+      headers: { cookie: `ld_session=${session}` },
+    }),
+    environment,
+    fetchImpl,
+  );
+  const body = await result.text();
+  assert.equal(result.status, 200);
+  assert.match(body, /name="repository" value="owner\/my-lead-desk"/u);
+  assert.match(body, /name="csrf" value="csrf-sentinel"/u);
+  assert.match(body, /Validate and upgrade/u);
+  assert.doesNotMatch(body, /<select|ivanbrykov\/cloudflare-lead-desk/u);
+  assert.equal(
+    requests.some((request) => request.path.endsWith('/dispatches')),
+    false,
+  );
+});
+
+test('zero repositories prompts installation and multiple repositories retain a chooser', async () => {
+  const session = await seal(
+    {
+      accessToken: 'user-token-sentinel',
+      csrf: 'csrf-sentinel',
+      expires: Date.now() + 60_000,
+      userId: 7,
+      userLogin: 'owner',
+    },
+    environment.SESSION_SECRET,
+  );
+  const request = () =>
+    new globalThis.Request(`${origin}/choose`, {
+      headers: { cookie: `ld_session=${session}` },
+    });
+  const empty = fixture({ installedRepositories: [] });
+  const emptyResult = await handle(request(), environment, empty.fetchImpl);
+  const emptyBody = await emptyResult.text();
+  assert.equal(emptyResult.status, 200);
+  assert.match(emptyBody, /installations\/new/u);
+  assert.doesNotMatch(emptyBody, /action="\/confirm"/u);
+
+  const multiple = fixture({
+    installedRepositories: [
+      { full_name: repository, id: 42 },
+      { full_name: 'owner/another-lead-desk', id: 43 },
+    ],
+  });
+  const multipleResult = await handle(
+    request(),
+    environment,
+    multiple.fetchImpl,
+  );
+  const multipleBody = await multipleResult.text();
+  assert.equal(multipleResult.status, 200);
+  assert.match(multipleBody, /<select name="repository" required>/u);
+  assert.match(multipleBody, /owner\/my-lead-desk/u);
+  assert.match(multipleBody, /owner\/another-lead-desk/u);
+  assert.equal(
+    multiple.requests.some((entry) => entry.path.endsWith('/dispatches')),
+    false,
+  );
 });
 
 test('oversized confirmation is rejected before outbound calls', async () => {

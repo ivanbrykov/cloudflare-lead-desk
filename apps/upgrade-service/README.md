@@ -16,8 +16,9 @@ pinned.
    maintainer account's existing `ivbr.workers.dev` subdomain and Worker name
    `lead-desk-upgrade`. An initial Worker was created on 2026-09-23; after its
    secrets were configured, `GET /upgrade` returns HTTP 303 to GitHub OAuth.
-   PEM signing and workflow dispatch are unverified, so this is **not yet an
-   operational Upgrade service**. A custom domain can
+   A real user OAuth callback has reached repository selection, but App
+   installation, PEM signing, and workflow dispatch remain unverified. This is
+   **not yet an operational Upgrade service**. A custom domain can
    replace this later, but would require updating the GitHub App callback and
    the copied README button together.
 2. Register a **public GitHub App** owned by the Lead Desk maintainer. Use
@@ -72,6 +73,9 @@ POST also requires a CSRF token and same-origin request. The service never accep
 a repository name as authorization by itself: GitHub user identity, collaborator
 permission, App installation/repository scope, and `lead-desk.json` are checked
 before dispatch. The workflow rechecks identity, pin, and default-branch state.
+After App installation, a single accessible consumer repository is shown
+directly for confirmation; multiple repositories retain a chooser. Neither
+view dispatches an upgrade until the user submits **Validate and upgrade**.
 
 ## Checks
 
