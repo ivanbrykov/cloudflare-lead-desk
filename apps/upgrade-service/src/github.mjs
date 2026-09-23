@@ -12,11 +12,17 @@ export const createAppJwt = async (appId, privateKey) => {
   assert(/^\d+$/u.test(String(appId)), 'Invalid GitHub App ID');
   const now = Math.floor(Date.now() / 1_000);
   const payload = `${encode({ alg: 'RS256', typ: 'JWT' })}.${encode({ exp: now + 540, iat: now - 30, iss: String(appId) })}`;
-  const signature = sign(
-    'RSA-SHA256',
-    Buffer.from(payload),
-    createPrivateKey(privateKey.replaceAll('\\n', '\n')),
-  ).toString('base64url');
+  let signature;
+  try {
+    signature = sign(
+      'RSA-SHA256',
+      Buffer.from(payload),
+      createPrivateKey(privateKey.replaceAll('\\n', '\n')),
+    ).toString('base64url');
+  } catch {
+    throw new Error('App JWT signing failed');
+  }
+
   return `${payload}.${signature}`;
 };
 

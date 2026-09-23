@@ -116,8 +116,11 @@ approved disposable target:
 1. Generate a repository through the Cloudflare folder button and confirm it
    contains `lead-desk.json` and the README Upgrade button. The absence of
    `.github/workflows` is expected.
-2. Import that generated repository into Cloudflare, verify D1 provisioning occurs
-   before migrations/deployment, set the two runtime secrets, and redeploy.
+2. Inspect the Cloudflare application already created by the folder button;
+   do not import the repository again. Confirm D1 provisioning occurs before
+   migrations/deployment, set the two runtime secrets, and redeploy that
+   existing application. Import a repository only when it was created without
+   the Deploy button.
 3. Authorize the GitHub App once, run Upgrade, and verify its App commit triggers Workers Builds while the Worker
    name, D1 name/ID, secrets, and stored records remain unchanged.
 

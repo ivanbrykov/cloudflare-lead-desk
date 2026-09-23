@@ -9,6 +9,43 @@ import { cookie, open, random, readCookie, seal } from './session.mjs';
 import assert from 'node:assert/strict';
 
 const upstream = 'ivanbrykov/cloudflare-lead-desk';
+const knownRoutes = new Set([
+  '/',
+  '/callback',
+  '/choose',
+  '/confirm',
+  '/upgrade',
+]);
+
+const failureCategory = (error) => {
+  const message = typeof error?.message === 'string' ? error.message : '';
+  if (message === 'App JWT signing failed') {
+    return { kind: 'app_jwt_signing' };
+  }
+
+  const upstreamStatus = /HTTP (\d{3})$/u.exec(message)?.[1];
+  if (upstreamStatus && message.startsWith('GitHub API ')) {
+    return { kind: 'github_api', upstreamStatus: Number(upstreamStatus) };
+  }
+
+  if (upstreamStatus && message.startsWith('GitHub authorization failed:')) {
+    return { kind: 'github_oauth', upstreamStatus: Number(upstreamStatus) };
+  }
+
+  if (error?.name === 'TimeoutError') {
+    return { kind: 'timeout' };
+  }
+
+  if (error?.name === 'SyntaxError') {
+    return { kind: 'malformed_json' };
+  }
+
+  if (error?.name === 'AssertionError') {
+    return { kind: 'validation' };
+  }
+
+  return { kind: 'unexpected' };
+};
 
 const readSmallForm = async (request) => {
   const length = Number(request.headers.get('content-length') ?? 0);
@@ -295,6 +332,16 @@ export const handle = async (
       )
         ? 400
         : 502;
+    const path = new globalThis.URL(request.url).pathname;
+    globalThis.console.error(
+      JSON.stringify({
+        event: 'upgrade_failure',
+        method: request.method,
+        route: knownRoutes.has(path) ? path : 'other',
+        status,
+        ...failureCategory(error),
+      }),
+    );
     return html(
       'Upgrade could not start',
       '<p>Please retry or check that the GitHub App is installed for your repository.</p>',

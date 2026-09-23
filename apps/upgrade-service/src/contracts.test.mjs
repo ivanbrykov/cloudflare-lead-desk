@@ -30,6 +30,8 @@ const cookieValue = (responseObject, name) =>
     .match(new RegExp(`${name}=([^;]+)`, 'u'))?.[1];
 
 const fixture = ({
+  collaboratorStatus,
+  configurationBody,
   permission = 'write',
   source = 'ivanbrykov/cloudflare-lead-desk',
 } = {}) => {
@@ -67,16 +69,21 @@ const fixture = ({
     if (
       address.pathname === `/repos/${repository}/collaborators/owner/permission`
     ) {
+      if (collaboratorStatus) {
+        return new globalThis.Response(null, { status: collaboratorStatus });
+      }
+
       return response({ permission });
     }
 
     if (address.pathname === `/repos/${repository}/contents/lead-desk.json`) {
       return response({
         content: Buffer.from(
-          JSON.stringify({
-            repository: source,
-            revision,
-          }),
+          configurationBody ??
+            JSON.stringify({
+              repository: source,
+              revision,
+            }),
         ).toString('base64'),
         encoding: 'base64',
       });
@@ -269,6 +276,79 @@ test('read-only requester and wrong source cannot dispatch', async () => {
     assert.equal(
       requests.some((request) => request.path.endsWith('/dispatches')),
       false,
+    );
+  }
+});
+
+test('failure diagnostics distinguish causes without logging credentials or repository content', async () => {
+  const scenarios = [
+    {
+      expected: { kind: 'malformed_json', status: 502 },
+      fixtureOptions: { configurationBody: 'TOP_SECRET_CUSTOMER_CONTENT' },
+    },
+    {
+      environment: { ...environment, GITHUB_APP_PRIVATE_KEY: 'TOP_SECRET_PEM' },
+      expected: { kind: 'app_jwt_signing', status: 502 },
+    },
+    {
+      expected: { kind: 'github_api', status: 502, upstreamStatus: 403 },
+      fixtureOptions: { collaboratorStatus: 403 },
+    },
+  ];
+  for (const scenario of scenarios) {
+    const { fetchImpl } = fixture(scenario.fixtureOptions);
+    const session = await seal(
+      {
+        accessToken: 'TOP_SECRET_USER_TOKEN',
+        csrf: 'csrf',
+        expires: Date.now() + 60_000,
+        userId: 7,
+        userLogin: 'owner',
+      },
+      environment.SESSION_SECRET,
+    );
+    const request = new globalThis.Request(`${origin}/confirm`, {
+      body: new globalThis.URLSearchParams({ csrf: 'csrf', repository }),
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        cookie: `ld_session=${session}`,
+        origin,
+      },
+      method: 'POST',
+    });
+    const records = [];
+    const original = globalThis.console.error;
+    Object.defineProperty(globalThis.console, 'error', {
+      configurable: true,
+      value: (entry) => records.push(entry),
+      writable: true,
+    });
+    let result;
+    try {
+      result = await handle(
+        request,
+        scenario.environment ?? environment,
+        fetchImpl,
+      );
+    } finally {
+      Object.defineProperty(globalThis.console, 'error', {
+        configurable: true,
+        value: original,
+        writable: true,
+      });
+    }
+
+    const record = JSON.parse(records.at(-1));
+    assert.equal(result.status, scenario.expected.status);
+    assert.equal(record.event, 'upgrade_failure');
+    assert.equal(record.method, 'POST');
+    assert.equal(record.route, '/confirm');
+    assert.equal(record.status, scenario.expected.status);
+    assert.equal(record.kind, scenario.expected.kind);
+    assert.equal(record.upstreamStatus, scenario.expected.upstreamStatus);
+    assert.doesNotMatch(
+      `${records.join(' ')} ${await result.text()}`,
+      /TOP_SECRET|ld_session|client-secret-sentinel/u,
     );
   }
 });

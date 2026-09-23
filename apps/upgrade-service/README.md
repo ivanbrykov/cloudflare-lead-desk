@@ -14,10 +14,10 @@ pinned.
 1. The initial public origin is fixed to
    `https://lead-desk-upgrade.ivbr.workers.dev` in `wrangler.jsonc`, using the
    maintainer account's existing `ivbr.workers.dev` subdomain and Worker name
-   `lead-desk-upgrade`. An initial Worker was created on 2026-09-23 with only
-   public App bindings; `/upgrade` currently returns a sanitized HTTP 400 because
-   its private credentials are absent. This is **not an operational Upgrade
-   service**. A custom domain can
+   `lead-desk-upgrade`. An initial Worker was created on 2026-09-23; after its
+   secrets were configured, `GET /upgrade` returns HTTP 303 to GitHub OAuth.
+   PEM signing and workflow dispatch are unverified, so this is **not yet an
+   operational Upgrade service**. A custom domain can
    replace this later, but would require updating the GitHub App callback and
    the copied README button together.
 2. Register a **public GitHub App** owned by the Lead Desk maintainer. Use

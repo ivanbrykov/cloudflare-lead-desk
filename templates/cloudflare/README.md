@@ -12,17 +12,20 @@ through the Lead Desk GitHub App. Optionally edit the Worker `name` and D1
 `database_name` in `wrangler.jsonc` before deployment; keep those identities and
 both authentication secrets across upgrades.
 
-1. In Cloudflare Workers & Pages, choose **Create application → Import a
-   repository** and select this repository.
-2. Configure Workers Builds with:
+1. If you used the Deploy to Cloudflare button, open the Cloudflare application
+   it already created; **do not import this repository again**. Only if you
+   created the repository separately, choose **Create application → Import a
+   repository** in Cloudflare Workers & Pages and select it.
+2. Confirm Workers Builds uses:
 
    - **Build command:** `pnpm run build`
    - **Deploy command:** `pnpm run deploy`
    - **Node:** 24.20.0 or later within Node 24
    - **pnpm:** 10.34.5 (also pinned in `package.json`)
-3. Save and deploy. The trusted deploy helper creates or resolves the named D1
-   database, records its ID in the ephemeral build checkout, applies migrations,
-   and then deploys the Worker.
+3. Let the button-started build finish, or save and deploy the manual import.
+   The trusted deploy helper creates or resolves the named D1 database, records
+   its ID in the ephemeral build checkout, applies migrations, and deploys the
+   Worker.
 4. In the Worker's **Settings → Variables and Secrets**, add
    `BETTER_AUTH_SECRET` and `SETUP_TOKEN`, then redeploy before using the app.
 
