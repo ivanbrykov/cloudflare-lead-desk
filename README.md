@@ -21,8 +21,8 @@ Every deployment is independent: the repo carries no account-specific values.
 
 1. Click the button to copy only [`templates/cloudflare`](templates/cloudflare)
    into a new repository in your GitHub account and connect it to Cloudflare.
-   Cloudflare's copy omits `.github/workflows`; this installation needs no local
-   Actions workflow.
+   Cloudflare's copy omits `.github/workflows`; the copied README offers a
+   one-time link to install the small Upgrade workflow.
 2. Use **build command `pnpm run build`** and **deploy command
    `pnpm run deploy`**. The first deploy creates or resolves the named D1 database,
    applies migrations, and deploys the Worker; later deploys reuse it.
@@ -31,13 +31,13 @@ Every deployment is independent: the repo carries no account-specific values.
 
 Your generated repository owns only installation configuration; every build
 compiles Lead Desk from the exact full source SHA recorded in `lead-desk.json`.
-Ordinary rebuilds repeat the recorded revision. To upgrade, choose a full SHA
-from upstream `main` with passing CI, back up D1, review the old and new
-`drizzle/*.sql` migration history, then change only the `revision` in your
-installation's `lead-desk.json` and commit it. Cloudflare builds that exact
-revision and deploys using the existing Worker and `DB` binding. The copied
-repository's [README](templates/cloudflare/README.md#upgrade-lead-desk-manually)
-has the complete manual steps and recovery cautions.
+Ordinary rebuilds repeat the recorded revision. For manual upgrades, install
+the tiny workflow from your copied repository's
+[README](templates/cloudflare/README.md#upgrade-lead-desk) once, then use its
+Upgrade button. The workflow validates a candidate from upstream `main` and
+commits only the exact `lead-desk.json` source pin. Cloudflare then builds that
+revision using the existing Worker and `DB` binding. The README also retains
+manual pin-edit instructions and recovery cautions.
 
 No GitHub Release package or publishing token is involved. See [source-built
 installations](docs/source-built-installations.md) for pinning, migration
