@@ -31,19 +31,18 @@ Every deployment is independent: the repo carries no account-specific values.
 
 Your generated repository owns only installation configuration; every build
 compiles Lead Desk from the exact full source SHA recorded in `lead-desk.json`.
-Ordinary rebuilds repeat the recorded revision. The generated README's **Upgrade
-Lead Desk** button will open the centrally hosted Upgrade service after its
-GitHub App is activated. The installation owner authorizes the App once for that
-repository; each manual click then validates upstream `main` and creates one
-source-pin commit only when the revision changes. Deployment applies pending
-migrations to the existing `DB` binding and updates the existing Worker. Until
-the service is activated, use the existing dedicated-template path for a live
-upgrade button; do not treat this draft folder path as launched.
+Ordinary rebuilds repeat the recorded revision. To upgrade, choose a full SHA
+from upstream `main` with passing CI, back up D1, review the old and new
+`drizzle/*.sql` migration history, then change only the `revision` in your
+installation's `lead-desk.json` and commit it. Cloudflare builds that exact
+revision and deploys using the existing Worker and `DB` binding. The copied
+repository's [README](templates/cloudflare/README.md#upgrade-lead-desk-manually)
+has the complete manual steps and recovery cautions.
 
 No GitHub Release package or publishing token is involved. See [source-built
-installations](docs/source-built-installations.md) for pinning, template publishing,
-migration compatibility, live verification limits, and converting an existing
-full-source snapshot without replacing its database.
+installations](docs/source-built-installations.md) for pinning, migration
+compatibility, and converting an existing full-source snapshot without replacing
+its database.
 
 The template leaves both secrets empty. Generate separate random values for `BETTER_AUTH_SECRET` (`openssl rand -base64 32`) and `SETUP_TOKEN` (`openssl rand -hex 32`). Generate these once per installation and keep them across redeployments. The auth URL is detected automatically from the incoming request; there is no URL field to fill in.
 
@@ -371,7 +370,8 @@ Responses with a 5xx status, and failure lines, are written with `console.error`
 8. The stable source-build command, preserving its source receipt as a CI artifact.
 
 There is no package publication job. Installations compile their pinned commit with
-its frozen lockfile, and only their explicit Upgrade workflow advances that pin.
+its frozen lockfile, and only the installation owner's deliberate edit advances
+that pin.
 See [the source installation contract](docs/source-built-installations.md).
 
 ## Development

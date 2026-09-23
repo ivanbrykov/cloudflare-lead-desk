@@ -7,8 +7,8 @@ secrets. Lead Desk application code is compiled from the exact upstream commit i
 ## First deployment
 
 This repository was copied from the official Lead Desk Cloudflare folder
-template. Cloudflare does not copy `.github/workflows`; Upgrade runs centrally
-through the Lead Desk GitHub App. Optionally edit the Worker `name` and D1
+template. Cloudflare does not copy `.github/workflows`; none is needed to build
+or upgrade this installation. Optionally edit the Worker `name` and D1
 `database_name` in `wrangler.jsonc` before deployment; keep those identities and
 both authentication secrets across upgrades.
 
@@ -40,28 +40,36 @@ binding, and deploys to your existing Worker.
 The initial pin is a reachable, immutable upstream commit. No GitHub Release or
 release asset is downloaded.
 
-## Upgrade Lead Desk
+## Upgrade Lead Desk manually
 
-[![Upgrade Lead Desk — activation pending](https://img.shields.io/badge/Upgrade-activation%20pending-808080?logo=githubactions&logoColor=white)](https://github.com/ivanbrykov/cloudflare-lead-desk/blob/main/apps/upgrade-service/README.md)
+An ordinary rebuild uses the exact source commit in `lead-desk.json`; it does
+not pick up new upstream changes. To upgrade:
 
-The central service is being activated. Until its HTTPS URL and GitHub App are
-configured, the badge above opens setup information, not an Upgrade run. Do not
-change your pin by clicking a workflow in this copied repository: Cloudflare
-does not copy that workflow.
+1. Back up your D1 database. Record the current Worker name, `DB` database ID,
+   and secret **names** so you can verify they stay attached. SQL migrations are
+   forward-only; changing the source pin back is not a database rollback.
+2. Choose a commit from [upstream Lead Desk `main`](https://github.com/ivanbrykov/cloudflare-lead-desk/commits/main)
+   and confirm CI passed for that exact commit. Copy its full 40-character SHA.
+   Before editing, compare the current SHA in
+   `lead-desk.json` with the new SHA using GitHub's upstream compare view
+   (`https://github.com/ivanbrykov/cloudflare-lead-desk/compare/OLD...NEW`).
+   Check `drizzle/*.sql`: existing migrations must not be removed or changed;
+   new migration names must come after the old ones. If the candidate rewrites
+   history or is not descended from your current pin, stop and investigate.
+3. Change **only** `revision` in this repository's `lead-desk.json` to that SHA.
+   Leave `repository`, `wrangler.jsonc`, secrets, and the D1 binding/ID alone.
+   For a local preflight before committing, run `pnpm install --frozen-lockfile`,
+   `pnpm run build`, and `pnpm run deploy:dry-run` in your installation checkout.
+   A clean checkout cannot check old SQL history for you, so step 2 still matters.
+4. Commit only `lead-desk.json` to the branch connected to Cloudflare. Workers
+   Builds will compile the pinned source and deploy to the existing Worker and
+   D1 database. Check the build result and confirm the Worker name, D1 ID,
+   secrets, and stored records are unchanged. If the build fails, fix the cause
+   before retrying; do not treat an older source pin as a D1 rollback.
 
-Once activated, the button will open the central Upgrade page. Authorize the
-GitHub App once for this repository, select it, and confirm the manual upgrade.
-The upstream-hosted workflow resolves `main` to a full SHA, compiles and validates
-the candidate, checks old-pin SQL history even in a clean runner, and creates
-only one `lead-desk.json` pin commit if the revision changes. An already-current
-run makes no commit. A concurrent branch update or branch-protection rule fails
-closed rather than being bypassed.
-
-Resolution, read-only candidate validation, and the App-authored pin commit run
-in separate hosted jobs. Candidate code never shares a runner with repository
-write authority. No Cloudflare token or deploy hook is added. After the pin
-commit appears, confirm that the connected Cloudflare build starts and retains
-the same Worker and D1 IDs; this App-push behavior requires a live test.
+There is no GitHub App, local Actions workflow, Release package, or publishing
+token in this upgrade path. See [source-built installation details](https://github.com/ivanbrykov/cloudflare-lead-desk/blob/main/docs/source-built-installations.md)
+for the migration and recovery boundaries.
 
 ## Rebuild or deploy locally
 

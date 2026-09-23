@@ -64,7 +64,7 @@ const evidence = {
   limitations: [
     'Local workerd/D1 and Wrangler dry-run only; no Cloudflare deployment or GitHub template-generation test.',
     'The initial source fetch uses public GitHub; controlled upgrade revisions use a local standalone Git repository.',
-    'The central GitHub App workflow is verified separately; live App authorization, copied-repository behavior, and App-push delivery to Cloudflare are not exercised here.',
+    'A local pin change does not prove that a copied repository push triggers Cloudflare Workers Builds or preserves remote Worker/D1 identity.',
   ],
   node: process.version,
   revisions: [],
