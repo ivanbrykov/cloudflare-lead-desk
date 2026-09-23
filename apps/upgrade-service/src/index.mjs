@@ -255,6 +255,11 @@ const choose = async (request, environment, fetchImpl) => {
   return html(
     'Upgrade Lead Desk',
     `<form action="/confirm" method="post"><input type="hidden" name="csrf" value="${escapeHtml(session.csrf)}">${selection}<p><button type="submit">Validate and upgrade</button></p></form>`,
+    200,
+    // no-referrer makes browser form submissions send Origin: null, which the
+    // strict same-origin check below correctly rejects. Keep external links
+    // private while allowing the form POST to carry its real Origin.
+    { 'Referrer-Policy': 'same-origin' },
   );
 };
 

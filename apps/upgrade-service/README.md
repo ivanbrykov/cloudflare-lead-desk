@@ -76,6 +76,9 @@ before dispatch. The workflow rechecks identity, pin, and default-branch state.
 After App installation, a single accessible consumer repository is shown
 directly for confirmation; multiple repositories retain a chooser. Neither
 view dispatches an upgrade until the user submits **Validate and upgrade**.
+The confirmation page uses `Referrer-Policy: same-origin` so browser form POSTs
+carry the actual `Origin` header. Other pages retain `no-referrer`, and the
+confirmation endpoint still rejects `Origin: null` or a foreign origin.
 
 ## Checks
 

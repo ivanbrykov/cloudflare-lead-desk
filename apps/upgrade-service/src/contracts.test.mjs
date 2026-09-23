@@ -140,6 +140,7 @@ test('OAuth state, CSRF and App scope gate a central dispatch', async () => {
     fetchImpl,
   );
   assert.equal(login.status, 303);
+  assert.equal(login.headers.get('referrer-policy'), 'no-referrer');
   const state = new globalThis.URL(
     login.headers.get('location'),
   ).searchParams.get('state');
@@ -174,18 +175,29 @@ test('OAuth state, CSRF and App scope gate a central dispatch', async () => {
     fetchImpl,
   );
   assert.equal(choose.status, 200);
+  assert.equal(choose.headers.get('referrer-policy'), 'same-origin');
   assert.match(await choose.text(), /owner\/my-lead-desk/u);
 
-  const post = (csrf, selected = repository) =>
+  const post = (csrf, selected = repository, requestOrigin = origin) =>
     new globalThis.Request(`${origin}/confirm`, {
       body: new globalThis.URLSearchParams({ csrf, repository: selected }),
       headers: {
         'content-type': 'application/x-www-form-urlencoded',
         cookie: `ld_session=${sessionCookie}`,
-        origin,
+        origin: requestOrigin,
       },
       method: 'POST',
     });
+  const nullOrigin = await handle(
+    post(session.csrf, repository, 'null'),
+    environment,
+    fetchImpl,
+  );
+  assert.equal(nullOrigin.status, 400);
+  assert.equal(
+    requests.some((request) => request.path.endsWith('/dispatches')),
+    false,
+  );
   const invalidCsrf = await handle(post('wrong'), environment, fetchImpl);
   assert.equal(invalidCsrf.status, 400);
   assert.equal(
@@ -201,6 +213,7 @@ test('OAuth state, CSRF and App scope gate a central dispatch', async () => {
 
   const result = await handle(post(session.csrf), environment, fetchImpl);
   assert.equal(result.status, 200);
+  assert.equal(result.headers.get('referrer-policy'), 'no-referrer');
   assert.match(await result.text(), /Upgrade requested/u);
   const dispatch = requests.find((request) =>
     request.path.endsWith('/dispatches'),
@@ -271,6 +284,7 @@ test('zero repositories prompts installation and multiple repositories retain a 
   const emptyResult = await handle(request(), environment, empty.fetchImpl);
   const emptyBody = await emptyResult.text();
   assert.equal(emptyResult.status, 200);
+  assert.equal(emptyResult.headers.get('referrer-policy'), 'no-referrer');
   assert.match(emptyBody, /installations\/new/u);
   assert.doesNotMatch(emptyBody, /action="\/confirm"/u);
 
@@ -287,6 +301,7 @@ test('zero repositories prompts installation and multiple repositories retain a 
   );
   const multipleBody = await multipleResult.text();
   assert.equal(multipleResult.status, 200);
+  assert.equal(multipleResult.headers.get('referrer-policy'), 'same-origin');
   assert.match(multipleBody, /<select name="repository" required>/u);
   assert.match(multipleBody, /owner\/my-lead-desk/u);
   assert.match(multipleBody, /owner\/another-lead-desk/u);
