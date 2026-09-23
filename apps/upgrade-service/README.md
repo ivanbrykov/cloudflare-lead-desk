@@ -14,9 +14,10 @@ pinned.
 1. The initial public origin is fixed to
    `https://lead-desk-upgrade.ivbr.workers.dev` in `wrangler.jsonc`, using the
    maintainer account's existing `ivbr.workers.dev` subdomain and Worker name
-   `lead-desk-upgrade`. This is an address selection, **not proof that the Worker
-   exists or responds**. The Cloudflare account was inspected read-only before
-   selecting it; no matching Lead Desk Worker was present. A custom domain can
+   `lead-desk-upgrade`. An initial Worker was created on 2026-09-23 with only
+   public App bindings; `/upgrade` currently returns a sanitized HTTP 400 because
+   its private credentials are absent. This is **not an operational Upgrade
+   service**. A custom domain can
    replace this later, but would require updating the GitHub App callback and
    the copied README button together.
 2. Register a **public GitHub App** owned by the Lead Desk maintainer. Use
@@ -43,8 +44,9 @@ pinned.
    in a committed `.dev.vars` or Wrangler vars. Set upstream Actions secrets
    `LEAD_DESK_UPGRADE_APP_ID` and `LEAD_DESK_UPGRADE_APP_PRIVATE_KEY` to the same
    App identity/key. Rotate the private key if it leaks.
-5. Create/deploy the `lead-desk-upgrade` Worker in the maintainer Cloudflare
-   account and connect it to the upstream GitHub repository's `main` branch as
+5. The `lead-desk-upgrade` Worker now exists in the maintainer Cloudflare
+   account. After the reviewed source reaches upstream `main`, connect it to
+   that GitHub repository's `main` branch as
    a **separate Workers Builds project**. Set root directory to
    `apps/upgrade-service`, build command to `pnpm install --frozen-lockfile`,
    and deploy command to `pnpm run deploy`. Optionally include only
