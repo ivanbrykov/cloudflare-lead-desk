@@ -1486,32 +1486,36 @@ const OpportunityDetail = ({ id }: { readonly id: string }) => {
         </div>
         <section className="rounded-xl border border-slate-800 bg-slate-900/40 p-5">
           <h2 className="font-semibold text-white">Activity</h2>
-          <form
-            className="mt-4 grid gap-2"
-            onSubmit={(event) => {
-              event.preventDefault();
-              if (note.trim()) {
-                addNote.mutate();
-              }
-            }}
-          >
-            <textarea
-              onChange={(event) => setNote(event.target.value)}
-              placeholder="Add a note…"
-              rows={3}
-              value={note}
-            />
-            <Button
-              disabled={addNote.isPending || note.trim() === ''}
-              type="submit"
-            >
-              Add note
-            </Button>
-          </form>
-          {addNote.error && (
-            <div className="mt-3">
-              <ErrorState error={addNote.error} />
-            </div>
+          {!record.deletedAt && (
+            <>
+              <form
+                className="mt-4 grid gap-2"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  if (note.trim()) {
+                    addNote.mutate();
+                  }
+                }}
+              >
+                <textarea
+                  onChange={(event) => setNote(event.target.value)}
+                  placeholder="Add a note…"
+                  rows={3}
+                  value={note}
+                />
+                <Button
+                  disabled={addNote.isPending || note.trim() === ''}
+                  type="submit"
+                >
+                  Add note
+                </Button>
+              </form>
+              {addNote.error && (
+                <div className="mt-3">
+                  <ErrorState error={addNote.error} />
+                </div>
+              )}
+            </>
           )}
           <div className="mt-5 grid gap-4">
             {activities.isPending ? (

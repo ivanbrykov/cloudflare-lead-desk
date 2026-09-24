@@ -286,7 +286,7 @@ export const openApiSpecification = {
     '/v1/opportunities/{id}': {
       delete: {
         description:
-          'Soft-delete an opportunity. It keeps its contact, stage, custom-field values, and activity history, but disappears from `GET /v1/opportunities` and the work queue. Soft-deleting an already-deleted or unknown id returns 404 not_found; there is no restore route yet.',
+          'Soft-delete an opportunity. It keeps its contact, stage, custom-field values, and activity history, but disappears from `GET /v1/opportunities` and the work queue, and further writes (PATCH, move, activity creation) return 404 not_found. Soft-deleting an already-deleted or unknown id returns 404 not_found; there is no restore route yet.',
         responses: {
           '204': { description: 'Opportunity soft-deleted' },
           '401': { description: 'Access required' },
@@ -298,7 +298,7 @@ export const openApiSpecification = {
       },
       patch: {
         description:
-          'Update an opportunity. At least one of `name` (non-empty, no leading or trailing whitespace - the app-wide NonEmptyString contract) or `estimatedValue` (non-negative finite number, or an explicit `null` to clear it) is required. Omitted fields keep their stored values; an empty object or a whitespace-only name returns 422 validation_error, as do negative or non-finite values.',
+          'Update an opportunity. At least one of `name` (non-empty, no leading or trailing whitespace - the app-wide NonEmptyString contract) or `estimatedValue` (non-negative finite number, or an explicit `null` to clear it) is required. Omitted fields keep their stored values; an empty object or a whitespace-only name returns 422 validation_error, as do negative or non-finite values. Soft-deleted opportunities are read-only and return 404 not_found.',
         requestBody: {
           content: {
             'application/json': {

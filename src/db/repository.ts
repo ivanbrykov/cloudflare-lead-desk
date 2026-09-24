@@ -885,7 +885,7 @@ export const moveOpportunity = async (
   actorEmail: string,
 ) => {
   const opportunity = await getOpportunity(environment, opportunityId);
-  if (!opportunity) {
+  if (!opportunity || opportunity.deletedAt !== null) {
     return null;
   }
 
@@ -904,12 +904,19 @@ export const moveOpportunity = async (
   }
 
   const timestamp = now();
-  await environment.DB.batch([
+  const results = await environment.DB.batch([
     environment.DB.prepare(
-      'UPDATE opportunities SET stage_id = ?, updated_at = ? WHERE id = ?',
+      'UPDATE opportunities SET stage_id = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL',
     ).bind(stageId, timestamp, opportunityId),
+    // The activity is written only while the opportunity is still active, so
+    // a concurrent soft delete cannot leave a stage-change note behind.
     environment.DB.prepare(
-      'INSERT INTO activities (id, workspace_id, contact_id, opportunity_id, kind, body, actor_email, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      `INSERT INTO activities (id, workspace_id, contact_id, opportunity_id, kind, body, actor_email, metadata, created_at)
+       SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
+       WHERE EXISTS (
+         SELECT 1 FROM opportunities
+         WHERE id = ? AND workspace_id = ? AND deleted_at IS NULL
+       )`,
     ).bind(
       id(),
       DEFAULT_WORKSPACE_ID,
@@ -920,9 +927,13 @@ export const moveOpportunity = async (
       actorEmail,
       JSON.stringify({ stageId }),
       timestamp,
+      opportunityId,
+      DEFAULT_WORKSPACE_ID,
     ),
   ]);
-  return getOpportunity(environment, opportunityId);
+  return (results[0]?.meta.changes ?? 0) > 0
+    ? getOpportunity(environment, opportunityId)
+    : null;
 };
 
 export const updateOpportunity = async (
@@ -933,7 +944,7 @@ export const updateOpportunity = async (
   null | (OpportunityRecord & { customFields: Record<string, unknown> })
 > => {
   const existing = await getOpportunity(environment, opportunityId);
-  if (!existing) {
+  if (!existing || existing.deletedAt !== null) {
     return null;
   }
 
@@ -943,12 +954,14 @@ export const updateOpportunity = async (
     input.estimatedValue === undefined
       ? existing.estimatedValue
       : input.estimatedValue;
-  await environment.DB.prepare(
-    'UPDATE opportunities SET name = ?, estimated_value = ?, updated_at = ? WHERE id = ? AND workspace_id = ?',
+  const result = await environment.DB.prepare(
+    'UPDATE opportunities SET name = ?, estimated_value = ?, updated_at = ? WHERE id = ? AND workspace_id = ? AND deleted_at IS NULL',
   )
     .bind(name, estimatedValue, timestamp, opportunityId, DEFAULT_WORKSPACE_ID)
     .run();
-  return getOpportunity(environment, opportunityId);
+  return result.meta.changes > 0
+    ? getOpportunity(environment, opportunityId)
+    : null;
 };
 
 export const softDeleteOpportunity = async (
@@ -978,7 +991,7 @@ export const createActivity = async (
   body: string,
 ) => {
   const opportunity = await getOpportunity(environment, opportunityId);
-  if (!opportunity) {
+  if (!opportunity || opportunity.deletedAt !== null) {
     return null;
   }
 
@@ -993,8 +1006,31 @@ export const createActivity = async (
     opportunityId,
     workspaceId: DEFAULT_WORKSPACE_ID,
   };
-  await getDatabase(environment).insert(activities).values(activity);
-  return activity;
+  // Guard the insert itself so a concurrent soft delete cannot accept a note
+  // between the read above and the write.
+  const result = await environment.DB.prepare(
+    `INSERT INTO activities (id, workspace_id, contact_id, opportunity_id, kind, body, actor_email, metadata, created_at)
+     SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
+     WHERE EXISTS (
+       SELECT 1 FROM opportunities
+       WHERE id = ? AND workspace_id = ? AND deleted_at IS NULL
+     )`,
+  )
+    .bind(
+      activity.id,
+      activity.workspaceId,
+      activity.contactId,
+      activity.opportunityId,
+      activity.kind,
+      activity.body,
+      activity.actorEmail,
+      JSON.stringify(activity.metadata),
+      activity.createdAt,
+      opportunityId,
+      DEFAULT_WORKSPACE_ID,
+    )
+    .run();
+  return result.meta.changes > 0 ? activity : null;
 };
 
 export const listActivities = async (environment: Env, opportunityId: string) =>

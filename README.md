@@ -323,8 +323,8 @@ existing opportunity. It accepts `{ name?, estimatedValue? }`:
 - `estimatedValue` must be a non-negative finite number. An explicit `null`
   clears the stored value; omitting the field keeps it. Negative or
   non-finite values return `422 validation_error`.
-- Unknown ids return `404 not_found`. Staff authentication is
-  required; missing or invalid identities return `401 unauthorized`.
+- Unknown and soft-deleted ids return `404 not_found`. Staff authentication
+  is required; missing or invalid identities return `401 unauthorized`.
 
 The workbench exposes the endpoint as a minimal "Edit details" form on the
 opportunity detail page, and the board lists active pipelines in a pipeline
@@ -342,6 +342,9 @@ history. `deletedAt` is set and `updatedAt` moves forward.
   still returns the record with `deletedAt` so existing links resolve.
 - Soft-deleting an already-deleted, unknown, or malformed id returns
   `404 not_found`; there is no restore route.
+- Soft-deleted opportunities are read-only: `PATCH /v1/opportunities/:id`,
+  `POST /v1/opportunities/:id/move`, and activity creation return
+  `404 not_found`. The record and its activity history stay readable.
 - Staff authentication is required; missing or invalid identities return
   `401 unauthorized`.
 

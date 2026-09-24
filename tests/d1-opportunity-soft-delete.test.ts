@@ -11,6 +11,8 @@ import { expect, test } from 'vitest';
  *   and without the pipelineId filter) while the row, its custom-field
  *   values, and its activity history stay in D1;
  * - the deleted record stays fetchable by id and reports `deletedAt`;
+ * - the deleted record is read-only: PATCH, move, and activity writes return
+ *   404 not_found and leave the row and its activity history untouched;
  * - soft deletion is one-way: a second DELETE, an unknown id, and a malformed
  *   id return 404 not_found without touching any row;
  * - the deletion timestamp is persisted and `updatedAt` moves forward;
@@ -189,6 +191,7 @@ const tick = () =>
 const createOpportunity = async (
   fx: SoftDeleteFixture,
   name: string,
+  customFields?: Record<string, unknown>,
 ): Promise<Opportunity> => {
   const contact = await fx.ok<{ id: string }>('/v1/contacts', 'POST', {
     email: `${name.toLowerCase().replaceAll(/\W+/gu, '-')}@example.test`,
@@ -196,6 +199,7 @@ const createOpportunity = async (
   });
   return fx.ok<Opportunity>('/v1/opportunities', 'POST', {
     contactId: contact.id,
+    ...(customFields === undefined ? {} : { customFields }),
     name,
   });
 };
@@ -211,7 +215,15 @@ const opportunityRow = (fx: SoftDeleteFixture, id: string) =>
 test('DELETE soft-deletes an opportunity, hides it from listings, and keeps the record', async () => {
   const fx = await startFixture();
   try {
-    const deleted = await createOpportunity(fx, 'Deleted deal');
+    await fx.ok('/v1/custom-fields', 'POST', {
+      entityType: 'opportunity',
+      key: 'segment',
+      label: 'Segment',
+      type: 'text',
+    });
+    const deleted = await createOpportunity(fx, 'Deleted deal', {
+      segment: 'Enterprise',
+    });
     const kept = await createOpportunity(fx, 'Kept deal');
     await fx.ok(`/v1/opportunities/${deleted.id}/activities`, 'POST', {
       body: 'Called the customer',
@@ -253,6 +265,7 @@ test('DELETE soft-deletes an opportunity, hides it from listings, and keeps the 
     expect(read.name).toBe('Deleted deal');
     expect(read.stageId).toBe(deleted.stageId);
     expect(read.contact.id).toBe(deleted.contact.id);
+    expect(read.customFields).toEqual({ segment: 'Enterprise' });
 
     const activities = await fx.ok<Array<{ body: string }>>(
       `/v1/opportunities/${deleted.id}/activities`,
@@ -261,6 +274,63 @@ test('DELETE soft-deletes an opportunity, hides it from listings, and keeps the 
     expect(
       activities.some((activity) => activity.body === 'Called the customer'),
     ).toBe(true);
+  } finally {
+    await fx.dispose();
+  }
+});
+
+test('writes to a soft-deleted opportunity are rejected and leave no trace', async () => {
+  const fx = await startFixture();
+  try {
+    const opportunity = await createOpportunity(fx, 'Read only');
+    await tick();
+    const first = await fx.api(`/v1/opportunities/${opportunity.id}`, 'DELETE');
+    expect(first.status, JSON.stringify(first)).toBe(204);
+    const row = (await opportunityRow(fx, opportunity.id)) as Record<
+      string,
+      null | string
+    >;
+
+    const rename = await fx.api(
+      `/v1/opportunities/${opportunity.id}`,
+      'PATCH',
+      { name: 'Resurrected' },
+    );
+    expect(rename.status, JSON.stringify(rename)).toBe(404);
+    expect(rename.json.code, JSON.stringify(rename)).toBe('not_found');
+
+    const move = await fx.api(
+      `/v1/opportunities/${opportunity.id}/move`,
+      'POST',
+      { stageId: opportunity.stageId },
+    );
+    expect(move.status, JSON.stringify(move)).toBe(404);
+    expect(move.json.code, JSON.stringify(move)).toBe('not_found');
+
+    const noteWrite = await fx.api(
+      `/v1/opportunities/${opportunity.id}/activities`,
+      'POST',
+      { body: 'Should not be stored', kind: 'note' },
+    );
+    expect(noteWrite.status, JSON.stringify(noteWrite)).toBe(404);
+    expect(noteWrite.json.code, JSON.stringify(noteWrite)).toBe('not_found');
+
+    const after = (await opportunityRow(fx, opportunity.id)) as Record<
+      string,
+      null | string
+    >;
+    expect(after.name).toBe('Read only');
+    expect(after.deleted_at).toBe(row.deleted_at);
+    expect(after.updated_at).toBe(row.updated_at);
+
+    // Only the creation activity exists; the rejected note was not stored.
+    const activities = await fx.ok<Array<{ body: string }>>(
+      `/v1/opportunities/${opportunity.id}/activities`,
+      'GET',
+    );
+    expect(activities.map((activity) => activity.body)).toEqual([
+      'Created manually',
+    ]);
   } finally {
     await fx.dispose();
   }
