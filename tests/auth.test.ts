@@ -44,6 +44,7 @@ const bundleWorker = async (): Promise<string> => {
   await assertRepoRoot();
   const bundled = await build({
     bundle: true,
+    conditions: ['workerd'],
     entryPoints: [join(repoRoot, 'src/worker-global.ts')],
     external: ['cloudflare:*', 'node:*'],
     format: 'esm',
