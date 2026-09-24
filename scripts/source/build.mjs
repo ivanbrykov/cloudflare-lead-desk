@@ -110,7 +110,8 @@ await build({
   bundle: true,
   // This bundle runs inside workerd after installation. Selecting browser
   // exports here would embed Better Auth's shared-slot async-storage polyfill.
-  conditions: ['workerd'],
+  // Keep esbuild's usual `module` condition when adding a custom condition.
+  conditions: ['workerd', 'module'],
   external: ['cloudflare:*', 'node:*'],
   format: 'esm',
   legalComments: 'linked',
