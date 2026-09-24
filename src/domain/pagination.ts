@@ -11,9 +11,10 @@
 
 const URL_BASE64_ALPHABET = /^[\w-]+$/u;
 
-// Every created_at written by the app is a UTC ISO-8601 instant
-// (Date.prototype.toISOString), so a cursor whose createdAt does not match
-// this shape is treated as tampered rather than as a seek position.
+// The cursor payload carries createdAt as a UTC ISO-8601 instant
+// (Date.prototype.toISOString) even though timestamps are stored as Unix
+// milliseconds, so a cursor whose createdAt does not match this shape is
+// treated as tampered rather than as a seek position.
 const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/u;
 
 export type ContactKeyset = {

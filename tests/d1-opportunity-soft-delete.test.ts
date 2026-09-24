@@ -231,7 +231,7 @@ test('DELETE soft-deletes an opportunity, hides it from listings, and keeps the 
     });
     const before = (await opportunityRow(fx, deleted.id)) as Record<
       string,
-      null | string
+      null | number | string
     >;
 
     await tick();
@@ -240,9 +240,9 @@ test('DELETE soft-deletes an opportunity, hides it from listings, and keeps the 
 
     const row = (await opportunityRow(fx, deleted.id)) as Record<
       string,
-      null | string
+      null | number | string
     >;
-    expect(typeof row.deleted_at).toBe('string');
+    expect(typeof row.deleted_at).toBe('number');
     expect(row.name).toBe('Deleted deal');
     expect(row.updated_at, 'updated_at must move forward on delete').not.toBe(
       before.updated_at,
@@ -261,7 +261,9 @@ test('DELETE soft-deletes an opportunity, hides it from listings, and keeps the 
       `/v1/opportunities/${deleted.id}`,
       'GET',
     );
-    expect(read.deletedAt).toBe(row.deleted_at);
+    expect(read.deletedAt).toBe(
+      new Date(row.deleted_at as number).toISOString(),
+    );
     expect(read.name).toBe('Deleted deal');
     expect(read.stageId).toBe(deleted.stageId);
     expect(read.contact.id).toBe(deleted.contact.id);
@@ -288,7 +290,7 @@ test('writes to a soft-deleted opportunity are rejected and leave no trace', asy
     expect(first.status, JSON.stringify(first)).toBe(204);
     const row = (await opportunityRow(fx, opportunity.id)) as Record<
       string,
-      null | string
+      null | number | string
     >;
 
     const rename = await fx.api(
@@ -317,7 +319,7 @@ test('writes to a soft-deleted opportunity are rejected and leave no trace', asy
 
     const after = (await opportunityRow(fx, opportunity.id)) as Record<
       string,
-      null | string
+      null | number | string
     >;
     expect(after.name).toBe('Read only');
     expect(after.deleted_at).toBe(row.deleted_at);
@@ -344,7 +346,7 @@ test('DELETE is one-way: soft-deleted, unknown, and malformed ids return 404 wit
     const first = await fx.api(`/v1/opportunities/${opportunity.id}`, 'DELETE');
     expect(first.status, JSON.stringify(first)).toBe(204);
     const deletedAt = (await opportunityRow(fx, opportunity.id))
-      ?.deleted_at as string;
+      ?.deleted_at as number;
 
     await tick();
     const second = await fx.api(
@@ -367,7 +369,7 @@ test('DELETE is one-way: soft-deleted, unknown, and malformed ids return 404 wit
 
     const row = (await opportunityRow(fx, opportunity.id)) as Record<
       string,
-      null | string
+      null | number | string
     >;
     expect(row.deleted_at).toBe(deletedAt);
   } finally {

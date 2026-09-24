@@ -50,6 +50,13 @@
       "when": 1790278335830,
       "tag": "0006_natural_maximus",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1790281878545,
+      "tag": "0007_melted_nehzno",
+      "breakpoints": true
     }
   ]
 }

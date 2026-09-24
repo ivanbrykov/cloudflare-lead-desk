@@ -22,7 +22,7 @@ import { expect, test } from 'vitest';
 
 const repoRoot = process.cwd();
 const DAY_MS = 86_400_000;
-const NOW = '2026-08-14T00:00:00.000Z';
+const NOW = Date.parse('2026-08-14T00:00:00.000Z');
 
 type Row = Record<string, unknown>;
 
@@ -105,7 +105,7 @@ const freshDatabase = async (): Promise<{
 const insertInvite = (
   database: D1Database,
   tokenHash: string,
-  expiresAt: string,
+  expiresAt: number,
 ): Promise<D1Result> =>
   database
     .prepare(
@@ -116,7 +116,7 @@ const insertInvite = (
       'Fixture',
       tokenHash,
       tokenHash.slice(0, 4),
-      '2026-08-01T00:00:00.000Z',
+      Date.parse('2026-08-01T00:00:00.000Z'),
       expiresAt,
     )
     .run();
@@ -196,7 +196,7 @@ test('fresh database: claim ledger table, unique claim_key, guard trigger', asyn
         "INSERT INTO user (id, name, email) VALUES ('u-1', 'A', 'u1@test')",
       )
       .run();
-    await insertInvite(db, 'hash-del', '2999-01-01T00:00:00.000Z');
+    await insertInvite(db, 'hash-del', Date.parse('2999-01-01T00:00:00.000Z'));
     await db
       .prepare(
         'INSERT INTO registration_claims (id, grant_kind, grant_ref, claim_key, user_id, created_at) VALUES (?, ?, ?, ?, ?, ?)',
@@ -285,11 +285,7 @@ test('invite redemption: single use, revocation, expiry, duplicate email, race',
   const { db, dispose } = await freshDatabase();
   try {
     // Single use: the invite is consumed exactly once.
-    await insertInvite(
-      db,
-      'hash-one',
-      new Date(Date.parse(NOW) + 7 * DAY_MS).toISOString(),
-    );
+    await insertInvite(db, 'hash-one', NOW + 7 * DAY_MS);
     const first = await redeemRegistration(
       db,
       redeemInput({ kind: 'invite', tokenHash: 'hash-one' }, 'inv-1'),
@@ -310,20 +306,12 @@ test('invite redemption: single use, revocation, expiry, duplicate email, race',
     expect(await allRows(db, 'SELECT id FROM user')).toHaveLength(1);
 
     // Revoked and expired invites are unavailable.
-    await insertInvite(
-      db,
-      'hash-two',
-      new Date(Date.parse(NOW) + 7 * DAY_MS).toISOString(),
-    );
+    await insertInvite(db, 'hash-two', NOW + 7 * DAY_MS);
     await db
       .prepare('UPDATE staff_invites SET revoked_at = ? WHERE token_hash = ?')
       .bind(NOW, 'hash-two')
       .run();
-    await insertInvite(
-      db,
-      'hash-old',
-      new Date(Date.parse(NOW) - DAY_MS).toISOString(),
-    );
+    await insertInvite(db, 'hash-old', NOW - DAY_MS);
     await insertInvite(db, 'hash-eq', NOW);
     for (const tokenHash of ['hash-two', 'hash-old', 'hash-eq']) {
       await expect(
@@ -337,11 +325,7 @@ test('invite redemption: single use, revocation, expiry, duplicate email, race',
     expect(await allRows(db, 'SELECT id FROM user')).toHaveLength(1);
 
     // Duplicate email: rejected with email_exists, the invite stays usable.
-    await insertInvite(
-      db,
-      'hash-three',
-      new Date(Date.parse(NOW) + 7 * DAY_MS).toISOString(),
-    );
+    await insertInvite(db, 'hash-three', NOW + 7 * DAY_MS);
     await db
       .prepare('INSERT INTO user (id, name, email) VALUES (?, ?, ?)')
       .bind('user-taken', 'Taken', 'taken@example.test')
@@ -368,11 +352,7 @@ test('invite redemption: single use, revocation, expiry, duplicate email, race',
 
     // Two-request race on the same invite: exactly one redemption commits,
     // and the loser rolls back its user/account/claim writes in full.
-    await insertInvite(
-      db,
-      'hash-race',
-      new Date(Date.parse(NOW) + 7 * DAY_MS).toISOString(),
-    );
+    await insertInvite(db, 'hash-race', NOW + 7 * DAY_MS);
     const outcomes = await Promise.allSettled(
       [0, 1].map((index) =>
         redeemRegistration(

@@ -63,7 +63,7 @@ export const DEFAULT_STAGE_ID = '01ARZ3NDEKTSV4RRFFQ69G5FAX';
 
 const ULID_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 
-const now = (): string => new Date().toISOString();
+const now = (): Date => new Date();
 const id = (): string => {
   let timestamp = Date.now();
   let result = '';
@@ -79,16 +79,16 @@ const id = (): string => {
 };
 
 export type ContactRecord = {
-  createdAt: string;
+  createdAt: Date;
   email: null | string;
   firstName: null | string;
   id: string;
   lastName: null | string;
-  updatedAt: string;
+  updatedAt: Date;
 };
 
 export type FieldDefinitionRecord = {
-  archivedAt: null | string;
+  archivedAt: Date | null;
   entityType: FieldEntity;
   id: string;
   key: string;
@@ -100,15 +100,15 @@ export type FieldDefinitionRecord = {
 
 export type OpportunityRecord = {
   contact: ContactRecord;
-  createdAt: string;
-  deletedAt: null | string;
+  createdAt: Date;
+  deletedAt: Date | null;
   estimatedValue: null | number;
   id: string;
   name: string;
   pipelineId: string;
   source: string;
   stageId: string;
-  updatedAt: string;
+  updatedAt: Date;
 };
 
 const getDatabase = (environment: Env) => drizzle(environment.DB);
@@ -260,7 +260,7 @@ const upsertFieldValue = (
   entityType: FieldEntity,
   entityId: string,
   value: NormalizedFieldValue,
-  timestamp: string,
+  timestamp: Date,
 ): D1PreparedStatement =>
   environment.DB.prepare(
     `INSERT INTO custom_field_values (
@@ -283,8 +283,8 @@ const upsertFieldValue = (
     value.valueNumber,
     value.valueBoolean,
     value.valueDate,
-    timestamp,
-    timestamp,
+    timestamp.getTime(),
+    timestamp.getTime(),
   );
 
 const deleteFieldValue = (
@@ -302,7 +302,7 @@ const fieldWriteStatements = (
   entityType: FieldEntity,
   entityId: string,
   writes: CustomFieldWrite[],
-  timestamp: string,
+  timestamp: Date,
 ): D1PreparedStatement[] =>
   writes.flatMap((write) =>
     write.kind === 'set'
@@ -348,8 +348,11 @@ export const listContacts = async (
   }
 
   if (cursor) {
+    // The cursor stays ISO-8601 on the wire (see domain/pagination); the
+    // stored column is Unix milliseconds.
+    const cursorTime = Date.parse(cursor.createdAt);
     predicates.push(
-      sql`(${contacts.createdAt} < ${cursor.createdAt} OR (${contacts.createdAt} = ${cursor.createdAt} AND ${contacts.id} < ${cursor.id}))`,
+      sql`(${contacts.createdAt} < ${cursorTime} OR (${contacts.createdAt} = ${cursorTime} AND ${contacts.id} < ${cursor.id}))`,
     );
   }
 
@@ -375,7 +378,10 @@ export const listContacts = async (
     contacts: contactsPage,
     nextCursor:
       hasNextPage && last
-        ? encodeContactCursor({ createdAt: last.createdAt, id: last.id })
+        ? encodeContactCursor({
+            createdAt: last.createdAt.toISOString(),
+            id: last.id,
+          })
         : null,
   };
 };
@@ -425,8 +431,8 @@ export const createContact = async (
       email,
       input.firstName ?? null,
       input.lastName ?? null,
-      timestamp,
-      timestamp,
+      timestamp.getTime(),
+      timestamp.getTime(),
     ),
     ...fieldWriteStatements(
       environment,
@@ -473,7 +479,7 @@ export const updateContact = async (
       input.firstName ?? null,
       input.lastName ?? null,
       email,
-      timestamp,
+      timestamp.getTime(),
       contactId,
       DEFAULT_WORKSPACE_ID,
     ),
@@ -653,8 +659,8 @@ export const createManualOpportunity = async (
         email,
         input.contact.firstName ?? null,
         input.contact.lastName ?? null,
-        timestamp,
-        timestamp,
+        timestamp.getTime(),
+        timestamp.getTime(),
       ),
     );
   }
@@ -671,8 +677,8 @@ export const createManualOpportunity = async (
       input.name,
       input.source ?? 'manual',
       input.estimatedValue ?? null,
-      timestamp,
-      timestamp,
+      timestamp.getTime(),
+      timestamp.getTime(),
     ),
     environment.DB.prepare(
       'INSERT INTO activities (id, workspace_id, contact_id, opportunity_id, kind, body, actor_email, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
@@ -685,7 +691,7 @@ export const createManualOpportunity = async (
       'Created manually',
       actorEmail,
       JSON.stringify({ source: input.source ?? 'manual' }),
-      timestamp,
+      timestamp.getTime(),
     ),
   );
   // A manual opportunity is a creation: clear writes are impossible, and the
@@ -907,7 +913,7 @@ export const moveOpportunity = async (
   const results = await environment.DB.batch([
     environment.DB.prepare(
       'UPDATE opportunities SET stage_id = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL',
-    ).bind(stageId, timestamp, opportunityId),
+    ).bind(stageId, timestamp.getTime(), opportunityId),
     // The activity is written only while the opportunity is still active, so
     // a concurrent soft delete cannot leave a stage-change note behind.
     environment.DB.prepare(
@@ -926,7 +932,7 @@ export const moveOpportunity = async (
       `Moved to ${stage.name}`,
       actorEmail,
       JSON.stringify({ stageId }),
-      timestamp,
+      timestamp.getTime(),
       opportunityId,
       DEFAULT_WORKSPACE_ID,
     ),
@@ -957,7 +963,13 @@ export const updateOpportunity = async (
   const result = await environment.DB.prepare(
     'UPDATE opportunities SET name = ?, estimated_value = ?, updated_at = ? WHERE id = ? AND workspace_id = ? AND deleted_at IS NULL',
   )
-    .bind(name, estimatedValue, timestamp, opportunityId, DEFAULT_WORKSPACE_ID)
+    .bind(
+      name,
+      estimatedValue,
+      timestamp.getTime(),
+      opportunityId,
+      DEFAULT_WORKSPACE_ID,
+    )
     .run();
   return result.meta.changes > 0
     ? getOpportunity(environment, opportunityId)
@@ -1025,7 +1037,7 @@ export const createActivity = async (
       activity.body,
       activity.actorEmail,
       JSON.stringify(activity.metadata),
-      activity.createdAt,
+      activity.createdAt.getTime(),
       opportunityId,
       DEFAULT_WORKSPACE_ID,
     )
@@ -1101,7 +1113,9 @@ export const createApiToken = async (
   const record = {
     createdAt: now(),
     expiresAt:
-      expiresAt ?? new Date(Date.now() + TOKEN_DEFAULT_TTL_MS).toISOString(),
+      expiresAt === undefined
+        ? new Date(Date.now() + TOKEN_DEFAULT_TTL_MS)
+        : new Date(expiresAt),
     id: id(),
     name,
     prefix: raw.slice(0, 12),
@@ -1163,13 +1177,13 @@ export const revokeApiToken = async (environment: Env, tokenId: string) => {
 const INVITE_DEFAULT_TTL_MS = 7 * 86_400_000;
 
 export type InviteRecord = {
-  createdAt: string;
-  expiresAt: string;
+  createdAt: Date;
+  expiresAt: Date;
   id: string;
   name: string;
   prefix: string;
-  revokedAt: null | string;
-  usedAt: null | string;
+  revokedAt: Date | null;
+  usedAt: Date | null;
 };
 
 export const createStaffInvite = async (
@@ -1184,7 +1198,9 @@ export const createStaffInvite = async (
   const record: InviteRecord = {
     createdAt: now(),
     expiresAt:
-      expiresAt ?? new Date(Date.now() + INVITE_DEFAULT_TTL_MS).toISOString(),
+      expiresAt === undefined
+        ? new Date(Date.now() + INVITE_DEFAULT_TTL_MS)
+        : new Date(expiresAt),
     id: id(),
     name,
     prefix: raw.slice(0, 12),
@@ -1249,7 +1265,7 @@ export const availableStaffInviteGrant = async (
     record === undefined ||
     record.revokedAt !== null ||
     record.usedAt !== null ||
-    record.expiresAt <= now()
+    record.expiresAt.getTime() <= now().getTime()
   ) {
     return undefined;
   }
@@ -1291,7 +1307,7 @@ export const isBootstrapGrantAvailable = async (
     bootstrap !== undefined &&
     bootstrap.consumedAt === null &&
     account === undefined &&
-    bootstrap.expiresAt > now()
+    bootstrap.expiresAt.getTime() > now().getTime()
   );
 };
 
@@ -1585,7 +1601,9 @@ export const createIntakeAtomically = async (
   idempotencyKey: string,
   requestHash: string,
 ): Promise<IntakePersistenceOutcome> => {
-  const timestamp = now();
+  // Raw D1 binds do not accept Date, and every use in this function is a
+  // raw statement, so work in Unix milliseconds directly.
+  const timestamp = now().getTime();
   const opportunityId = id();
   const activityId = id();
   const email = normalizeEmail(input.contact.email);

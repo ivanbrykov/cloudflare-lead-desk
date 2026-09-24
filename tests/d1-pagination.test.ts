@@ -106,8 +106,9 @@ const ok = async <T>(
 };
 
 const pad = (value: number) => String(value).padStart(24, '0');
+// App timestamps are Unix milliseconds (migration 0007); unique per index.
 const ts = (offsetSeconds: number) =>
-  new Date(Date.UTC(2_026, 0, 1, 0, 0, offsetSeconds)).toISOString();
+  Date.UTC(2_026, 0, 1, 0, 0, offsetSeconds);
 
 /**
  * Inserts contacts directly (fast) with unique created_at values in i order.

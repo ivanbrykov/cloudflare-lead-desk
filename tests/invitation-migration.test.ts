@@ -21,7 +21,6 @@ import { expect, test } from 'vitest';
 const repoRoot = process.cwd();
 const MIGRATION = '0004_invitation_foundation.sql';
 const DAY_MS = 86_400_000;
-const ISO8601 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u;
 
 type Row = Record<string, unknown>;
 
@@ -91,10 +90,13 @@ const startD1 = async (): Promise<{
   return { db: database, dispose: () => mf.dispose() };
 };
 
-const expectSevenDayGap = (createdAt: string, expiresAt: string): void => {
-  expect(ISO8601.test(createdAt), createdAt).toBe(true);
-  expect(ISO8601.test(expiresAt), expiresAt).toBe(true);
-  const gap = Date.parse(expiresAt) - Date.parse(createdAt);
+// Timestamps are ISO-8601 text before migration 0007 and Unix milliseconds
+// after it; the fresh-database path applies every migration, so normalize.
+const toEpochMs = (value: unknown): number =>
+  typeof value === 'number' ? value : Date.parse(String(value));
+
+const expectSevenDayGap = (createdAt: unknown, expiresAt: unknown): void => {
+  const gap = toEpochMs(expiresAt) - toEpochMs(createdAt);
   expect(
     Math.abs(gap - 7 * DAY_MS),
     `created=${createdAt} expires=${expiresAt}`,
@@ -109,22 +111,24 @@ test('fresh database: new tables, unconsumed bootstrap seed, uniqueness and FK b
     }
 
     // Exact column sets, in schema order, for the two new tables.
+    // Migration 0007 rebuilds both tables, so columns are in the current
+    // schema (drizzle-kit) order rather than the original 0004 order.
     expect(await columnNameList(db, 'staff_invites')).toEqual([
-      'id',
-      'name',
-      'token_hash',
-      'prefix',
       'created_at',
       'expires_at',
-      'used_at',
+      'id',
+      'name',
+      'prefix',
       'revoked_at',
+      'token_hash',
+      'used_at',
       'used_by_user_id',
     ]);
     expect(await columnNameList(db, 'bootstrap_state')).toEqual([
-      'id',
+      'consumed_at',
       'created_at',
       'expires_at',
-      'consumed_at',
+      'id',
     ]);
 
     // Additive columns on the existing tables.
@@ -140,14 +144,16 @@ test('fresh database: new tables, unconsumed bootstrap seed, uniqueness and FK b
       (await allRows(db, 'SELECT COUNT(*) AS n FROM bootstrap_state'))[0].n,
     ).toBe(1);
     expect(fresh.consumed_at).toBeNull();
-    expectSevenDayGap(String(fresh.created_at), String(fresh.expires_at));
+    expectSevenDayGap(fresh.created_at, fresh.expires_at);
 
     // The singleton CHECK rejects any other id.
+    const isoStart = Date.parse('2026-01-01T00:00:00.000Z');
     await expect(
       db
         .prepare(
-          "INSERT INTO bootstrap_state (id, created_at, expires_at) VALUES ('other', '2026-01-01T00:00:00.000Z', '2026-01-08T00:00:00.000Z')",
+          'INSERT INTO bootstrap_state (id, created_at, expires_at) VALUES (?, ?, ?)',
         )
+        .bind('other', isoStart, isoStart + 7 * DAY_MS)
         .run(),
     ).rejects.toThrow(/CHECK constraint failed/u);
 
@@ -162,8 +168,8 @@ test('fresh database: new tables, unconsumed bootstrap seed, uniqueness and FK b
           'Invite',
           'sha256-of-token-a',
           'inv_ab',
-          '2026-01-01T00:00:00.000Z',
-          '2026-01-08T00:00:00.000Z',
+          isoStart,
+          isoStart + 7 * DAY_MS,
         )
         .run();
     await insertInvite('invite-1');
@@ -183,7 +189,7 @@ test('fresh database: new tables, unconsumed bootstrap seed, uniqueness and FK b
       .prepare(
         'UPDATE staff_invites SET used_at = ?, used_by_user_id = ? WHERE id = ?',
       )
-      .bind('2026-01-02T00:00:00.000Z', 'user-invite', 'invite-1')
+      .bind(isoStart + DAY_MS, 'user-invite', 'invite-1')
       .run();
     await db.prepare("DELETE FROM user WHERE id = 'user-invite'").run();
     const survived = await singleRow(
@@ -192,7 +198,7 @@ test('fresh database: new tables, unconsumed bootstrap seed, uniqueness and FK b
       'invite-1',
     );
     expect(survived.used_by_user_id).toBeNull();
-    expect(survived.used_at).toBe('2026-01-02T00:00:00.000Z');
+    expect(survived.used_at).toBe(isoStart + DAY_MS);
   } finally {
     await dispose();
   }
@@ -203,11 +209,9 @@ test('upgrade database: rows preserved, bootstrap consumed, seed rerun is a no-o
   try {
     const names = await listMigrations();
     expect(names).toContain(MIGRATION);
-    for (const name of names) {
-      if (name === MIGRATION) {
-        continue;
-      }
-
+    // This upgrade path verifies migration 0004 itself: apply only the
+    // migrations that precede it, then seed, then apply 0004.
+    for (const name of names.filter((candidate) => candidate < MIGRATION)) {
       await applyFile(db, name);
     }
 
@@ -336,7 +340,7 @@ test('upgrade database: rows preserved, bootstrap consumed, seed rerun is a no-o
     );
     expect(boot.consumed_at).not.toBeNull();
     expect(boot.consumed_at).toBe(boot.created_at);
-    expectSevenDayGap(String(boot.created_at), String(boot.expires_at));
+    expectSevenDayGap(boot.created_at, boot.expires_at);
 
     // Rerunning only the seed statement must not refresh or reopen it.
     const statements = splitStatements(
