@@ -226,6 +226,28 @@ test('an unauthenticated request is rejected with 401', async () => {
   }
 });
 
+test('an unexpected session lookup failure is a generic 500, not a 401', async () => {
+  const fx = await startFixture();
+  try {
+    // A valid session cookie, then the session table disappears: this is a
+    // D1 fault mid-lookup, not proof of an invalid session.
+    const cookie = await signUp(fx);
+    await fx.db.prepare('DROP TABLE session').run();
+    const result = await fx.raw('/v1/contacts', 'GET', undefined, {
+      Cookie: cookie,
+    });
+    expect(result.status, JSON.stringify(result)).toBe(500);
+    expect(result.json.code, JSON.stringify(result)).toBe(
+      'authentication_unavailable',
+    );
+    expect(result.json.message, JSON.stringify(result)).toBe(
+      'Authentication could not be checked. Please try again.',
+    );
+  } finally {
+    await fx.dispose();
+  }
+});
+
 test('sign-up without an invite token is rejected and grants no access', async () => {
   const fx = await startFixture();
   try {

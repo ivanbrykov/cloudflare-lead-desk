@@ -1,3 +1,4 @@
+import { logAuthMessage } from './logging';
 import { drizzleAdapter } from '@better-auth/drizzle-adapter';
 import { betterAuth } from 'better-auth';
 import { drizzle } from 'drizzle-orm/sqlite-proxy';
@@ -14,4 +15,5 @@ export const auth = betterAuth({
     { provider: 'sqlite' },
   ),
   emailAndPassword: { enabled: true },
+  logger: { level: 'warn', log: logAuthMessage },
 });
