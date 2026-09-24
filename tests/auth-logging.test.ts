@@ -22,3 +22,22 @@ test('auth logger keeps error classes but never logs bound values', () => {
     errorLog.mockRestore();
   }
 });
+
+test('auth logger preserves a safe code for weak-secret warnings', () => {
+  const warningLog = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  try {
+    logAuthMessage(
+      'warn',
+      '[better-auth] Warning: your BETTER_AUTH_SECRET appears low-entropy. Use a randomly generated secret for production.',
+    );
+
+    expect(warningLog).toHaveBeenCalledOnce();
+    expect(JSON.parse(warningLog.mock.calls[0][0] as string)).toEqual({
+      diagnosticCode: 'low_entropy_auth_secret',
+      event: 'auth.library',
+      level: 'warn',
+    });
+  } finally {
+    warningLog.mockRestore();
+  }
+});

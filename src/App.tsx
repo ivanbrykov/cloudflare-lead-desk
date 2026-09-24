@@ -6,7 +6,13 @@ import {
   type CreateCustomField,
   CreateCustomFieldSchema,
 } from './domain/schemas';
-import { signIn, signOut, signUp, useSession } from './lib/auth-client';
+import {
+  authClient,
+  signIn,
+  signOut,
+  signUp,
+  useSession,
+} from './lib/auth-client';
 import {
   customFieldsForCreate,
   customFieldsForUpdate,
@@ -1025,6 +1031,8 @@ const StageColumn = ({
 
 const OpportunitiesPage = () => {
   const { refetch: refetchSession } = useSession();
+  // Keep automatic recovery bounded when a server keeps returning 401.
+  const recoveredPipelineId = useRef<null | string>(null);
   const [selectedPipelineId, setSelectedPipelineId] = useState<null | string>(
     null,
   );
@@ -1052,14 +1060,59 @@ const OpportunitiesPage = () => {
     retry: retryWorkQueueQuery,
   });
   const workQueueError = opportunities.error ?? pipelines.error;
+  const hasUnauthorizedError = [opportunities.error, pipelines.error].some(
+    (error) => error instanceof ApiClientError && error.status === 401,
+  );
+  useEffect(() => {
+    if (!hasUnauthorizedError) {
+      return undefined;
+    }
+
+    const recoveryKey = pipelineId ?? 'no-pipeline';
+    if (recoveredPipelineId.current === recoveryKey) {
+      return undefined;
+    }
+
+    recoveredPipelineId.current = recoveryKey;
+    let cancelled = false;
+    const recover = async () => {
+      try {
+        const result = await authClient.getSession();
+        if (cancelled || result.error) {
+          return;
+        }
+
+        if (!result.data) {
+          refetchSession();
+          return;
+        }
+
+        await queryClient.invalidateQueries({ queryKey: ['pipelines'] });
+        if (pipelineId !== undefined) {
+          await queryClient.invalidateQueries({
+            exact: true,
+            queryKey: ['opportunities', pipelineId],
+          });
+        }
+      } catch {
+        // The visible retry control remains available if the recheck fails.
+      }
+    };
+
+    recover();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [hasUnauthorizedError, pipelineId, queryClient, refetchSession]);
   useEffect(() => {
     if (
-      workQueueError instanceof ApiClientError &&
-      workQueueError.status === 401
+      pipelines.isSuccess &&
+      (pipelineId === undefined || opportunities.isSuccess)
     ) {
-      refetchSession();
+      recoveredPipelineId.current = null;
     }
-  }, [refetchSession, workQueueError]);
+  }, [opportunities.isSuccess, pipelineId, pipelines.isSuccess]);
   const move = useMutation({
     mutationFn: ({
       opportunityId,
