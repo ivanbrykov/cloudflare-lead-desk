@@ -93,6 +93,7 @@ export const opportunities = sqliteTable(
   'opportunities',
   {
     createdAt: text('created_at').notNull(),
+    deletedAt: text('deleted_at'),
     estimatedValue: integer('estimated_value'),
     id: text('id').primaryKey(),
     name: text('name').notNull(),

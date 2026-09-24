@@ -101,6 +101,7 @@ export type FieldDefinitionRecord = {
 export type OpportunityRecord = {
   contact: ContactRecord;
   createdAt: string;
+  deletedAt: null | string;
   estimatedValue: null | number;
   id: string;
   name: string;
@@ -600,6 +601,7 @@ export const getOpportunity = async (
       'opportunity',
       row.opportunity.id,
     ),
+    deletedAt: row.opportunity.deletedAt,
     estimatedValue: row.opportunity.estimatedValue,
     id: row.opportunity.id,
     name: row.opportunity.name,
@@ -720,7 +722,10 @@ export const listOpportunities = async (
   Array<OpportunityRecord & { customFields: Record<string, unknown> }>
 > => {
   const database = getDatabase(environment);
-  const predicates = [eq(opportunities.workspaceId, DEFAULT_WORKSPACE_ID)];
+  const predicates = [
+    eq(opportunities.workspaceId, DEFAULT_WORKSPACE_ID),
+    isNull(opportunities.deletedAt),
+  ];
   if (pipelineId) {
     predicates.push(eq(opportunities.pipelineId, pipelineId));
   }
@@ -744,6 +749,7 @@ export const listOpportunities = async (
     contact: toContact(contact),
     createdAt: opportunity.createdAt,
     customFields: values.get(opportunity.id) ?? {},
+    deletedAt: opportunity.deletedAt,
     estimatedValue: opportunity.estimatedValue,
     id: opportunity.id,
     name: opportunity.name,
@@ -943,6 +949,25 @@ export const updateOpportunity = async (
     .bind(name, estimatedValue, timestamp, opportunityId, DEFAULT_WORKSPACE_ID)
     .run();
   return getOpportunity(environment, opportunityId);
+};
+
+export const softDeleteOpportunity = async (
+  environment: Env,
+  opportunityId: string,
+) => {
+  const timestamp = now();
+  const result = await getDatabase(environment)
+    .update(opportunities)
+    .set({ deletedAt: timestamp, updatedAt: timestamp })
+    .where(
+      and(
+        eq(opportunities.id, opportunityId),
+        eq(opportunities.workspaceId, DEFAULT_WORKSPACE_ID),
+        isNull(opportunities.deletedAt),
+      ),
+    )
+    .run();
+  return result.meta.changes > 0;
 };
 
 export const createActivity = async (
