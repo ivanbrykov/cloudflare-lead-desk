@@ -18,7 +18,14 @@ export const requireSessionIdentity = async (
     return environment.DEV_ADMIN_EMAIL;
   }
 
-  const session = await auth.api.getSession({ headers: request.headers });
+  // Protected API reads only need to validate the session. Better Auth's
+  // refresh path consults request-scoped state, which can lose its async
+  // context on Workers; the browser's /api/auth/get-session request still
+  // refreshes the cookie and database session when needed.
+  const session = await auth.api.getSession({
+    headers: request.headers,
+    query: { disableRefresh: true },
+  });
   if (!session) {
     throw new UnauthorizedError();
   }

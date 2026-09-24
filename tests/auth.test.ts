@@ -248,6 +248,42 @@ test('an unexpected session lookup failure is a generic 500, not a 401', async (
   }
 });
 
+test('protected reads validate without refreshing; the auth endpoint can still refresh', async () => {
+  const fx = await startFixture();
+  try {
+    const cookie = await signUp(fx);
+    const expiresAt = Date.now() + 5 * 24 * 60 * 60 * 1_000;
+    await fx.db
+      .prepare('UPDATE session SET expires_at = ?')
+      .bind(expiresAt)
+      .run();
+
+    const protectedRead = await fx.raw('/v1/opportunities', 'GET', undefined, {
+      Cookie: cookie,
+    });
+    expect(protectedRead.status, JSON.stringify(protectedRead)).toBe(200);
+    const unchanged = await fx.db
+      .prepare('SELECT expires_at AS expiresAt FROM session')
+      .first<{ expiresAt: number }>();
+    expect(unchanged?.expiresAt).toBe(expiresAt);
+
+    const browserSession = await fx.raw(
+      '/api/auth/get-session',
+      'GET',
+      undefined,
+      { Cookie: cookie },
+    );
+    expect(browserSession.status, JSON.stringify(browserSession)).toBe(200);
+    expect(browserSession.cookie).not.toBe('');
+    const refreshed = await fx.db
+      .prepare('SELECT expires_at AS expiresAt FROM session')
+      .first<{ expiresAt: number }>();
+    expect(refreshed?.expiresAt).toBeGreaterThan(expiresAt);
+  } finally {
+    await fx.dispose();
+  }
+});
+
 test('sign-up without an invite token is rejected and grants no access', async () => {
   const fx = await startFixture();
   try {
