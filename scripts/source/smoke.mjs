@@ -564,6 +564,17 @@ try {
   pass('both controlled revisions pass consumer Wrangler deploy --dry-run');
 
   const installedWorker = join(consumer, '.lead-desk/current/worker.mjs');
+  const workerSource = await readFile(installedWorker, 'utf8');
+  assert.doesNotMatch(
+    workerSource,
+    /AsyncLocalStoragePolyfill/u,
+    'Installed Worker must not bundle Better Auth browser async storage',
+  );
+  assert.match(
+    workerSource,
+    /node:async_hooks/u,
+    'Installed Worker must resolve the workerd native async storage export',
+  );
   const previousWorkerHash = checksum(await readFile(installedWorker));
   await assert.rejects(
     prepareSource({

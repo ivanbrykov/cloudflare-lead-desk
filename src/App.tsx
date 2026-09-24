@@ -6,13 +6,19 @@ import {
   type CreateCustomField,
   CreateCustomFieldSchema,
 } from './domain/schemas';
-import { signIn, signOut, signUp, useSession } from './lib/auth-client';
+import {
+  authClient,
+  signIn,
+  signOut,
+  signUp,
+  useSession,
+} from './lib/auth-client';
 import {
   customFieldsForCreate,
   customFieldsForUpdate,
   isBlankCustomFieldValue,
 } from './lib/custom-field-form';
-import { request } from './lib/http';
+import { ApiClientError, request } from './lib/http';
 import { quietFetch } from './lib/quiet-fetch';
 import {
   initialRegistrationState,
@@ -155,9 +161,36 @@ const appQuery = {
   }),
 };
 
-const ErrorState = ({ error }: { readonly error: unknown }) => (
+const retryWorkQueueQuery = (failureCount: number, error: Error) => {
+  if (error instanceof ApiClientError) {
+    if (error.status === 401) {
+      return failureCount < 2;
+    }
+
+    return error.status >= 500 && failureCount < 3;
+  }
+
+  return failureCount < 3;
+};
+
+const ErrorState = ({
+  error,
+  onRetry,
+}: {
+  readonly error: unknown;
+  readonly onRetry?: () => void;
+}) => (
   <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-100">
     {error instanceof Error ? error.message : 'Something went wrong.'}
+    {onRetry && (
+      <button
+        className="ml-3 font-semibold text-cyan-300 hover:text-cyan-200"
+        onClick={onRetry}
+        type="button"
+      >
+        Try again
+      </button>
+    )}
   </div>
 );
 
@@ -997,12 +1030,18 @@ const StageColumn = ({
 };
 
 const OpportunitiesPage = () => {
+  const { refetch: refetchSession } = useSession();
+  // Keep automatic recovery bounded when a server keeps returning 401.
+  const recoveredPipelineId = useRef<null | string>(null);
   const [selectedPipelineId, setSelectedPipelineId] = useState<null | string>(
     null,
   );
   const [showOpportunity, setShowOpportunity] = useState(false);
   const queryClient = useQueryClient();
-  const pipelines = useQuery(appQuery.pipelines());
+  const pipelines = useQuery({
+    ...appQuery.pipelines(),
+    retry: retryWorkQueueQuery,
+  });
   // Only active pipelines can be listed (the API rejects archived ids), so
   // archived pipelines never appear as options.
   const activePipelines = (pipelines.data ?? []).filter(
@@ -1018,7 +1057,62 @@ const OpportunitiesPage = () => {
   const opportunities = useQuery({
     ...appQuery.opportunities(pipelineId),
     enabled: pipelineId !== undefined,
+    retry: retryWorkQueueQuery,
   });
+  const workQueueError = opportunities.error ?? pipelines.error;
+  const hasUnauthorizedError = [opportunities.error, pipelines.error].some(
+    (error) => error instanceof ApiClientError && error.status === 401,
+  );
+  useEffect(() => {
+    if (!hasUnauthorizedError) {
+      return undefined;
+    }
+
+    const recoveryKey = pipelineId ?? 'no-pipeline';
+    if (recoveredPipelineId.current === recoveryKey) {
+      return undefined;
+    }
+
+    recoveredPipelineId.current = recoveryKey;
+    let cancelled = false;
+    const recover = async () => {
+      try {
+        const result = await authClient.getSession();
+        if (cancelled || result.error) {
+          return;
+        }
+
+        if (!result.data) {
+          refetchSession();
+          return;
+        }
+
+        await queryClient.invalidateQueries({ queryKey: ['pipelines'] });
+        if (pipelineId !== undefined) {
+          await queryClient.invalidateQueries({
+            exact: true,
+            queryKey: ['opportunities', pipelineId],
+          });
+        }
+      } catch {
+        // The visible retry control remains available if the recheck fails.
+      }
+    };
+
+    recover();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [hasUnauthorizedError, pipelineId, queryClient, refetchSession]);
+  useEffect(() => {
+    if (
+      pipelines.isSuccess &&
+      (pipelineId === undefined || opportunities.isSuccess)
+    ) {
+      recoveredPipelineId.current = null;
+    }
+  }, [opportunities.isSuccess, pipelineId, pipelines.isSuccess]);
   const move = useMutation({
     mutationFn: ({
       opportunityId,
@@ -1045,10 +1139,27 @@ const OpportunitiesPage = () => {
     });
   };
 
-  if (opportunities.error || pipelines.error) {
+  const retryWorkQueue = () => {
+    if (pipelines.error) {
+      pipelines.refetch();
+    }
+
+    if (opportunities.error) {
+      opportunities.refetch();
+    }
+  };
+
+  const hasUsableBoard =
+    pipelines.data !== undefined &&
+    (pipelineId === undefined || opportunities.data !== undefined);
+
+  if (workQueueError && !hasUsableBoard) {
     return (
       <div className="p-8">
-        <ErrorState error={opportunities.error ?? pipelines.error} />
+        <ErrorState
+          error={workQueueError}
+          onRetry={retryWorkQueue}
+        />
       </div>
     );
   }
@@ -1069,6 +1180,14 @@ const OpportunitiesPage = () => {
         title="Opportunities"
       />
       <div className="p-5 sm:p-8">
+        {workQueueError && (
+          <div className="mb-5">
+            <ErrorState
+              error={workQueueError}
+              onRetry={retryWorkQueue}
+            />
+          </div>
+        )}
         <div className="mb-5 flex flex-wrap items-center gap-3 rounded-lg border border-slate-800 bg-slate-900/40 p-3 text-sm text-slate-400">
           <Settings2 size={16} />
           <span>

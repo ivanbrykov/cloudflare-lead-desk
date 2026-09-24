@@ -1,3 +1,4 @@
+import { logAuthMessage } from './logging';
 import { type Env } from '@/db/repository';
 import * as schema from '@/db/schema';
 import { drizzleAdapter } from '@better-auth/drizzle-adapter';
@@ -207,6 +208,7 @@ export const createAuth = (environment: Env, request: Request) => {
         });
       }),
     },
+    logger: { level: 'warn', log: logAuthMessage },
     secret: environment.BETTER_AUTH_SECRET,
   });
 };

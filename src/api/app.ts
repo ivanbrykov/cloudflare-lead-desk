@@ -185,13 +185,28 @@ const requireAdmin = async (
       return { error: authenticationNotConfiguredResponse() } as const;
     }
 
+    if (error instanceof UnauthorizedError) {
+      return {
+        error: errorResponse(401, 'unauthorized', error.message),
+      } as const;
+    }
+
+    // The identity lookup itself failed (for example a D1 fault while
+    // reading the session or staff row): this is an authentication backend
+    // failure, not a lost login. Report a generic 500 so the client can
+    // retry, and log the cause's class so it can be told
+    // apart from a true 401 in the logs. The exception message is never
+    // logged or returned because it can embed SQL with bound values.
+    logRequest(request, 500, {
+      errorCauseClass:
+        error instanceof Error ? error.constructor.name : typeof error,
+      errorClass: 'AuthenticationUnavailable',
+    });
     return {
       error: errorResponse(
-        401,
-        'unauthorized',
-        error instanceof UnauthorizedError
-          ? error.message
-          : 'Authentication is required.',
+        500,
+        'authentication_unavailable',
+        'Authentication could not be checked. Please try again.',
       ),
     } as const;
   }

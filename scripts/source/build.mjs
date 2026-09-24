@@ -108,6 +108,9 @@ execFileSync('pnpm', ['run', 'build'], { cwd: source, stdio: 'inherit' });
 
 await build({
   bundle: true,
+  // This bundle runs inside workerd after installation. Selecting browser
+  // exports here would embed Better Auth's shared-slot async-storage polyfill.
+  conditions: ['workerd'],
   external: ['cloudflare:*', 'node:*'],
   format: 'esm',
   legalComments: 'linked',
