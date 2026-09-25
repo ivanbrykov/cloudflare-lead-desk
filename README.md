@@ -308,7 +308,8 @@ the first page.
 `GET /v1/opportunities` is not paginated; the optional `pipelineId` query
 parameter restricts results to one active pipeline of the current workspace.
 An unknown or archived `pipelineId` returns `422 validation_error`.
-Opportunity custom-field values use the same batched read.
+Soft-deleted opportunities never appear in this list. Opportunity
+custom-field values use the same batched read.
 
 ### Opportunity editing
 
@@ -322,12 +323,33 @@ existing opportunity. It accepts `{ name?, estimatedValue? }`:
 - `estimatedValue` must be a non-negative finite number. An explicit `null`
   clears the stored value; omitting the field keeps it. Negative or
   non-finite values return `422 validation_error`.
-- Unknown ids return `404 not_found`. Staff authentication is
-  required; missing or invalid identities return `401 unauthorized`.
+- Unknown and soft-deleted ids return `404 not_found`. Staff authentication
+  is required; missing or invalid identities return `401 unauthorized`.
 
 The workbench exposes the endpoint as a minimal "Edit details" form on the
 opportunity detail page, and the board lists active pipelines in a pipeline
 selector whose selection drives `GET /v1/opportunities?pipelineId=`.
+
+### Opportunity deletion
+
+`DELETE /v1/opportunities/:id` soft-deletes an opportunity: the row stays in
+D1 and keeps its contact, pipeline, stage, custom-field values, and activity
+history. `deletedAt` is set and `updatedAt` moves forward.
+
+- A successful soft delete returns `204` with no body.
+- Soft-deleted opportunities no longer appear in `GET /v1/opportunities` (and
+  therefore leave the Kanban work queue), but `GET /v1/opportunities/:id`
+  still returns the record with `deletedAt` so existing links resolve.
+- Soft-deleting an already-deleted, unknown, or malformed id returns
+  `404 not_found`; there is no restore route.
+- Soft-deleted opportunities are read-only: `PATCH /v1/opportunities/:id`,
+  `POST /v1/opportunities/:id/move`, and activity creation return
+  `404 not_found`. The record and its activity history stay readable.
+- Staff authentication is required; missing or invalid identities return
+  `401 unauthorized`.
+
+The opportunity detail page exposes this as a "Delete" action with a
+confirmation dialog that returns staff to the work queue.
 
 ## Custom fields
 

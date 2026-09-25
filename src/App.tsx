@@ -84,6 +84,7 @@ type Opportunity = {
   contact: Contact;
   createdAt: string;
   customFields: Record<string, unknown>;
+  deletedAt?: null | string;
   estimatedValue: null | number;
   id: string;
   name: string;
@@ -1254,6 +1255,8 @@ const OpportunitiesPage = () => {
 
 const OpportunityDetail = ({ id }: { readonly id: string }) => {
   const queryClient = useQueryClient();
+  const [, navigate] = useLocation();
+  const [deleting, setDeleting] = useState(false);
   const [note, setNote] = useState('');
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState('');
@@ -1291,6 +1294,13 @@ const OpportunityDetail = ({ id }: { readonly id: string }) => {
       setEditing(false);
       queryClient.invalidateQueries({ queryKey: ['opportunity', id] });
       queryClient.invalidateQueries({ queryKey: ['opportunities'] });
+    },
+  });
+  const remove = useMutation({
+    mutationFn: () => request(`/v1/opportunities/${id}`, { method: 'DELETE' }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['opportunities'] });
+      navigate('/opportunities');
     },
   });
   if (opportunity.isPending) {
@@ -1424,14 +1434,30 @@ const OpportunityDetail = ({ id }: { readonly id: string }) => {
                     </span>
                   </div>
                 </div>
-                <div className="mt-4">
-                  <Button
-                    onClick={startEditing}
-                    tone="secondary"
-                  >
-                    Edit details
-                  </Button>
-                </div>
+                {record.deletedAt && (
+                  <p className="mt-4 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
+                    Deleted {new Date(record.deletedAt).toLocaleDateString()}
+                  </p>
+                )}
+                {!record.deletedAt && (
+                  <div className="mt-4 flex gap-2">
+                    <Button
+                      onClick={startEditing}
+                      tone="secondary"
+                    >
+                      Edit details
+                    </Button>
+                    <Button
+                      onClick={() => {
+                        remove.reset();
+                        setDeleting(true);
+                      }}
+                      tone="danger"
+                    >
+                      Delete
+                    </Button>
+                  </div>
+                )}
               </>
             )}
           </section>
@@ -1460,32 +1486,36 @@ const OpportunityDetail = ({ id }: { readonly id: string }) => {
         </div>
         <section className="rounded-xl border border-slate-800 bg-slate-900/40 p-5">
           <h2 className="font-semibold text-white">Activity</h2>
-          <form
-            className="mt-4 grid gap-2"
-            onSubmit={(event) => {
-              event.preventDefault();
-              if (note.trim()) {
-                addNote.mutate();
-              }
-            }}
-          >
-            <textarea
-              onChange={(event) => setNote(event.target.value)}
-              placeholder="Add a note…"
-              rows={3}
-              value={note}
-            />
-            <Button
-              disabled={addNote.isPending || note.trim() === ''}
-              type="submit"
-            >
-              Add note
-            </Button>
-          </form>
-          {addNote.error && (
-            <div className="mt-3">
-              <ErrorState error={addNote.error} />
-            </div>
+          {!record.deletedAt && (
+            <>
+              <form
+                className="mt-4 grid gap-2"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  if (note.trim()) {
+                    addNote.mutate();
+                  }
+                }}
+              >
+                <textarea
+                  onChange={(event) => setNote(event.target.value)}
+                  placeholder="Add a note…"
+                  rows={3}
+                  value={note}
+                />
+                <Button
+                  disabled={addNote.isPending || note.trim() === ''}
+                  type="submit"
+                >
+                  Add note
+                </Button>
+              </form>
+              {addNote.error && (
+                <div className="mt-3">
+                  <ErrorState error={addNote.error} />
+                </div>
+              )}
+            </>
           )}
           <div className="mt-5 grid gap-4">
             {activities.isPending ? (
@@ -1511,6 +1541,40 @@ const OpportunityDetail = ({ id }: { readonly id: string }) => {
           </div>
         </section>
       </div>
+      <Dialog
+        onOpenChange={(open) => {
+          if (!open) {
+            setDeleting(false);
+          }
+        }}
+        open={deleting}
+        title="Delete opportunity"
+      >
+        <p className="text-sm text-slate-300">
+          Delete {record.name}? It will be removed from the work queue. Its
+          contact, stage, custom fields, and activity history are kept.
+        </p>
+        {remove.error && (
+          <div className="mt-4">
+            <ErrorState error={remove.error} />
+          </div>
+        )}
+        <div className="mt-5 flex justify-end gap-2">
+          <Button
+            onClick={() => setDeleting(false)}
+            tone="secondary"
+          >
+            Cancel
+          </Button>
+          <Button
+            disabled={remove.isPending}
+            onClick={() => remove.mutate()}
+            tone="danger"
+          >
+            Delete opportunity
+          </Button>
+        </div>
+      </Dialog>
     </>
   );
 };

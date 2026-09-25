@@ -52,6 +52,7 @@ import {
   revokeApiToken,
   revokeStaffInvite,
   setStaffAccountDisabled,
+  softDeleteOpportunity,
 } from '@/db/repository';
 import { isIntakeKey } from '@/domain/intake';
 import {
@@ -450,6 +451,16 @@ const createAppWithAuth = (environment: Env, getAuth: AuthForRequest) =>
 
       return result.data
         ? { data: result.data }
+        : errorResponse(404, 'not_found', 'Opportunity not found.');
+    })
+    .delete('/v1/opportunities/:id', async ({ params, request }) => {
+      const admin = await requireAdmin(request, getAuth, environment);
+      if ('error' in admin) {
+        return admin.error;
+      }
+
+      return (await softDeleteOpportunity(environment, params.id))
+        ? new Response(null, { status: 204 })
         : errorResponse(404, 'not_found', 'Opportunity not found.');
     })
     .post('/v1/opportunities/:id/move', async ({ body, params, request }) => {
