@@ -33,19 +33,61 @@ export const assertAppendOnlyMigrations = (previous, current) => {
   }
 };
 
-const main = async () => {
-  const baselineArgument = process.argv[2] || process.env.MIGRATION_BASE;
-  let baseline = baselineArgument;
-  if (!baseline || /^0+$/u.test(baseline)) {
-    const ancestry = git(['rev-list', '--parents', '-n', '1', 'HEAD'])
-      .trim()
-      .split(' ');
-    if (ancestry.length === 1) {
-      log('No migration baseline is available; nothing to compare.');
-      return;
-    }
+const commitIsAvailable = (runGit, sha) => {
+  try {
+    runGit(['cat-file', '-e', `${sha}^{commit}`]);
+    return true;
+  } catch {
+    return false;
+  }
+};
 
-    baseline = ancestry[1];
+/**
+ * Resolves the commit to compare migration history against.
+ *
+ * A force-push or amended commit leaves `github.event.before` unreachable in
+ * the runner's clone, so a requested baseline that is not available falls back
+ * to the strongest local one: the merge base with a default branch, then the
+ * first parent of HEAD. A malformed explicit baseline is still a configuration
+ * error.
+ */
+export const resolveMigrationBaseline = (requested, runGit) => {
+  if (requested && !/^0+$/u.test(requested)) {
+    assert.match(
+      requested,
+      /^[a-f0-9]{40}$/u,
+      'Invalid migration baseline commit',
+    );
+    if (commitIsAvailable(runGit, requested)) {
+      return requested;
+    }
+  }
+
+  for (const ref of ['origin/main', 'origin/HEAD']) {
+    try {
+      const mergeBase = runGit(['merge-base', 'HEAD', ref]).trim();
+      if (mergeBase) {
+        return mergeBase;
+      }
+    } catch {
+      // The ref may not exist in the runner's clone; try the next fallback.
+    }
+  }
+
+  const ancestry = runGit(['rev-list', '--parents', '-n', '1', 'HEAD'])
+    .trim()
+    .split(' ');
+  return ancestry.length === 1 ? null : ancestry[1];
+};
+
+const main = async () => {
+  const baseline = resolveMigrationBaseline(
+    process.argv[2] || process.env.MIGRATION_BASE,
+    git,
+  );
+  if (!baseline) {
+    log('No migration baseline is available; nothing to compare.');
+    return;
   }
 
   assert.match(
