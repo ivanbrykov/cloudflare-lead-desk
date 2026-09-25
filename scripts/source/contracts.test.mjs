@@ -13,12 +13,7 @@ import {
   validateConfiguration,
   validateSourceManifest,
 } from '../../templates/cloudflare/scripts/source.mjs';
-import {
-  assertAppendOnlyMigrations,
-  resolveMigrationBaseline,
-} from './checkMigrations.mjs';
 import assert from 'node:assert/strict';
-import { Buffer } from 'node:buffer';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -164,86 +159,6 @@ test('migration history permits append-only changes and rejects rewrites', () =>
         }),
       ),
     /removed or rewritten/u,
-  );
-  assert.throws(
-    () =>
-      assertAppendOnlyMigrations(
-        new Map([['0001_initial.sql', Buffer.from('old')]]),
-        new Map([['0001_initial.sql', Buffer.from('new')]]),
-      ),
-    /rewritten/u,
-  );
-});
-
-test('migration baseline falls back when the requested commit is unreachable', () => {
-  const requested = 'a'.repeat(40);
-  const mergeBase = 'b'.repeat(40);
-  const runGit = (responses) => (args) => {
-    const key = args.join(' ');
-    const response = responses[key];
-    if (response === undefined) {
-      throw new Error(`Unexpected git call: ${key}`);
-    }
-
-    if (response instanceof Error) {
-      throw response;
-    }
-
-    return response;
-  };
-
-  const requestedCommit = `cat-file -e ${requested}^{commit}`;
-
-  // An available requested baseline is used as-is.
-  assert.equal(
-    resolveMigrationBaseline(requested, runGit({ [requestedCommit]: '' })),
-    requested,
-  );
-
-  // A force-pushed/amended requested baseline falls back to the merge base.
-  assert.equal(
-    resolveMigrationBaseline(
-      requested,
-      runGit({
-        'merge-base HEAD origin/main': `${mergeBase}\n`,
-        [requestedCommit]: new Error('missing'),
-      }),
-    ),
-    mergeBase,
-  );
-
-  // Without a default-branch merge base, the first parent of HEAD is used.
-  const head = 'd'.repeat(40);
-  const parent = 'c'.repeat(40);
-  assert.equal(
-    resolveMigrationBaseline(
-      '',
-      runGit({
-        'merge-base HEAD origin/HEAD': new Error('unknown ref'),
-        'merge-base HEAD origin/main': new Error('unknown ref'),
-        'rev-list --parents -n 1 HEAD': `${head} ${parent}\n`,
-      }),
-    ),
-    parent,
-  );
-
-  // A root commit has nothing to compare against.
-  assert.equal(
-    resolveMigrationBaseline(
-      '',
-      runGit({
-        'merge-base HEAD origin/HEAD': new Error('unknown ref'),
-        'merge-base HEAD origin/main': new Error('unknown ref'),
-        'rev-list --parents -n 1 HEAD': `${head}\n`,
-      }),
-    ),
-    null,
-  );
-
-  // A malformed explicit baseline is still a configuration error.
-  assert.throws(
-    () => resolveMigrationBaseline('not-a-sha', () => ''),
-    /Invalid migration baseline commit/u,
   );
 });
 

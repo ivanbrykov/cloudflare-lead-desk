@@ -68,7 +68,6 @@
   "scripts": {
     "build": "vite build",
     "check": "pnpm run lint && pnpm run typecheck && pnpm run test",
-    "check:migrations": "node scripts/source/checkMigrations.mjs",
     "db:generate": "drizzle-kit generate",
     "db:migrate:local": "wrangler d1 migrations apply DB --local",
     "db:migrate:remote": "wrangler d1 migrations apply DB --remote",

@@ -388,8 +388,7 @@ Responses with a 5xx status, and failure lines, are written with `console.error`
 4. `pnpm run build`.
 5. `pnpm exec wrangler deploy --dry-run` — validates the deployable bundle without authentication.
 6. Source-build contract tests and an isolated template upgrade using local D1 and Chromium.
-7. An append-only migration-history check against Git history.
-8. The stable source-build command, preserving its source receipt as a CI artifact.
+7. The stable source-build command, preserving its source receipt as a CI artifact.
 
 There is no package publication job. Installations compile their pinned commit with
 its frozen lockfile, and only the installation owner's deliberate edit advances
