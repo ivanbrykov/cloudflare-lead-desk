@@ -57,6 +57,13 @@
       "when": 1790281878545,
       "tag": "0007_melted_nehzno",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1790378241089,
+      "tag": "0008_condemned_overlord",
+      "breakpoints": true
     }
   ]
 }

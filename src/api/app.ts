@@ -33,11 +33,13 @@ import { handleDisabledAccountSignIn } from '@/auth/sign-in-guard';
 import {
   archiveFieldDefinition,
   checkStaffInviteAvailability,
+  countLeadsByStage,
   createApiToken,
   createStaffInvite,
   type Env,
   getContact,
   getFieldDefinitions,
+  getLead,
   getOpportunity,
   getPipeline,
   isBootstrapGrantAvailable,
@@ -45,6 +47,8 @@ import {
   listActivities,
   listApiTokens,
   listContacts,
+  listLeadActivities,
+  listLeads,
   listOpportunities,
   listPipelines,
   listStaffAccounts,
@@ -56,9 +60,9 @@ import {
 } from '@/db/repository';
 import { isIntakeKey } from '@/domain/intake';
 import {
-  CONTACT_LIMIT_DEFAULT,
-  decodeContactCursor,
-  parseContactLimit,
+  decodeKeysetCursor,
+  LIST_LIMIT_DEFAULT,
+  parseListLimit,
 } from '@/domain/pagination';
 import {
   ContactInputRequest,
@@ -71,6 +75,8 @@ import {
   CreateTokenRequest,
   HealthResponse,
   IntakeRequest,
+  LeadStageCountsQueryRequest,
+  ListLeadsQueryRequest,
   MoveOpportunityRequest,
   SetStaffDisabledRequest,
   UpdateOpportunityRequest,
@@ -275,8 +281,8 @@ const createAppWithAuth = (environment: Env, getAuth: AuthForRequest) =>
 
       const limit =
         query.limit === undefined
-          ? CONTACT_LIMIT_DEFAULT
-          : parseContactLimit(query.limit);
+          ? LIST_LIMIT_DEFAULT
+          : parseListLimit(query.limit);
       if (limit === null) {
         return errorResponse(
           422,
@@ -287,7 +293,7 @@ const createAppWithAuth = (environment: Env, getAuth: AuthForRequest) =>
 
       let cursor = null;
       if (query.cursor !== undefined) {
-        cursor = decodeContactCursor(query.cursor);
+        cursor = decodeKeysetCursor(query.cursor);
         if (cursor === null) {
           return errorResponse(
             422,
@@ -599,6 +605,70 @@ const createAppWithAuth = (environment: Env, getAuth: AuthForRequest) =>
       return 'error' in result
         ? result.error
         : Response.json({ data: result.data }, { status: 201 });
+    })
+    .get(
+      '/v1/leads/stage-counts',
+      async ({ query, request }) => {
+        const admin = await requireAdmin(request, getAuth, environment);
+        if ('error' in admin) {
+          return admin.error;
+        }
+
+        return {
+          data: await countLeadsByStage(environment, query.pipelineId),
+        };
+      },
+      { query: Schema.standardSchemaV1(LeadStageCountsQueryRequest) },
+    )
+    .get(
+      '/v1/leads',
+      async ({ query, request }) => {
+        const admin = await requireAdmin(request, getAuth, environment);
+        if ('error' in admin) {
+          return admin.error;
+        }
+
+        let cursor = null;
+        if (query.cursor !== undefined) {
+          cursor = decodeKeysetCursor(query.cursor);
+          if (cursor === null) {
+            return errorResponse(
+              422,
+              'invalid_cursor',
+              'cursor is invalid. Use the nextCursor value from a previous response.',
+            );
+          }
+        }
+
+        const page = await listLeads(environment, {
+          cursor,
+          limit: query.limit ?? LIST_LIMIT_DEFAULT,
+          pipelineId: query.pipelineId,
+          query: query.query,
+          stageId: query.stageId,
+        });
+        return { data: page.leads, nextCursor: page.nextCursor };
+      },
+      { query: Schema.standardSchemaV1(ListLeadsQueryRequest) },
+    )
+    .get('/v1/leads/:id/activities', async ({ params, request }) => {
+      const admin = await requireAdmin(request, getAuth, environment);
+      if ('error' in admin) {
+        return admin.error;
+      }
+
+      return { data: await listLeadActivities(environment, params.id) };
+    })
+    .get('/v1/leads/:id', async ({ params, request }) => {
+      const admin = await requireAdmin(request, getAuth, environment);
+      if ('error' in admin) {
+        return admin.error;
+      }
+
+      const lead = await getLead(environment, params.id);
+      return lead
+        ? { data: lead }
+        : errorResponse(404, 'not_found', 'Lead not found.');
     })
     .get('/v1/custom-fields', async ({ query, request }) => {
       const admin = await requireAdmin(request, getAuth, environment);

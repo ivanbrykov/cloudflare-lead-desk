@@ -6,6 +6,7 @@ import {
   customFieldDefinitions,
   customFieldValues,
   idempotencyKeys,
+  leads,
   opportunities,
   pipelines,
   session,
@@ -19,7 +20,7 @@ import {
   type NormalizedFieldValue,
 } from '@/domain/custom-fields';
 import { type IntakeResponse } from '@/domain/intake';
-import { type ContactKeyset, encodeContactCursor } from '@/domain/pagination';
+import { encodeKeysetCursor, type Keyset } from '@/domain/pagination';
 import {
   type ContactInput,
   type CreateCustomField,
@@ -316,7 +317,7 @@ export type ContactPage = {
 };
 
 export type ContactPageOptions = {
-  cursor?: ContactKeyset | null;
+  cursor?: Keyset | null;
   limit: number;
   query?: string;
 };
@@ -378,7 +379,7 @@ export const listContacts = async (
     contacts: contactsPage,
     nextCursor:
       hasNextPage && last
-        ? encodeContactCursor({
+        ? encodeKeysetCursor({
             createdAt: last.createdAt.toISOString(),
             id: last.id,
           })
@@ -540,6 +541,222 @@ export const deleteContact = async (
     .run();
   return 'deleted';
 };
+
+// --- Leads ---------------------------------------------------------------
+
+export type LeadPage = {
+  leads: LeadRecord[];
+  nextCursor: null | string;
+};
+
+export type LeadPageOptions = {
+  cursor?: Keyset | null;
+  limit: number;
+  pipelineId?: string;
+  query?: string;
+  stageId?: string;
+};
+
+export type LeadRecord = {
+  createdAt: Date;
+  customFields: Record<string, unknown>;
+  deletedAt: Date | null;
+  duplicateCount: number;
+  email: null | string;
+  estimatedValue: null | number;
+  firstName: null | string;
+  id: string;
+  lastName: null | string;
+  name: string;
+  pipelineId: string;
+  source: string;
+  stageId: string;
+  updatedAt: Date;
+};
+
+/**
+ * Literal substring match on the lead name, email, or first/last name; `%` and
+ * `_` in the query are escaped so they never act as LIKE wildcards.
+ */
+const leadSearchPredicate = (query: string) => {
+  const pattern = `%${escapeLike(query)}%`;
+  return sql`(${leads.name} LIKE ${pattern} ESCAPE '\\' OR ${leads.email} LIKE ${pattern} ESCAPE '\\' OR ${leads.firstName} LIKE ${pattern} ESCAPE '\\' OR ${leads.lastName} LIKE ${pattern} ESCAPE '\\')`;
+};
+
+/**
+ * How many live leads share each normalized email on the requested page. One
+ * grouped query per page; the duplicate hint is intentionally non-authoritative
+ * (no uniqueness constraint, per the leads-only design).
+ */
+const duplicateCountsForEmails = async (
+  environment: Env,
+  normalizedEmails: Array<null | string>,
+): Promise<Map<string, number>> => {
+  const emails = [
+    ...new Set(
+      normalizedEmails.filter(
+        (email): email is string => typeof email === 'string',
+      ),
+    ),
+  ];
+  if (emails.length === 0) {
+    return new Map();
+  }
+
+  const rows = await getDatabase(environment)
+    .select({ count: sql<number>`count(*)`, email: leads.normalizedEmail })
+    .from(leads)
+    .where(
+      and(
+        eq(leads.workspaceId, DEFAULT_WORKSPACE_ID),
+        isNull(leads.deletedAt),
+        inArray(leads.normalizedEmail, emails),
+      ),
+    )
+    .groupBy(leads.normalizedEmail);
+  return new Map(
+    rows
+      .filter(
+        (row): row is { count: number; email: string } => row.email !== null,
+      )
+      .map((row) => [row.email, Number(row.count)]),
+  );
+};
+
+const toLead = (
+  row: typeof leads.$inferSelect,
+  duplicateCounts: Map<string, number>,
+): LeadRecord => ({
+  createdAt: row.createdAt,
+  customFields: row.customFields,
+  deletedAt: row.deletedAt,
+  duplicateCount: row.normalizedEmail
+    ? Math.max(0, (duplicateCounts.get(row.normalizedEmail) ?? 1) - 1)
+    : 0,
+  email: row.email,
+  estimatedValue: row.estimatedValue,
+  firstName: row.firstName,
+  id: row.id,
+  lastName: row.lastName,
+  name: row.name,
+  pipelineId: row.pipelineId,
+  source: row.source,
+  stageId: row.stageId,
+  updatedAt: row.updatedAt,
+});
+
+/**
+ * Keyset (seek) pagination over (created_at DESC, id DESC), excluding
+ * soft-deleted leads. One extra row detects a following page without a COUNT.
+ */
+export const listLeads = async (
+  environment: Env,
+  options: LeadPageOptions,
+): Promise<LeadPage> => {
+  const { cursor, limit, pipelineId, query, stageId } = options;
+  const predicates = [
+    eq(leads.workspaceId, DEFAULT_WORKSPACE_ID),
+    isNull(leads.deletedAt),
+  ];
+  if (pipelineId) {
+    predicates.push(eq(leads.pipelineId, pipelineId));
+  }
+
+  if (stageId) {
+    predicates.push(eq(leads.stageId, stageId));
+  }
+
+  if (query) {
+    predicates.push(leadSearchPredicate(query));
+  }
+
+  if (cursor) {
+    const cursorTime = Date.parse(cursor.createdAt);
+    predicates.push(
+      sql`(${leads.createdAt} < ${cursorTime} OR (${leads.createdAt} = ${cursorTime} AND ${leads.id} < ${cursor.id}))`,
+    );
+  }
+
+  const rows = await getDatabase(environment)
+    .select()
+    .from(leads)
+    .where(and(...predicates))
+    .orderBy(desc(leads.createdAt), desc(leads.id))
+    .limit(limit + 1);
+  const hasNextPage = rows.length > limit;
+  const pageRows = hasNextPage ? rows.slice(0, limit) : rows;
+  const duplicateCounts = await duplicateCountsForEmails(
+    environment,
+    pageRows.map((row) => row.normalizedEmail),
+  );
+  const last = pageRows.at(-1);
+  return {
+    leads: pageRows.map((row) => toLead(row, duplicateCounts)),
+    nextCursor:
+      hasNextPage && last
+        ? encodeKeysetCursor({
+            createdAt: last.createdAt.toISOString(),
+            id: last.id,
+          })
+        : null,
+  };
+};
+
+export const getLead = async (
+  environment: Env,
+  leadId: string,
+): Promise<LeadRecord | null> => {
+  const row = await getDatabase(environment)
+    .select()
+    .from(leads)
+    .where(
+      and(eq(leads.workspaceId, DEFAULT_WORKSPACE_ID), eq(leads.id, leadId)),
+    )
+    .get();
+  if (!row) {
+    return null;
+  }
+
+  const duplicateCounts = await duplicateCountsForEmails(environment, [
+    row.normalizedEmail,
+  ]);
+  return toLead(row, duplicateCounts);
+};
+
+export const countLeadsByStage = async (
+  environment: Env,
+  pipelineId?: string,
+): Promise<Array<{ count: number; stageId: string }>> => {
+  const predicates = [
+    eq(leads.workspaceId, DEFAULT_WORKSPACE_ID),
+    isNull(leads.deletedAt),
+  ];
+  if (pipelineId) {
+    predicates.push(eq(leads.pipelineId, pipelineId));
+  }
+
+  const rows = await getDatabase(environment)
+    .select({ count: sql<number>`count(*)`, stageId: leads.stageId })
+    .from(leads)
+    .where(and(...predicates))
+    .groupBy(leads.stageId);
+  return rows.map((row) => ({
+    count: Number(row.count),
+    stageId: row.stageId,
+  }));
+};
+
+export const listLeadActivities = async (environment: Env, leadId: string) =>
+  getDatabase(environment)
+    .select()
+    .from(activities)
+    .where(
+      and(
+        eq(activities.workspaceId, DEFAULT_WORKSPACE_ID),
+        eq(activities.leadId, leadId),
+      ),
+    )
+    .orderBy(desc(activities.createdAt));
 
 // Intake preserves the current workspace defaults rather than inventing new
 // routing: a submission without explicit pipeline/stage uses the default
