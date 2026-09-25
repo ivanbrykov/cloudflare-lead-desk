@@ -196,8 +196,8 @@ const seedToken = async (
   fx: Fixture,
   id: string,
   rawToken: string,
-  expiresAt: null | string,
-  revokedAt: null | string = null,
+  expiresAt: null | number,
+  revokedAt: null | number = null,
 ): Promise<void> => {
   await fx.db
     .prepare(
@@ -210,7 +210,7 @@ const seedToken = async (
       sha256(rawToken),
       'intake:write',
       DEFAULT_WORKSPACE_ID,
-      new Date().toISOString(),
+      Date.now(),
       expiresAt,
       revokedAt,
     )
@@ -252,8 +252,8 @@ test('token creation defaults to a finite ~90-day future expiry', async () => {
     // Hash-only persistence; the stored expiry matches the response.
     const row = await fx.db
       .prepare('SELECT expires_at, token_hash FROM api_tokens')
-      .first<{ expires_at: string; token_hash: string }>();
-    expect(row?.expires_at).toBe(data.expiresAt);
+      .first<{ expires_at: number; token_hash: string }>();
+    expect(row?.expires_at).toBe(Date.parse(data.expiresAt));
     expect(row?.token_hash).toBe(sha256(data.token));
   } finally {
     await fx.dispose();
@@ -378,7 +378,7 @@ test('intake accepts legacy NULL-expiry tokens and future-expiry tokens', async 
       const row = await fx.db
         .prepare('SELECT last_used_at FROM api_tokens WHERE id = ?')
         .bind(id)
-        .first<{ last_used_at: null | string }>();
+        .first<{ last_used_at: null | number }>();
       expect(row?.last_used_at, `last_used_at for ${id}`).not.toBeNull();
     }
   } finally {
@@ -390,18 +390,12 @@ test('intake rejects expired tokens with 401 before any idempotency or domain wr
   const fx = await startFixture();
   try {
     const expiredRaw = 'expired-token-0123456789abcdef';
-    await seedToken(
-      fx,
-      'expired-token',
-      expiredRaw,
-      new Date(Date.now() - 1_000).toISOString(),
-    );
+    await seedToken(fx, 'expired-token', expiredRaw, Date.now() - 1_000);
     // Boundary row: its expiry equals the instant captured immediately
     // before the request, so at decision time expiresAt <= now must hold
     // (same-millisecond equality included).
     const boundaryRaw = 'boundary-token-0123456789abcdef';
-    const boundary = new Date().toISOString();
-    await seedToken(fx, 'boundary-token', boundaryRaw, boundary);
+    await seedToken(fx, 'boundary-token', boundaryRaw, Date.now());
 
     const idemBefore = await fx.count('idempotency_keys');
     const contactsBefore = await fx.count('contacts');
@@ -433,7 +427,7 @@ test('intake rejects expired tokens with 401 before any idempotency or domain wr
       const row = await fx.db
         .prepare('SELECT last_used_at FROM api_tokens WHERE id = ?')
         .bind(id)
-        .first<{ last_used_at: null | string }>();
+        .first<{ last_used_at: null | number }>();
       expect(row?.last_used_at, `last_used_at for ${id}`).toBeNull();
     }
   } finally {

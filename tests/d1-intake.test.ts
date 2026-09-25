@@ -538,7 +538,7 @@ test('invalid or foreign pipeline-stage pairs reject atomically', async () => {
 
     await fx.db
       .prepare('UPDATE pipelines SET archived_at = ? WHERE id = ?')
-      .bind('2026-09-09', other.id)
+      .bind(Date.parse('2026-09-09T00:00:00.000Z'), other.id)
       .run();
     const archived = payload('archived@example.test');
     archived.opportunity.pipelineId = other.id;
@@ -551,7 +551,7 @@ test('invalid or foreign pipeline-stage pairs reject atomically', async () => {
 
     await fx.db
       .prepare('UPDATE pipelines SET archived_at = ? WHERE id = ?')
-      .bind('2026-09-09', DEFAULT_PIPELINE_ID)
+      .bind(Date.parse('2026-09-09T00:00:00.000Z'), DEFAULT_PIPELINE_ID)
       .run();
     expectError(
       await fx.intake('routing-default-archived', payload(), token.token),
@@ -564,7 +564,13 @@ test('invalid or foreign pipeline-stage pairs reject atomically', async () => {
       .prepare(
         'INSERT INTO workspaces (id, slug, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
       )
-      .bind(foreignWorkspace, 'foreign', 'Foreign', '2026-01-01', '2026-01-01')
+      .bind(
+        foreignWorkspace,
+        'foreign',
+        'Foreign',
+        Date.parse('2026-01-01T00:00:00.000Z'),
+        Date.parse('2026-01-01T00:00:00.000Z'),
+      )
       .run();
     await fx.db
       .prepare(
@@ -626,7 +632,7 @@ test('an accepted replay survives archived fields, new required fields, and arch
     });
     await fx.db
       .prepare('UPDATE pipelines SET archived_at = ? WHERE id = ?')
-      .bind('2026-09-09', DEFAULT_PIPELINE_ID)
+      .bind(Date.parse('2026-09-09T00:00:00.000Z'), DEFAULT_PIPELINE_ID)
       .run();
     const before = await fx.snapshot();
 

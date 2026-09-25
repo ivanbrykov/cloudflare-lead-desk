@@ -48,9 +48,9 @@ export type RedeemRegistrationInput = {
   grant: RegistrationGrant;
   name: string;
   /**
-   * ISO-8601 UTC instant used for every timestamp and expiry comparison.
+   * Unix milliseconds used for every timestamp and expiry comparison.
    */
-  now: string;
+  now: number;
   passwordHash: string;
   /**
    * Caller-generated user id (Better Auth user row primary key).
@@ -97,11 +97,11 @@ const grantUnavailableError = new RegistrationError(
 
 const loadBootstrap = async (
   database: D1Database,
-): Promise<{ consumedAt: null | string; expiresAt: string }> => {
+): Promise<{ consumedAt: null | number; expiresAt: number }> => {
   const row = await database
     .prepare('SELECT consumed_at, expires_at FROM bootstrap_state WHERE id = ?')
     .bind(BOOTSTRAP_STATE_ID)
-    .first<{ consumed_at: null | string; expires_at: string }>();
+    .first<{ consumed_at: null | number; expires_at: number }>();
   if (row === null) {
     throw grantUnavailableError;
   }
@@ -113,9 +113,9 @@ const loadInvite = async (
   database: D1Database,
   tokenHash: string,
 ): Promise<{
-  expiresAt: string;
-  revokedAt: null | string;
-  usedAt: null | string;
+  expiresAt: number;
+  revokedAt: null | number;
+  usedAt: null | number;
 }> => {
   const row = await database
     .prepare(
@@ -123,9 +123,9 @@ const loadInvite = async (
     )
     .bind(tokenHash)
     .first<{
-      expires_at: string;
-      revoked_at: null | string;
-      used_at: null | string;
+      expires_at: number;
+      revoked_at: null | number;
+      used_at: null | number;
     }>();
   if (row === null) {
     throw grantUnavailableError;
@@ -182,8 +182,8 @@ export const redeemRegistration = async (
   const { accountId, email, grant, name, now, passwordHash, userId } = input;
 
   // Classification pre-checks (not the guard; the batch re-enforces all of
-  // this durably). ISO-8601 UTC strings compare chronologically, and a
-  // grant whose expires_at equals now is already expired (strict `>`).
+  // this durably). Unix milliseconds compare chronologically, and a grant
+  // whose expires_at equals now is already expired (strict `>`).
   if (grant.kind === 'bootstrap') {
     const state = await loadBootstrap(database);
     if (state.consumedAt !== null || state.expiresAt <= now) {
@@ -208,9 +208,8 @@ export const redeemRegistration = async (
     throw emailExistsError;
   }
 
-  // user/account store integer milliseconds (Better Auth schema); the
-  // grant tables and the claim ledger store ISO-8601 UTC strings.
-  const timestamp = Date.parse(now);
+  // User, account, and every app-owned timestamp store Unix milliseconds.
+  const timestamp = now;
   const claimKey =
     grant.kind === 'bootstrap' ? BOOTSTRAP_CLAIM_KEY : grant.tokenHash;
 

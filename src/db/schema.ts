@@ -9,22 +9,26 @@ import {
   uniqueIndex,
 } from 'drizzle-orm/sqlite-core';
 
+// App-owned timestamps store Unix milliseconds (the Better Auth convention)
+// and read back as Date values. API responses serialize them to ISO-8601.
+const timestampMs = (name: string) => integer(name, { mode: 'timestamp_ms' });
+
 export const workspaces = sqliteTable('workspaces', {
-  createdAt: text('created_at').notNull(),
+  createdAt: timestampMs('created_at').notNull(),
   id: text('id').primaryKey(),
   name: text('name').notNull(),
   slug: text('slug').notNull().unique(),
-  updatedAt: text('updated_at').notNull(),
+  updatedAt: timestampMs('updated_at').notNull(),
 });
 
 export const pipelines = sqliteTable(
   'pipelines',
   {
-    archivedAt: text('archived_at'),
-    createdAt: text('created_at').notNull(),
+    archivedAt: timestampMs('archived_at'),
+    createdAt: timestampMs('created_at').notNull(),
     id: text('id').primaryKey(),
     name: text('name').notNull(),
-    updatedAt: text('updated_at').notNull(),
+    updatedAt: timestampMs('updated_at').notNull(),
     workspaceId: text('workspace_id')
       .notNull()
       .references(() => workspaces.id),
@@ -41,14 +45,14 @@ export const stages = sqliteTable(
   'stages',
   {
     color: text('color').notNull().default('slate'),
-    createdAt: text('created_at').notNull(),
+    createdAt: timestampMs('created_at').notNull(),
     id: text('id').primaryKey(),
     name: text('name').notNull(),
     pipelineId: text('pipeline_id')
       .notNull()
       .references(() => pipelines.id),
     position: integer('position').notNull(),
-    updatedAt: text('updated_at').notNull(),
+    updatedAt: timestampMs('updated_at').notNull(),
     workspaceId: text('workspace_id')
       .notNull()
       .references(() => workspaces.id),
@@ -66,13 +70,13 @@ export const stages = sqliteTable(
 export const contacts = sqliteTable(
   'contacts',
   {
-    createdAt: text('created_at').notNull(),
+    createdAt: timestampMs('created_at').notNull(),
     email: text('email'),
     firstName: text('first_name'),
     id: text('id').primaryKey(),
     lastName: text('last_name'),
     normalizedEmail: text('normalized_email'),
-    updatedAt: text('updated_at').notNull(),
+    updatedAt: timestampMs('updated_at').notNull(),
     workspaceId: text('workspace_id')
       .notNull()
       .references(() => workspaces.id),
@@ -92,8 +96,8 @@ export const contacts = sqliteTable(
 export const opportunities = sqliteTable(
   'opportunities',
   {
-    createdAt: text('created_at').notNull(),
-    deletedAt: text('deleted_at'),
+    createdAt: timestampMs('created_at').notNull(),
+    deletedAt: timestampMs('deleted_at'),
     estimatedValue: integer('estimated_value'),
     id: text('id').primaryKey(),
     name: text('name').notNull(),
@@ -107,7 +111,7 @@ export const opportunities = sqliteTable(
     stageId: text('stage_id')
       .notNull()
       .references(() => stages.id),
-    updatedAt: text('updated_at').notNull(),
+    updatedAt: timestampMs('updated_at').notNull(),
     workspaceId: text('workspace_id')
       .notNull()
       .references(() => workspaces.id),
@@ -130,7 +134,7 @@ export const activities = sqliteTable(
     contactId: text('contact_id')
       .notNull()
       .references(() => contacts.id),
-    createdAt: text('created_at').notNull(),
+    createdAt: timestampMs('created_at').notNull(),
     id: text('id').primaryKey(),
     kind: text('kind').notNull(),
     metadata: text('metadata', { mode: 'json' })
@@ -157,8 +161,8 @@ export const activities = sqliteTable(
 export const customFieldDefinitions = sqliteTable(
   'custom_field_definitions',
   {
-    archivedAt: text('archived_at'),
-    createdAt: text('created_at').notNull(),
+    archivedAt: timestampMs('archived_at'),
+    createdAt: timestampMs('created_at').notNull(),
     entityType: text('entity_type', {
       enum: ['contact', 'opportunity'],
     }).notNull(),
@@ -173,7 +177,7 @@ export const customFieldDefinitions = sqliteTable(
     type: text('type', {
       enum: ['text', 'number', 'boolean', 'date', 'select'],
     }).notNull(),
-    updatedAt: text('updated_at').notNull(),
+    updatedAt: timestampMs('updated_at').notNull(),
     workspaceId: text('workspace_id')
       .notNull()
       .references(() => workspaces.id),
@@ -195,7 +199,7 @@ export const customFieldDefinitions = sqliteTable(
 export const customFieldValues = sqliteTable(
   'custom_field_values',
   {
-    createdAt: text('created_at').notNull(),
+    createdAt: timestampMs('created_at').notNull(),
     entityId: text('entity_id').notNull(),
     entityType: text('entity_type', {
       enum: ['contact', 'opportunity'],
@@ -204,7 +208,7 @@ export const customFieldValues = sqliteTable(
       .notNull()
       .references(() => customFieldDefinitions.id),
     id: text('id').primaryKey(),
-    updatedAt: text('updated_at').notNull(),
+    updatedAt: timestampMs('updated_at').notNull(),
     valueBoolean: integer('value_boolean'),
     valueDate: text('value_date'),
     valueNumber: integer('value_number'),
@@ -226,13 +230,13 @@ export const customFieldValues = sqliteTable(
 export const apiTokens = sqliteTable(
   'api_tokens',
   {
-    createdAt: text('created_at').notNull(),
-    expiresAt: text('expires_at'),
+    createdAt: timestampMs('created_at').notNull(),
+    expiresAt: timestampMs('expires_at'),
     id: text('id').primaryKey(),
-    lastUsedAt: text('last_used_at'),
+    lastUsedAt: timestampMs('last_used_at'),
     name: text('name').notNull(),
     prefix: text('prefix').notNull(),
-    revokedAt: text('revoked_at'),
+    revokedAt: timestampMs('revoked_at'),
     scope: text('scope').notNull().default('intake:write'),
     tokenHash: text('token_hash').notNull().unique(),
     workspaceId: text('workspace_id')
@@ -243,17 +247,17 @@ export const apiTokens = sqliteTable(
 );
 
 // Single-use staff invitations. The token itself is never stored; only its
-// hash plus a short prefix for display. Timestamps are UTC ISO8601 strings
+// hash plus a short prefix for display. Timestamps are Unix milliseconds
 // (same convention as api_tokens).
 export const staffInvites = sqliteTable('staff_invites', {
-  createdAt: text('created_at').notNull(),
-  expiresAt: text('expires_at').notNull(),
+  createdAt: timestampMs('created_at').notNull(),
+  expiresAt: timestampMs('expires_at').notNull(),
   id: text('id').primaryKey(),
   name: text('name').notNull(),
   prefix: text('prefix').notNull(),
-  revokedAt: text('revoked_at'),
+  revokedAt: timestampMs('revoked_at'),
   tokenHash: text('token_hash').notNull().unique(),
-  usedAt: text('used_at'),
+  usedAt: timestampMs('used_at'),
   usedByUserId: text('used_by_user_id').references(() => user.id, {
     onDelete: 'set null',
   }),
@@ -265,9 +269,9 @@ export const staffInvites = sqliteTable('staff_invites', {
 export const bootstrapState = sqliteTable(
   'bootstrap_state',
   {
-    consumedAt: text('consumed_at'),
-    createdAt: text('created_at').notNull(),
-    expiresAt: text('expires_at').notNull(),
+    consumedAt: timestampMs('consumed_at'),
+    createdAt: timestampMs('created_at').notNull(),
+    expiresAt: timestampMs('expires_at').notNull(),
     id: text('id').primaryKey(),
   },
   () => [check('bootstrap_state_default_only', sql`id = 'default'`)],
@@ -283,7 +287,7 @@ export const bootstrapState = sqliteTable(
 // bootstrap user must not reopen the bootstrap grant.
 export const registrationClaims = sqliteTable('registration_claims', {
   claimKey: text('claim_key').notNull().unique(),
-  createdAt: text('created_at').notNull(),
+  createdAt: timestampMs('created_at').notNull(),
   grantKind: text('grant_kind').notNull(),
   grantRef: text('grant_ref').notNull(),
   id: text('id').primaryKey(),
@@ -297,7 +301,7 @@ export * from './auth-schema';
 export const idempotencyKeys = sqliteTable(
   'idempotency_keys',
   {
-    createdAt: text('created_at').notNull(),
+    createdAt: timestampMs('created_at').notNull(),
     key: text('key').notNull(),
     requestHash: text('request_hash'),
     responseJson: text('response_json', { mode: 'json' })

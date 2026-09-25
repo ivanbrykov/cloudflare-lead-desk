@@ -274,7 +274,7 @@ export const handleInvitationSignUp = async (
       email,
       grant,
       name,
-      now: new Date().toISOString(),
+      now: Date.now(),
       passwordHash,
       userId,
     });
