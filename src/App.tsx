@@ -2,9 +2,10 @@ import { Button } from './components/ui/button';
 import { Dialog } from './components/ui/dialog';
 import {
   type ContactInput,
-  ContactInputSchema,
+  ContactInputRequest,
   type CreateCustomField,
-  CreateCustomFieldSchema,
+  CreateCustomFieldRequest,
+  type PipelineView,
 } from './domain/schemas';
 import {
   authClient,
@@ -93,12 +94,10 @@ type Opportunity = {
   stageId: string;
 };
 
-type Pipeline = {
-  archivedAt: null | string;
-  id: string;
-  name: string;
-  stages: Stage[];
-};
+// Response type shared from the domain schema. Elysia 1.4 unwraps Standard
+// Schema request schemas for Eden but not response schemas, so responses use
+// this shared type with the existing typed fetch wrapper instead.
+type Pipeline = PipelineView;
 type StaffAccount = {
   disabledAt: null | string;
   email: string;
@@ -449,7 +448,7 @@ const ContactDialog = ({
   >({});
   const form = useForm<ContactInput>({
     defaultValues: contactFormValues(contact),
-    resolver: effectTsResolver(ContactInputSchema),
+    resolver: effectTsResolver(ContactInputRequest),
   });
   // Reset field state when the dialog opens for a different contact (or
   // reopens). Adjusting state during render, as in the React docs, re-renders
@@ -1745,7 +1744,7 @@ const FieldDialog = ({
       required: false,
       type: 'text',
     },
-    resolver: effectTsResolver(CreateCustomFieldSchema),
+    resolver: effectTsResolver(CreateCustomFieldRequest),
   });
   useEffect(() => {
     if (open) {

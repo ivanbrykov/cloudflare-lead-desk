@@ -61,19 +61,20 @@ import {
   parseContactLimit,
 } from '@/domain/pagination';
 import {
-  ContactInputSchema,
-  CreateActivitySchema,
-  CreateCustomFieldSchema,
-  CreateInviteSchema,
-  CreateOpportunitySchema,
-  CreatePipelineSchema,
-  CreateStageSchema,
-  CreateTokenSchema,
-  IntakeInputSchema,
-  MoveOpportunitySchema,
-  SetStaffDisabledSchema,
-  UpdateOpportunitySchema,
-  ValidateInviteSchema,
+  ContactInputRequest,
+  CreateActivityRequest,
+  CreateCustomFieldRequest,
+  CreateInviteRequest,
+  CreateOpportunityRequest,
+  CreatePipelineRequest,
+  CreateStageRequest,
+  CreateTokenRequest,
+  HealthResponse,
+  IntakeRequest,
+  MoveOpportunityRequest,
+  SetStaffDisabledRequest,
+  UpdateOpportunityRequest,
+  ValidateInviteRequest,
 } from '@/domain/schemas';
 import { Effect, Either, Schema } from 'effect';
 import { Elysia } from 'elysia';
@@ -241,7 +242,30 @@ const createAppWithAuth = (environment: Env, getAuth: AuthForRequest) =>
         throw error;
       }
     })
-    .get('/health', () => ({ ok: true }))
+    .get('/health', () => ({ ok: true }), {
+      response: { '200': Schema.standardSchemaV1(HealthResponse) },
+    })
+    // Contract spike: Elysia's Standard Schema path yields `code: 'VALIDATION'`
+    // errors. Normalize them to the same `{ code, details, message }` envelope
+    // the manual `parse()` helper returns, so clients see one error shape.
+    .onError(({ code, error }) => {
+      if (error instanceof Response) {
+        return error;
+      }
+
+      if (code === 'VALIDATION') {
+        return errorResponse(
+          422,
+          'validation_error',
+          'The request is invalid.',
+          {
+            issue: error.message,
+          },
+        );
+      }
+
+      return undefined;
+    })
     .get('/openapi', () => Response.json(openApiSpecification))
     .get('/v1/contacts', async ({ query, request }) => {
       const admin = await requireAdmin(request, getAuth, environment);
@@ -286,7 +310,7 @@ const createAppWithAuth = (environment: Env, getAuth: AuthForRequest) =>
         return admin.error;
       }
 
-      const parsed = await parse(ContactInputSchema, body);
+      const parsed = await parse(ContactInputRequest, body);
       if ('error' in parsed) {
         return parsed.error;
       }
@@ -316,7 +340,7 @@ const createAppWithAuth = (environment: Env, getAuth: AuthForRequest) =>
         return admin.error;
       }
 
-      const parsed = await parse(ContactInputSchema, body);
+      const parsed = await parse(ContactInputRequest, body);
       if ('error' in parsed) {
         return parsed.error;
       }
@@ -367,7 +391,7 @@ const createAppWithAuth = (environment: Env, getAuth: AuthForRequest) =>
         return admin.error;
       }
 
-      const parsed = await parse(CreateOpportunitySchema, body);
+      const parsed = await parse(CreateOpportunityRequest, body);
       if ('error' in parsed) {
         return parsed.error;
       }
@@ -436,7 +460,7 @@ const createAppWithAuth = (environment: Env, getAuth: AuthForRequest) =>
         return admin.error;
       }
 
-      const parsed = await parse(UpdateOpportunitySchema, body);
+      const parsed = await parse(UpdateOpportunityRequest, body);
       if ('error' in parsed) {
         return parsed.error;
       }
@@ -469,7 +493,7 @@ const createAppWithAuth = (environment: Env, getAuth: AuthForRequest) =>
         return admin.error;
       }
 
-      const parsed = await parse(MoveOpportunitySchema, body);
+      const parsed = await parse(MoveOpportunityRequest, body);
       if ('error' in parsed) {
         return parsed.error;
       }
@@ -507,7 +531,7 @@ const createAppWithAuth = (environment: Env, getAuth: AuthForRequest) =>
           return admin.error;
         }
 
-        const parsed = await parse(CreateActivitySchema, body);
+        const parsed = await parse(CreateActivityRequest, body);
         if ('error' in parsed) {
           return parsed.error;
         }
@@ -539,32 +563,31 @@ const createAppWithAuth = (environment: Env, getAuth: AuthForRequest) =>
 
       return { data: await listPipelines(environment) };
     })
-    .post('/v1/pipelines', async ({ body, request }) => {
-      const admin = await requireAdmin(request, getAuth, environment);
-      if ('error' in admin) {
-        return admin.error;
-      }
+    .post(
+      '/v1/pipelines',
+      async ({ body, request }) => {
+        const admin = await requireAdmin(request, getAuth, environment);
+        if ('error' in admin) {
+          return admin.error;
+        }
 
-      const parsed = await parse(CreatePipelineSchema, body);
-      if ('error' in parsed) {
-        return parsed.error;
-      }
-
-      const result = await run(
-        request,
-        createPipelineCommand(environment, parsed.data.name),
-      );
-      return 'error' in result
-        ? result.error
-        : Response.json({ data: result.data }, { status: 201 });
-    })
+        const result = await run(
+          request,
+          createPipelineCommand(environment, body.name),
+        );
+        return 'error' in result
+          ? result.error
+          : Response.json({ data: result.data }, { status: 201 });
+      },
+      { body: Schema.standardSchemaV1(CreatePipelineRequest) },
+    )
     .post('/v1/pipelines/:id/stages', async ({ body, params, request }) => {
       const admin = await requireAdmin(request, getAuth, environment);
       if ('error' in admin) {
         return admin.error;
       }
 
-      const parsed = await parse(CreateStageSchema, body);
+      const parsed = await parse(CreateStageRequest, body);
       if ('error' in parsed) {
         return parsed.error;
       }
@@ -602,7 +625,7 @@ const createAppWithAuth = (environment: Env, getAuth: AuthForRequest) =>
         return admin.error;
       }
 
-      const parsed = await parse(CreateCustomFieldSchema, body);
+      const parsed = await parse(CreateCustomFieldRequest, body);
       if ('error' in parsed) {
         return parsed.error;
       }
@@ -650,7 +673,7 @@ const createAppWithAuth = (environment: Env, getAuth: AuthForRequest) =>
         return admin.error;
       }
 
-      const parsed = await parse(CreateTokenSchema, body);
+      const parsed = await parse(CreateTokenRequest, body);
       if ('error' in parsed) {
         return parsed.error;
       }
@@ -690,7 +713,7 @@ const createAppWithAuth = (environment: Env, getAuth: AuthForRequest) =>
         return admin.error;
       }
 
-      const parsed = await parse(CreateInviteSchema, body);
+      const parsed = await parse(CreateInviteRequest, body);
       if ('error' in parsed) {
         return parsed.error;
       }
@@ -739,7 +762,7 @@ const createAppWithAuth = (environment: Env, getAuth: AuthForRequest) =>
         return admin.error;
       }
 
-      const parsed = await parse(SetStaffDisabledSchema, body);
+      const parsed = await parse(SetStaffDisabledRequest, body);
       if ('error' in parsed) {
         return parsed.error;
       }
@@ -801,7 +824,7 @@ const createAppWithAuth = (environment: Env, getAuth: AuthForRequest) =>
           );
         }
 
-        const parsed = await parse(IntakeInputSchema, body);
+        const parsed = await parse(IntakeRequest, body);
         if ('error' in parsed) {
           return parsed.error;
         }
@@ -886,7 +909,7 @@ const createAppWithAuth = (environment: Env, getAuth: AuthForRequest) =>
         }
       }
 
-      const parsed = await parse(ValidateInviteSchema, body);
+      const parsed = await parse(ValidateInviteRequest, body);
       if ('error' in parsed) {
         return parsed.error;
       }

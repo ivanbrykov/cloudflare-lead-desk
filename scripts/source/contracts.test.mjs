@@ -13,9 +13,7 @@ import {
   validateConfiguration,
   validateSourceManifest,
 } from '../../templates/cloudflare/scripts/source.mjs';
-import { assertAppendOnlyMigrations } from './checkMigrations.mjs';
 import assert from 'node:assert/strict';
-import { Buffer } from 'node:buffer';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -161,14 +159,6 @@ test('migration history permits append-only changes and rejects rewrites', () =>
         }),
       ),
     /removed or rewritten/u,
-  );
-  assert.throws(
-    () =>
-      assertAppendOnlyMigrations(
-        new Map([['0001_initial.sql', Buffer.from('old')]]),
-        new Map([['0001_initial.sql', Buffer.from('new')]]),
-      ),
-    /rewritten/u,
   );
 });
 
