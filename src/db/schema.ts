@@ -126,6 +126,50 @@ export const opportunities = sqliteTable(
   ],
 );
 
+export const leads = sqliteTable(
+  'leads',
+  {
+    createdAt: timestampMs('created_at').notNull(),
+    customFields: text('custom_fields', { mode: 'json' })
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default(sql`'{}'`),
+    deletedAt: timestampMs('deleted_at'),
+    email: text('email'),
+    estimatedValue: integer('estimated_value'),
+    firstName: text('first_name'),
+    id: text('id').primaryKey(),
+    lastName: text('last_name'),
+    name: text('name').notNull(),
+    normalizedEmail: text('normalized_email'),
+    origin: text('origin'),
+    pipelineId: text('pipeline_id')
+      .notNull()
+      .references(() => pipelines.id),
+    publicKeyId: text('public_key_id'),
+    source: text('source').notNull(),
+    stageId: text('stage_id')
+      .notNull()
+      .references(() => stages.id),
+    updatedAt: timestampMs('updated_at').notNull(),
+    workspaceId: text('workspace_id')
+      .notNull()
+      .references(() => workspaces.id),
+  },
+  (table) => [
+    index('leads_normalized_email_idx').on(
+      table.workspaceId,
+      table.normalizedEmail,
+    ),
+    index('leads_pipeline_created_idx').on(
+      table.workspaceId,
+      table.pipelineId,
+      table.createdAt,
+    ),
+    index('leads_stage_idx').on(table.workspaceId, table.stageId),
+  ],
+);
+
 export const activities = sqliteTable(
   'activities',
   {
@@ -137,6 +181,7 @@ export const activities = sqliteTable(
     createdAt: timestampMs('created_at').notNull(),
     id: text('id').primaryKey(),
     kind: text('kind').notNull(),
+    leadId: text('lead_id').references(() => leads.id),
     metadata: text('metadata', { mode: 'json' })
       .$type<Record<string, unknown>>()
       .notNull()
@@ -151,6 +196,7 @@ export const activities = sqliteTable(
       table.contactId,
       table.createdAt,
     ),
+    index('activities_lead_created_idx').on(table.leadId, table.createdAt),
     index('activities_opportunity_created_idx').on(
       table.opportunityId,
       table.createdAt,

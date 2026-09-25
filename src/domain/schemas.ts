@@ -140,6 +140,77 @@ export const PipelinesResponse = Schema.Struct({
 export type PipelineView = Schema.Schema.Type<typeof PipelineViewResponse>;
 export type StageView = Schema.Schema.Type<typeof StageViewResponse>;
 
+// Leads. Response contracts are the wire shape (ISO-8601 strings, JSON-encoded
+// dates) shared with the SPA; request contracts validate Elysia input through
+// Standard Schema.
+export const LeadViewResponse = Schema.Struct({
+  createdAt: Schema.String,
+  customFields: CustomFieldValuesSchema,
+  deletedAt: Schema.NullOr(Schema.String),
+  duplicateCount: Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
+  email: Schema.NullOr(Schema.String),
+  estimatedValue: Schema.NullOr(Schema.Number),
+  firstName: Schema.NullOr(Schema.String),
+  id: RecordId,
+  lastName: Schema.NullOr(Schema.String),
+  name: NonEmptyString,
+  pipelineId: RecordId,
+  source: NonEmptyString,
+  stageId: RecordId,
+  updatedAt: Schema.String,
+});
+export type LeadView = Schema.Schema.Type<typeof LeadViewResponse>;
+
+export const LeadsResponse = Schema.Struct({
+  data: Schema.Array(LeadViewResponse),
+  nextCursor: Schema.NullOr(Schema.String),
+});
+export type LeadsResponseBody = Schema.Schema.Type<typeof LeadsResponse>;
+
+export const LeadStageCountResponse = Schema.Struct({
+  count: Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
+  stageId: RecordId,
+});
+
+export const LeadStageCountsResponse = Schema.Struct({
+  data: Schema.Array(LeadStageCountResponse),
+});
+export type LeadStageCountsBody = Schema.Schema.Type<
+  typeof LeadStageCountsResponse
+>;
+
+export const LeadActivityResponse = Schema.Struct({
+  actorEmail: Schema.NullOr(Schema.String),
+  body: NonEmptyString,
+  createdAt: Schema.String,
+  id: RecordId,
+  kind: Schema.String,
+});
+export type LeadActivity = Schema.Schema.Type<typeof LeadActivityResponse>;
+
+export const LeadActivitiesResponse = Schema.Struct({
+  data: Schema.Array(LeadActivityResponse),
+});
+
+export const ListLeadsQueryRequest = Schema.Struct({
+  cursor: Schema.optional(NonEmptyString),
+  limit: Schema.optional(
+    Schema.NumberFromString.pipe(
+      Schema.int(),
+      Schema.greaterThanOrEqualTo(1),
+      Schema.lessThanOrEqualTo(100),
+    ),
+  ),
+  pipelineId: Schema.optional(RecordId),
+  query: Schema.optional(NonEmptyString),
+  stageId: Schema.optional(RecordId),
+});
+export type ListLeadsQuery = Schema.Schema.Type<typeof ListLeadsQueryRequest>;
+
+export const LeadStageCountsQueryRequest = Schema.Struct({
+  pipelineId: Schema.optional(RecordId),
+});
+
 export const MoveOpportunityRequest = Schema.Struct({
   stageId: RecordId,
 });

@@ -1,5 +1,5 @@
 /**
- * Keyset (seek) pagination for the contact list.
+ * Keyset (seek) pagination for list endpoints.
  *
  * The cursor encodes the (createdAt, id) position of the last row of the
  * previous page over the list's deterministic ordering (createdAt DESC,
@@ -17,7 +17,7 @@ const URL_BASE64_ALPHABET = /^[\w-]+$/u;
 // treated as tampered rather than as a seek position.
 const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/u;
 
-export type ContactKeyset = {
+export type Keyset = {
   createdAt: string;
   id: string;
 };
@@ -64,7 +64,7 @@ const fromBase64Url = (value: string): null | string => {
   }
 };
 
-export const encodeContactCursor = (keyset: ContactKeyset): string => {
+export const encodeKeysetCursor = (keyset: Keyset): string => {
   // 'c', 'i', and 'v' are the stable wire names of the opaque cursor
   // payload; already-issued cursors must keep decoding, so they stay short
   const payload: Record<string, unknown> = {};
@@ -74,7 +74,7 @@ export const encodeContactCursor = (keyset: ContactKeyset): string => {
   return toBase64Url(JSON.stringify(payload));
 };
 
-export const decodeContactCursor = (cursor: string): ContactKeyset | null => {
+export const decodeKeysetCursor = (cursor: string): Keyset | null => {
   const encoded = fromBase64Url(cursor);
   if (encoded === null) {
     return null;
@@ -114,16 +114,16 @@ export const decodeContactCursor = (cursor: string): ContactKeyset | null => {
   return { createdAt, id };
 };
 
-export const CONTACT_LIMIT_DEFAULT = 50;
-export const CONTACT_LIMIT_MIN = 1;
-export const CONTACT_LIMIT_MAX = 100;
+export const LIST_LIMIT_DEFAULT = 50;
+export const LIST_LIMIT_MIN = 1;
+export const LIST_LIMIT_MAX = 100;
 
 /**
  * Strict limit validation: only a plain integer string in [1, 100] is
  * accepted. Anything else (non-numeric, fractional, empty, out of range)
  * is rejected so the caller can answer 422 validation_error.
  */
-export const parseContactLimit = (value: unknown): null | number => {
+export const parseListLimit = (value: unknown): null | number => {
   // Only plain unsigned integer strings are page sizes. Number() alone would
   // also accept '1e2', '0x32', ' 50', '+5', ... - not what clients mean.
   if (typeof value !== 'string' || !/^\d+$/u.test(value)) {
@@ -131,7 +131,7 @@ export const parseContactLimit = (value: unknown): null | number => {
   }
 
   const parsed = Number(value);
-  if (parsed < CONTACT_LIMIT_MIN || parsed > CONTACT_LIMIT_MAX) {
+  if (parsed < LIST_LIMIT_MIN || parsed > LIST_LIMIT_MAX) {
     return null;
   }
 
