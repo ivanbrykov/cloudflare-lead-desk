@@ -10,7 +10,11 @@ type App = ReturnType<typeof createApp>;
 // non-2xx response the renderer observes, and the UI legitimately renders
 // failure states (expired invitation, failed list fetch), so requests run on
 // the worker transport that keeps those statuses out of the page console.
-export const eden = treaty<App>(window.location.origin);
+export const eden = treaty<App>(window.location.origin, {
+  // Route Eden traffic through the worker-backed transport for the same reason
+  // `request` does: non-2xx responses otherwise land in the page console.
+  fetcher: quietFetch,
+});
 
 type ApiEnvelope<T> = { data: T };
 

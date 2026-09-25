@@ -343,3 +343,23 @@ test('an explicit colliding position is rejected instead of creating a duplicate
     await fx.dispose();
   }
 });
+
+test('Standard Schema routes keep the shared validation envelope', async () => {
+  const fx = await startFixture();
+  try {
+    // POST /v1/pipelines validates through Elysia's Standard Schema path.
+    const invalid = await fx.api('/v1/pipelines', 'POST', { name: '' });
+    expect(invalid.status, JSON.stringify(invalid)).toBe(422);
+    expect(invalid.json).toMatchObject({
+      code: 'validation_error',
+      message: 'The request is invalid.',
+    });
+
+    // GET /health declares a response schema; the plain handler value passes.
+    const healthy = await fx.api('/health');
+    expect(healthy.status).toBe(200);
+    expect(healthy.json).toEqual({ ok: true });
+  } finally {
+    await fx.dispose();
+  }
+});
