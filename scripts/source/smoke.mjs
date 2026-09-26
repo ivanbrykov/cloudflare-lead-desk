@@ -460,8 +460,8 @@ try {
   ).data;
   await api(context, '/v1/intakes', {
     data: {
-      contact: { email: 'intake@example.test' },
-      opportunity: { name: 'Existing deal', source: 'source-build' },
+      email: 'intake@example.test',
+      name: 'Existing deal',
       source: 'source-build',
     },
     headers: {
@@ -547,8 +547,8 @@ try {
   });
   await api(fresh, '/v1/intakes', {
     data: {
-      contact: { email: 'after@example.test' },
-      opportunity: { name: 'New deal', source: 'source-build' },
+      email: 'after@example.test',
+      name: 'New deal',
       source: 'source-build',
     },
     headers: {

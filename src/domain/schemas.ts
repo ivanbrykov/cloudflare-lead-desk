@@ -75,24 +75,21 @@ export type CreateOpportunityInput = Schema.Schema.Type<
   typeof CreateOpportunityRequest
 >;
 
+// Intake is the flat lead payload: one submission creates one lead. The old
+// contact + opportunity shape is gone; `customFields` is stored as a JSON
+// document on the lead with no definition registry.
 export const IntakeRequest = Schema.Struct({
-  contact: Schema.Struct({
-    customFields: Schema.optional(CustomFieldValuesSchema),
-    email: Email,
-    firstName: Schema.optional(NonEmptyString),
-    lastName: Schema.optional(NonEmptyString),
-  }),
-  opportunity: Schema.Struct({
-    customFields: Schema.optional(CustomFieldValuesSchema),
-    estimatedValue: Schema.optional(
-      Schema.Number.pipe(Schema.finite(), Schema.nonNegative()),
-    ),
-    name: NonEmptyString,
-    pipelineId: Schema.optional(RecordId),
-    source: NonEmptyString,
-    stageId: Schema.optional(RecordId),
-  }),
+  customFields: Schema.optional(CustomFieldValuesSchema),
+  email: Email,
+  estimatedValue: Schema.optional(
+    Schema.Number.pipe(Schema.finite(), Schema.nonNegative()),
+  ),
+  firstName: Schema.optional(NonEmptyString),
+  lastName: Schema.optional(NonEmptyString),
+  name: Schema.optional(NonEmptyString),
+  pipelineId: Schema.optional(RecordId),
   source: NonEmptyString,
+  stageId: Schema.optional(RecordId),
 });
 export type IntakeInput = Schema.Schema.Type<typeof IntakeRequest>;
 

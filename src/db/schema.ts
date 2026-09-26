@@ -175,9 +175,7 @@ export const activities = sqliteTable(
   {
     actorEmail: text('actor_email'),
     body: text('body').notNull(),
-    contactId: text('contact_id')
-      .notNull()
-      .references(() => contacts.id),
+    contactId: text('contact_id').references(() => contacts.id),
     createdAt: timestampMs('created_at').notNull(),
     id: text('id').primaryKey(),
     kind: text('kind').notNull(),

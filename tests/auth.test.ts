@@ -886,8 +886,8 @@ test('intake bearer tokens are unaffected by the session boundary', async () => 
     const { token } = created.json.data as { token: string };
 
     const payload = {
-      contact: { email: 'intake-auth@example.test' },
-      opportunity: { name: 'Inquiry', source: 'form' },
+      email: 'intake-auth@example.test',
+      name: 'Inquiry',
       source: 'website_form',
     };
     const intake = (authorization: null | string, key: string) =>

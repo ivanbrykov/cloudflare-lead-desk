@@ -19,7 +19,7 @@ import {
   type CustomFieldWrite,
   type NormalizedFieldValue,
 } from '@/domain/custom-fields';
-import { type IntakeResponse } from '@/domain/intake';
+import { type IntakeResponse, leadDisplayName } from '@/domain/intake';
 import { encodeKeysetCursor, type Keyset } from '@/domain/pagination';
 import {
   type ContactInput,
@@ -762,9 +762,9 @@ export const listLeadActivities = async (environment: Env, leadId: string) =>
 // routing: a submission without explicit pipeline/stage uses the default
 // pipeline and stage bootstrapped by the schema migration.
 export const intakePipelineId = (input: IntakeInput): string =>
-  input.opportunity.pipelineId ?? DEFAULT_PIPELINE_ID;
+  input.pipelineId ?? DEFAULT_PIPELINE_ID;
 export const intakeStageId = (input: IntakeInput): string =>
-  input.opportunity.stageId ?? DEFAULT_STAGE_ID;
+  input.stageId ?? DEFAULT_STAGE_ID;
 
 /**
  * A routing pair is valid when the stage exists in the selected pipeline and
@@ -1810,146 +1810,56 @@ export const outcomeForStoredIntakeKey = (
   }
 };
 
-export const createIntakeAtomically = async (
+export const createLeadAtomically = async (
   environment: Env,
   input: IntakeInput,
-  contactValues: CustomFieldWrite[],
-  opportunityValues: CustomFieldWrite[],
   idempotencyKey: string,
   requestHash: string,
 ): Promise<IntakePersistenceOutcome> => {
-  // Raw D1 binds do not accept Date, and every use in this function is a
-  // raw statement, so work in Unix milliseconds directly.
+  // Raw D1 binds do not accept Date, so work in Unix milliseconds directly.
   const timestamp = now().getTime();
-  const opportunityId = id();
+  const leadId = id();
   const activityId = id();
-  const email = normalizeEmail(input.contact.email);
+  const email = normalizeEmail(input.email);
   const pipelineId = intakePipelineId(input);
   const stageId = intakeStageId(input);
-  const response = { created: true, opportunityId };
+  const response: IntakeResponse = { created: true, leadId };
   const statements: D1PreparedStatement[] = [
     environment.DB.prepare(
-      `INSERT INTO contacts (id, workspace_id, email, normalized_email, first_name, last_name, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(workspace_id, normalized_email) DO UPDATE SET
-           email = excluded.email,
-           first_name = COALESCE(excluded.first_name, contacts.first_name),
-           last_name = COALESCE(excluded.last_name, contacts.last_name),
-           updated_at = excluded.updated_at`,
+      `INSERT INTO leads (
+          id, workspace_id, pipeline_id, stage_id, email, normalized_email,
+          first_name, last_name, name, source, estimated_value, custom_fields,
+          origin, public_key_id, created_at, updated_at, deleted_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, NULL)`,
     ).bind(
-      id(),
-      DEFAULT_WORKSPACE_ID,
-      email,
-      email,
-      input.contact.firstName ?? null,
-      input.contact.lastName ?? null,
-      timestamp,
-      timestamp,
-    ),
-    environment.DB.prepare(
-      `INSERT INTO opportunities (
-          id, workspace_id, primary_contact_id, pipeline_id, stage_id, name, source, estimated_value, created_at, updated_at
-        ) SELECT ?, ?, id, ?, ?, ?, ?, ?, ?, ?
-          FROM contacts WHERE workspace_id = ? AND normalized_email = ?`,
-    ).bind(
-      opportunityId,
+      leadId,
       DEFAULT_WORKSPACE_ID,
       pipelineId,
       stageId,
-      input.opportunity.name,
-      input.opportunity.source,
-      input.opportunity.estimatedValue ?? null,
-      timestamp,
-      timestamp,
-      DEFAULT_WORKSPACE_ID,
+      input.email,
       email,
+      input.firstName ?? null,
+      input.lastName ?? null,
+      leadDisplayName(input),
+      input.source,
+      input.estimatedValue ?? null,
+      JSON.stringify(input.customFields ?? {}),
+      timestamp,
+      timestamp,
     ),
     environment.DB.prepare(
       `INSERT INTO activities (
-          id, workspace_id, contact_id, opportunity_id, kind, body, metadata, created_at
-        ) SELECT ?, ?, id, ?, ?, ?, ?, ?
-          FROM contacts WHERE workspace_id = ? AND normalized_email = ?`,
+          id, workspace_id, contact_id, opportunity_id, lead_id, kind, body,
+          metadata, created_at
+        ) VALUES (?, ?, NULL, NULL, ?, 'intake', ?, ?, ?)`,
     ).bind(
       activityId,
       DEFAULT_WORKSPACE_ID,
-      opportunityId,
-      'intake',
+      leadId,
       `Received from ${input.source}`,
       JSON.stringify({ source: input.source }),
       timestamp,
-      DEFAULT_WORKSPACE_ID,
-      email,
     ),
-  ];
-
-  // Intake is a creation: explicit nulls for optional fields are omitted by
-  // validation, so only `set` writes reach persistence here.
-  for (const value of contactValues) {
-    if (value.kind !== 'set') {
-      continue;
-    }
-
-    statements.push(
-      environment.DB.prepare(
-        `INSERT INTO custom_field_values (
-            id, workspace_id, entity_type, entity_id, field_definition_id,
-            value_text, value_number, value_boolean, value_date, created_at, updated_at
-          ) SELECT ?, ?, 'contact', id, ?, ?, ?, ?, ?, ?, ?
-          FROM contacts WHERE workspace_id = ? AND normalized_email = ?
-          ON CONFLICT(entity_type, entity_id, field_definition_id) DO UPDATE SET
-            value_text = excluded.value_text, value_number = excluded.value_number,
-            value_boolean = excluded.value_boolean, value_date = excluded.value_date,
-            updated_at = excluded.updated_at`,
-      ).bind(
-        id(),
-        DEFAULT_WORKSPACE_ID,
-        value.fieldId,
-        value.valueText,
-        value.valueNumber,
-        value.valueBoolean,
-        value.valueDate,
-        timestamp,
-        timestamp,
-        DEFAULT_WORKSPACE_ID,
-        email,
-      ),
-    );
-  }
-
-  for (const value of opportunityValues) {
-    if (value.kind !== 'set') {
-      continue;
-    }
-
-    statements.push(
-      environment.DB.prepare(
-        `INSERT INTO custom_field_values (
-            id, workspace_id, entity_type, entity_id, field_definition_id,
-            value_text, value_number, value_boolean, value_date, created_at, updated_at
-          ) VALUES (?, ?, 'opportunity', ?, ?, ?, ?, ?, ?, ?, ?)
-          ON CONFLICT(entity_type, entity_id, field_definition_id) DO UPDATE SET
-            value_text = excluded.value_text, value_number = excluded.value_number,
-            value_boolean = excluded.value_boolean, value_date = excluded.value_date,
-            updated_at = excluded.updated_at`,
-      ).bind(
-        id(),
-        DEFAULT_WORKSPACE_ID,
-        opportunityId,
-        value.fieldId,
-        value.valueText,
-        value.valueNumber,
-        value.valueBoolean,
-        value.valueDate,
-        timestamp,
-        timestamp,
-      ),
-    );
-  }
-
-  // The accepted key (with its fingerprint) commits in the same atomic batch
-  // as the domain writes: a failed batch rolls the key back as well, so a
-  // transient failure never reserves the key and the retry can still succeed.
-  statements.push(
     environment.DB.prepare(
       'INSERT INTO idempotency_keys (workspace_id, key, request_hash, response_json, created_at) VALUES (?, ?, ?, ?, ?)',
     ).bind(
@@ -1959,7 +1869,7 @@ export const createIntakeAtomically = async (
       JSON.stringify(response),
       timestamp,
     ),
-  );
+  ];
 
   try {
     await environment.DB.batch(statements);

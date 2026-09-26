@@ -28,14 +28,8 @@ const assertRepoRoot = async () => {
   }
 };
 
-const LEGACY_OPPORTUNITY_ID = '01ARZ3NDEKTSV4RRFFQ69G5FB0';
-const TABLES = [
-  'contacts',
-  'opportunities',
-  'activities',
-  'custom_field_values',
-  'idempotency_keys',
-];
+const LEGACY_LEAD_ID = '01ARZ3NDEKTSV4RRFFQ69G5FB0';
+const TABLES = ['leads', 'activities', 'idempotency_keys'];
 
 const canonical = (value: unknown): unknown =>
   Array.isArray(value)
@@ -66,26 +60,21 @@ const sha256Hex = (text: string): string =>
   createHash('sha256').update(text).digest('hex');
 
 type IntakePayload = {
-  contact: {
-    customFields?: Record<string, unknown>;
-    email: string;
-    firstName?: string;
-    lastName?: string;
-  };
-  opportunity: {
-    customFields?: Record<string, unknown>;
-    estimatedValue?: number;
-    name: string;
-    pipelineId?: string;
-    source: string;
-    stageId?: string;
-  };
+  customFields?: Record<string, unknown>;
+  email: string;
+  estimatedValue?: number;
+  firstName?: string;
+  lastName?: string;
+  name?: string;
+  pipelineId?: string;
   source: string;
+  stageId?: string;
 };
 
 const payload = (email = 'intake-test@example.test'): IntakePayload => ({
-  contact: { email, firstName: 'Alex' },
-  opportunity: { name: 'New inquiry', source: 'form' },
+  email,
+  firstName: 'Alex',
+  name: 'New inquiry',
   source: 'website_form',
 });
 
@@ -215,7 +204,7 @@ const startFixture = async (
             'legacy-key',
             JSON.stringify({
               created: true,
-              opportunityId: LEGACY_OPPORTUNITY_ID,
+              leadId: LEGACY_LEAD_ID,
             }),
             '2026-01-01',
           )
@@ -365,25 +354,24 @@ test('same-key replay preserves the original response and writes nothing new', a
   try {
     const token = await fx.createToken();
     const payloadValue = payload('REPLAY@Example.Test');
-    payloadValue.contact.customFields = {};
+    payloadValue.customFields = {};
     const first = await fx.intake('replay-key', payloadValue, token.token);
     expect(first.status).toBe(201);
-    const opportunityId = (first.json.data as { opportunityId: string })
-      .opportunityId;
-    expect(opportunityId).toMatch(/^[0-7][\dA-HJKMNP-TV-Z]{25}$/u);
+    const leadId = (first.json.data as { leadId: string }).leadId;
+    expect(leadId).toMatch(/^[0-7][\dA-HJKMNP-TV-Z]{25}$/u);
     const before = await fx.snapshot();
 
     // Property order reversed and email case normalized: still the same
     // logical submission. (Surrounding whitespace is rejected earlier by the
     // static email schema, so case is the normalization axis here.)
     const reordered = reverse(payloadValue) as IntakePayload;
-    reordered.contact.email = 'replay@example.test';
+    reordered.email = 'replay@example.test';
     const replay = await fx.intake('replay-key', reordered, token.token);
     expect(replay.status, JSON.stringify(replay)).toBe(201);
     expect(replay.json.data).toEqual(first.json.data);
     expect(await fx.snapshot()).toEqual(before);
-    expect(await fx.count('contacts')).toBe(1);
-    expect(await fx.count('opportunities')).toBe(1);
+    expect(await fx.count('leads')).toBe(1);
+    expect(await fx.count('leads')).toBe(1);
     expect(await fx.count('activities')).toBe(1);
     expect(await fx.count('idempotency_keys')).toBe(1);
 
@@ -394,7 +382,7 @@ test('same-key replay preserves the original response and writes nothing new', a
     expect(row?.request_hash).toMatch(/^[\da-f]{64}$/u);
     const expected = {
       ...payloadValue,
-      contact: { ...payloadValue.contact, email: 'replay@example.test' },
+      email: 'replay@example.test',
     };
     expect(row?.request_hash).toBe(
       sha256Hex(JSON.stringify(canonical(expected))),
@@ -413,7 +401,7 @@ test('a different payload under the same key conflicts without side effects', as
     const before = await fx.snapshot();
 
     const changed = payload();
-    changed.contact.firstName = 'Must not overwrite';
+    changed.firstName = 'Must not overwrite';
     const conflict = await fx.intake('collision-key', changed, token.token);
     expectError(conflict, 409, 'idempotency_conflict');
     expect(JSON.stringify(conflict.json)).not.toContain('Must not overwrite');
@@ -434,21 +422,18 @@ test('parallel identical retries collapse and parallel conflicting requests choo
     );
     const first = identical[0];
     expect(first.status).toBe(201);
-    const firstId = (first.json.data as { opportunityId: string })
-      .opportunityId;
+    const firstId = (first.json.data as { leadId: string }).leadId;
     for (const result of identical) {
       expect(result.status).toBe(201);
-      expect(
-        (result.json.data as { opportunityId: string }).opportunityId,
-      ).toBe(firstId);
+      expect((result.json.data as { leadId: string }).leadId).toBe(firstId);
     }
 
-    expect(await fx.count('opportunities')).toBe(1);
+    expect(await fx.count('leads')).toBe(1);
 
     const a = payload('conflict-pair@example.test');
     const b = payload('conflict-pair@example.test');
-    a.opportunity.name = 'Winner A';
-    b.opportunity.name = 'Winner B';
+    a.name = 'Winner A';
+    b.name = 'Winner B';
     const pair = await Promise.all([
       fx.intake('parallel-conflict', a, token.token),
       fx.intake('parallel-conflict', b, token.token),
@@ -457,15 +442,14 @@ test('parallel identical retries collapse and parallel conflicting requests choo
     const winnerIndex = pair[0].status === 201 ? 0 : 1;
     const loserIndex = 1 - winnerIndex;
     expectError(pair[loserIndex], 409, 'idempotency_conflict');
-    const winnerId = (pair[winnerIndex].json.data as { opportunityId: string })
-      .opportunityId;
+    const winnerId = (pair[winnerIndex].json.data as { leadId: string }).leadId;
     const saved = await fx.db
-      .prepare('SELECT name FROM opportunities WHERE id = ?')
+      .prepare('SELECT name FROM leads WHERE id = ?')
       .bind(winnerId)
       .first();
-    expect(saved?.name).toBe([a, b][winnerIndex].opportunity.name);
-    expect(await fx.count('contacts')).toBe(2);
-    expect(await fx.count('opportunities')).toBe(2);
+    expect(saved?.name).toBe([a, b][winnerIndex].name);
+    expect(await fx.count('leads')).toBe(2);
+    expect(await fx.count('leads')).toBe(2);
     expect(await fx.count('activities')).toBe(2);
     expect(await fx.count('idempotency_keys')).toBe(2);
   } finally {
@@ -473,7 +457,7 @@ test('parallel identical retries collapse and parallel conflicting requests choo
   }
 });
 
-test('distinct keys normalize the same email to one contact with separate inquiries', async () => {
+test('distinct keys create separate leads even for the same email', async () => {
   const fx = await startFixture();
   try {
     const token = await fx.createToken();
@@ -489,16 +473,19 @@ test('distinct keys normalize the same email to one contact with separate inquir
     );
     expect(a.status).toBe(201);
     expect(b.status).toBe(201);
-    const aId = (a.json.data as { opportunityId: string }).opportunityId;
-    const bId = (b.json.data as { opportunityId: string }).opportunityId;
+    const aId = (a.json.data as { leadId: string }).leadId;
+    const bId = (b.json.data as { leadId: string }).leadId;
     expect(aId).not.toBe(bId);
-    expect(await fx.count('contacts')).toBe(1);
-    expect(await fx.count('opportunities')).toBe(2);
+    // Leads are not deduplicated: one submission creates one lead.
+    expect(await fx.count('leads')).toBe(2);
     expect(await fx.count('activities')).toBe(2);
-    const contact = await fx.db
-      .prepare('SELECT email, normalized_email FROM contacts')
-      .first();
-    expect(contact?.normalized_email).toBe('dup@example.test');
+    const stored = await fx.db
+      .prepare('SELECT normalized_email FROM leads ORDER BY created_at')
+      .all<{ normalized_email: string }>();
+    expect(stored.results?.map((row) => row.normalized_email)).toEqual([
+      'dup@example.test',
+      'dup@example.test',
+    ]);
   } finally {
     await fx.dispose();
   }
@@ -519,8 +506,8 @@ test('invalid or foreign pipeline-stage pairs reject atomically', async () => {
     const before = await fx.snapshot();
 
     const mismatch = payload('mismatch@example.test');
-    mismatch.opportunity.pipelineId = DEFAULT_PIPELINE_ID;
-    mismatch.opportunity.stageId = stage.id;
+    mismatch.pipelineId = DEFAULT_PIPELINE_ID;
+    mismatch.stageId = stage.id;
     expectError(
       await fx.intake('routing-mismatch', mismatch, token.token),
       422,
@@ -528,8 +515,8 @@ test('invalid or foreign pipeline-stage pairs reject atomically', async () => {
     );
 
     const missing = payload('missing@example.test');
-    missing.opportunity.pipelineId = other.id;
-    missing.opportunity.stageId = '01ARZ3NDEKTSV4RRFFQ69G5FC0';
+    missing.pipelineId = other.id;
+    missing.stageId = '01ARZ3NDEKTSV4RRFFQ69G5FC0';
     expectError(
       await fx.intake('routing-missing', missing, token.token),
       422,
@@ -541,8 +528,8 @@ test('invalid or foreign pipeline-stage pairs reject atomically', async () => {
       .bind(Date.parse('2026-09-09T00:00:00.000Z'), other.id)
       .run();
     const archived = payload('archived@example.test');
-    archived.opportunity.pipelineId = other.id;
-    archived.opportunity.stageId = stage.id;
+    archived.pipelineId = other.id;
+    archived.stageId = stage.id;
     expectError(
       await fx.intake('routing-archived', archived, token.token),
       422,
@@ -583,8 +570,8 @@ test('invalid or foreign pipeline-stage pairs reject atomically', async () => {
       .bind(foreignWorkspace, stage.id)
       .run();
     const foreign = payload('foreign@example.test');
-    foreign.opportunity.pipelineId = other.id;
-    foreign.opportunity.stageId = stage.id;
+    foreign.pipelineId = other.id;
+    foreign.stageId = stage.id;
     expectError(
       await fx.intake('routing-foreign', foreign, token.token),
       422,
@@ -603,18 +590,11 @@ test('invalid or foreign pipeline-stage pairs reject atomically', async () => {
   }
 });
 
-test('an accepted replay survives archived fields, new required fields, and archived pipelines', async () => {
+test('an accepted replay survives an archived pipeline', async () => {
   const fx = await startFixture();
   try {
     const token = await fx.createToken();
-    const field = await fx.ok<{ id: string }>('/v1/custom-fields', 'POST', {
-      entityType: 'contact',
-      key: 'old_field',
-      label: 'Old',
-      type: 'text',
-    });
     const acceptedPayload = payload('mutable@example.test');
-    acceptedPayload.contact.customFields = { old_field: 'historic' };
     const accepted = await fx.intake(
       'mutable-key',
       acceptedPayload,
@@ -622,14 +602,6 @@ test('an accepted replay survives archived fields, new required fields, and arch
     );
     expect(accepted.status).toBe(201);
 
-    await fx.ok(`/v1/custom-fields/${field.id}`, 'DELETE');
-    await fx.ok('/v1/custom-fields', 'POST', {
-      entityType: 'contact',
-      key: 'new_required',
-      label: 'New required',
-      required: true,
-      type: 'text',
-    });
     await fx.db
       .prepare('UPDATE pipelines SET archived_at = ? WHERE id = ?')
       .bind(Date.parse('2026-09-09T00:00:00.000Z'), DEFAULT_PIPELINE_ID)
@@ -642,10 +614,9 @@ test('an accepted replay survives archived fields, new required fields, and arch
     expect(await fx.snapshot()).toEqual(before);
 
     const changed = structuredClone(acceptedPayload);
-    changed.opportunity.name = 'Changed';
+    changed.name = 'Changed';
     const conflict = await fx.intake('mutable-key', changed, token.token);
     expectError(conflict, 409, 'idempotency_conflict');
-    expect(JSON.stringify(conflict.json)).not.toContain('historic');
     expect(JSON.stringify(conflict.json)).not.toContain('request_hash');
     expect(await fx.snapshot()).toEqual(before);
   } finally {
@@ -657,14 +628,10 @@ test('a failed intake transaction reserves nothing and the same key can retry', 
   const fx = await startFixture();
   try {
     const token = await fx.createToken();
-    const contact = await fx.ok<{ id: string }>('/v1/contacts', 'POST', {
-      email: 'rollback@example.test',
-      firstName: 'Original',
-    });
     const before = await fx.snapshot();
     const makePayload = () => {
       const value = payload('rollback@example.test');
-      value.contact.firstName = 'Updated';
+      value.firstName = 'Updated';
       return value;
     };
 
@@ -681,7 +648,7 @@ test('a failed intake transaction reserves nothing and the same key can retry', 
       );
       expect(failed.status).toBe(500);
       expect(JSON.stringify(failed.json)).not.toContain('injected failure');
-      // Nothing partial: the contact is untouched and no key is reserved.
+      // Nothing partial: no lead, no activity, and no key reserved.
       expect(await fx.snapshot()).toEqual(before);
       expect(await fx.count('idempotency_keys')).toBe(0);
     } finally {
@@ -692,10 +659,11 @@ test('a failed intake transaction reserves nothing and the same key can retry', 
     // succeed and complete the original submission.
     const retry = await fx.intake('retryable-key', makePayload(), token.token);
     expect(retry.status, JSON.stringify(retry)).toBe(201);
-    const updated = await fx.ok<{ firstName: null | string }>(
-      '/v1/contacts/' + contact.id,
-    );
-    expect(updated.firstName).toBe('Updated');
+    const lead = await fx.db
+      .prepare('SELECT first_name FROM leads WHERE email = ?')
+      .bind('rollback@example.test')
+      .first<{ first_name: string }>();
+    expect(lead?.first_name).toBe('Updated');
     expect(await fx.count('idempotency_keys')).toBe(1);
   } finally {
     await fx.dispose();
@@ -715,7 +683,7 @@ test('a pre-fingerprint idempotency row survives the additive migration as unver
     );
     expectError(result, 409, 'idempotency_legacy_unverifiable');
     expect(result.json.details).toEqual({
-      opportunityId: LEGACY_OPPORTUNITY_ID,
+      leadId: LEGACY_LEAD_ID,
     });
     expect(await fx.snapshot()).toEqual(before);
 
@@ -726,9 +694,7 @@ test('a pre-fingerprint idempotency row survives the additive migration as unver
       .bind('legacy-key')
       .first();
     expect(row?.request_hash).toBeNull();
-    expect(JSON.parse(String(row?.response_json)).opportunityId).toBe(
-      LEGACY_OPPORTUNITY_ID,
-    );
+    expect(JSON.parse(String(row?.response_json)).leadId).toBe(LEGACY_LEAD_ID);
 
     // A different key is still a normal new submission against the same store.
     const fresh = await fx.intake('fresh-after-legacy', payload(), token.token);
@@ -855,7 +821,7 @@ test('oversized intake bodies are rejected before parsing and the exact limit is
       'Idempotency-Key': 'max-size',
     });
     expect(boundary.status, JSON.stringify(boundary)).toBe(201);
-    expect(await fx.count('opportunities')).toBe(1);
+    expect(await fx.count('leads')).toBe(1);
     expect(await fx.count('idempotency_keys')).toBe(1);
   } finally {
     await fx.dispose();

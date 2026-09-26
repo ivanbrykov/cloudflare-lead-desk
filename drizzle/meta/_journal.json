@@ -64,6 +64,13 @@
       "when": 1790378241089,
       "tag": "0008_condemned_overlord",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1790385120116,
+      "tag": "0009_good_giant_girl",
+      "breakpoints": true
     }
   ]
 }

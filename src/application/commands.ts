@@ -3,7 +3,7 @@ import {
   createActivity,
   createContact,
   createFieldDefinition,
-  createIntakeAtomically,
+  createLeadAtomically,
   createManualOpportunity,
   createPipeline,
   createStage,
@@ -206,35 +206,8 @@ export const createIntakeCommand = (
       );
     }
 
-    const contactDefinitions = yield* persist(() =>
-      getFieldDefinitions(environment, 'contact'),
-    );
-    const opportunityDefinitions = yield* persist(() =>
-      getFieldDefinitions(environment, 'opportunity'),
-    );
-    const contactFields = yield* validate(() =>
-      validateCustomFields(
-        'contact',
-        contactDefinitions,
-        input.contact.customFields,
-      ),
-    );
-    const opportunityFields = yield* validate(() =>
-      validateCustomFields(
-        'opportunity',
-        opportunityDefinitions,
-        input.opportunity.customFields,
-      ),
-    );
     return yield* persist((): Promise<IntakePersistenceOutcome> =>
-      createIntakeAtomically(
-        environment,
-        input,
-        contactFields,
-        opportunityFields,
-        idempotencyKey,
-        requestHash,
-      ),
+      createLeadAtomically(environment, input, idempotencyKey, requestHash),
     );
   });
 

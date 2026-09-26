@@ -40,13 +40,7 @@ const assertRepoRoot = async () => {
   }
 };
 
-const TABLES = [
-  'contacts',
-  'opportunities',
-  'activities',
-  'custom_field_values',
-  'idempotency_keys',
-];
+const TABLES = ['leads', 'activities', 'idempotency_keys'];
 
 const INTAKE_ALIASES = ['/v1/intakes', '/v1/intakes/', '/v1/intakes/.'];
 
@@ -82,21 +76,17 @@ type Fixture = {
 };
 
 type IntakePayload = {
-  contact: {
-    email: string;
-    firstName?: string;
-  };
-  opportunity: {
-    name: string;
-    source: string;
-  };
+  email: string;
+  firstName?: string;
+  name: string;
   source: string;
 };
 
 const payload = (email = 'body-limit@example.test'): IntakePayload => ({
-  contact: { email, firstName: 'Sam' },
-  opportunity: { name: 'New inquiry', source: 'form' },
-  source: 'website_form',
+  email,
+  firstName: 'Sam',
+  name: 'New inquiry',
+  source: 'form',
 });
 
 const workerScripts = new Map<string, string>();
@@ -378,7 +368,7 @@ test('the exact 65,536-byte boundary is accepted on every alias', async () => {
       expect(result.status, JSON.stringify(result)).toBe(201);
     }
 
-    expect(await fx.count('opportunities')).toBe(3);
+    expect(await fx.count('leads')).toBe(3);
     expect(await fx.count('idempotency_keys')).toBe(3);
   } finally {
     await fx.dispose();
