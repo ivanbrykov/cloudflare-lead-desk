@@ -27,7 +27,7 @@ export class ApiClientError extends Error {
   }
 }
 
-export const request = async <T>(
+export const requestBody = async <T>(
   path: string,
   init: RequestInit = {},
 ): Promise<T> => {
@@ -43,14 +43,24 @@ export const request = async <T>(
     return undefined as T;
   }
 
-  const payload = (await response.json()) as (ApiEnvelope<T> | T) & {
-    message?: string;
-  };
+  const payload = (await response.json()) as T & { message?: string };
   if (!response.ok) {
     throw new ApiClientError(
       response.status,
       payload.message ?? 'Request failed.',
     );
+  }
+
+  return payload;
+};
+
+export const request = async <T>(
+  path: string,
+  init: RequestInit = {},
+): Promise<T> => {
+  const payload = await requestBody<ApiEnvelope<T> | T>(path, init);
+  if (payload === undefined) {
+    return undefined as T;
   }
 
   // The Elysia API wraps successful payloads in a `{ data }` envelope. Some
