@@ -60,12 +60,16 @@ type LeadsFixture = {
   dispose: () => Promise<void>;
 };
 
-const startFixture = async (): Promise<LeadsFixture> => {
+const startFixture = async (
+  options: { unauthenticated?: boolean } = {},
+): Promise<LeadsFixture> => {
   const script = await bundleWorker();
   const mf = new Miniflare(
     convertV4MiniflareOptions({
       bindings: {
-        DEV_ADMIN_EMAIL: 'leads-regression@example.test',
+        ...(options.unauthenticated
+          ? {}
+          : { DEV_ADMIN_EMAIL: 'leads-regression@example.test' }),
         ENVIRONMENT: 'test',
       },
       compatibilityDate: '2026-08-22',
@@ -258,6 +262,17 @@ test('lead queries validate through Standard Schema', async () => {
     const badCursor = await fx.api('/v1/leads?cursor=not-a-cursor');
     expect(badCursor.status).toBe(422);
     expect(badCursor.json).toMatchObject({ code: 'invalid_cursor' });
+  } finally {
+    await fx.dispose();
+  }
+});
+
+test('staff routes require a session', async () => {
+  const fx = await startFixture({ unauthenticated: true });
+  try {
+    const response = await fx.api('/v1/leads');
+    expect(response.status).toBe(401);
+    expect(response.json).toMatchObject({ code: 'unauthorized' });
   } finally {
     await fx.dispose();
   }
