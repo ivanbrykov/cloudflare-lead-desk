@@ -24,10 +24,12 @@ import { encodeKeysetCursor, type Keyset } from '@/domain/pagination';
 import {
   type ContactInput,
   type CreateCustomField,
+  type CreateLeadInput,
   type CreateOpportunityInput,
   type FieldEntity,
   type IntakeInput,
   normalizeEmail,
+  type UpdateLeadInput,
 } from '@/domain/schemas';
 import {
   and,
@@ -1888,4 +1890,221 @@ export const createLeadAtomically = async (
 
     throw error;
   }
+};
+
+const leadName = (parts: {
+  email: null | string;
+  firstName: null | string;
+  lastName: null | string;
+  name?: string;
+}): string => {
+  if (parts.name) {
+    return parts.name;
+  }
+
+  const person = [parts.firstName, parts.lastName]
+    .filter((part): part is string => typeof part === 'string')
+    .join(' ')
+    .trim();
+  return person || parts.email || 'New lead';
+};
+
+export const createLead = async (
+  environment: Env,
+  input: CreateLeadInput,
+): Promise<LeadRecord> => {
+  const timestamp = now();
+  const email = input.email ?? null;
+  const firstName = input.firstName ?? null;
+  const lastName = input.lastName ?? null;
+  const record: typeof leads.$inferSelect = {
+    createdAt: timestamp,
+    customFields: input.customFields ?? {},
+    deletedAt: null,
+    email,
+    estimatedValue: input.estimatedValue ?? null,
+    firstName,
+    id: id(),
+    lastName,
+    name: leadName({ email, firstName, lastName, name: input.name }),
+    normalizedEmail: email ? normalizeEmail(email) : null,
+    origin: null,
+    pipelineId: input.pipelineId ?? DEFAULT_PIPELINE_ID,
+    publicKeyId: null,
+    source: input.source ?? 'Manual entry',
+    stageId: input.stageId ?? DEFAULT_STAGE_ID,
+    updatedAt: timestamp,
+    workspaceId: DEFAULT_WORKSPACE_ID,
+  };
+  await getDatabase(environment).insert(leads).values(record);
+  return toLead(record, new Map());
+};
+
+export const updateLead = async (
+  environment: Env,
+  leadId: string,
+  input: UpdateLeadInput,
+): Promise<'invalid_stage' | LeadRecord | null> => {
+  const existing = await getDatabase(environment)
+    .select()
+    .from(leads)
+    .where(
+      and(
+        eq(leads.workspaceId, DEFAULT_WORKSPACE_ID),
+        eq(leads.id, leadId),
+        isNull(leads.deletedAt),
+      ),
+    )
+    .get();
+  if (!existing) {
+    return null;
+  }
+
+  const patch: Partial<typeof leads.$inferInsert> = { updatedAt: now() };
+  if (input.customFields !== undefined) {
+    patch.customFields = input.customFields;
+  }
+
+  if (input.email !== undefined) {
+    patch.email = input.email;
+    patch.normalizedEmail = input.email ? normalizeEmail(input.email) : null;
+  }
+
+  if (input.estimatedValue !== undefined) {
+    patch.estimatedValue = input.estimatedValue;
+  }
+
+  if (input.firstName !== undefined) {
+    patch.firstName = input.firstName;
+  }
+
+  if (input.lastName !== undefined) {
+    patch.lastName = input.lastName;
+  }
+
+  if (input.name !== undefined) {
+    patch.name = input.name;
+  }
+
+  if (input.source !== undefined) {
+    patch.source = input.source;
+  }
+
+  if (input.stageId !== undefined) {
+    const valid = await isStageInActiveWorkspacePipeline(
+      environment,
+      existing.pipelineId,
+      input.stageId,
+    );
+    if (!valid) {
+      return 'invalid_stage';
+    }
+
+    patch.stageId = input.stageId;
+  }
+
+  await getDatabase(environment)
+    .update(leads)
+    .set(patch)
+    .where(
+      and(eq(leads.workspaceId, DEFAULT_WORKSPACE_ID), eq(leads.id, leadId)),
+    )
+    .run();
+  return getLead(environment, leadId);
+};
+
+/**
+ * Bulk stage move for the selected table rows. The stage must belong to the
+ * same pipeline as every selected lead; leads may not span pipelines.
+ */
+export const moveLeads = async (
+  environment: Env,
+  ids: readonly string[],
+  stageId: string,
+): Promise<'invalid_stage' | 'moved' | 'not_found'> => {
+  const uniqueIds = [...new Set(ids)];
+  const rows = await getDatabase(environment)
+    .select({ id: leads.id, pipelineId: leads.pipelineId })
+    .from(leads)
+    .where(
+      and(
+        eq(leads.workspaceId, DEFAULT_WORKSPACE_ID),
+        isNull(leads.deletedAt),
+        inArray(leads.id, uniqueIds),
+      ),
+    );
+  if (rows.length !== uniqueIds.length) {
+    return 'not_found';
+  }
+
+  const stage = await getDatabase(environment)
+    .select({ pipelineId: stages.pipelineId })
+    .from(stages)
+    .where(
+      and(eq(stages.id, stageId), eq(stages.workspaceId, DEFAULT_WORKSPACE_ID)),
+    )
+    .get();
+  if (!stage || rows.some((row) => row.pipelineId !== stage.pipelineId)) {
+    return 'invalid_stage';
+  }
+
+  await getDatabase(environment)
+    .update(leads)
+    .set({ stageId, updatedAt: now() })
+    .where(
+      and(
+        eq(leads.workspaceId, DEFAULT_WORKSPACE_ID),
+        isNull(leads.deletedAt),
+        inArray(leads.id, uniqueIds),
+      ),
+    )
+    .run();
+  return 'moved';
+};
+
+export const softDeleteLeads = async (
+  environment: Env,
+  ids: readonly string[],
+): Promise<number> => {
+  const uniqueIds = [...new Set(ids)];
+  const result = await getDatabase(environment)
+    .update(leads)
+    .set({ deletedAt: now() })
+    .where(
+      and(
+        eq(leads.workspaceId, DEFAULT_WORKSPACE_ID),
+        isNull(leads.deletedAt),
+        inArray(leads.id, uniqueIds),
+      ),
+    )
+    .run();
+  return result.meta.changes;
+};
+
+export const createLeadActivity = async (
+  environment: Env,
+  leadId: string,
+  actorEmail: string,
+  kind: string,
+  body: string,
+) => {
+  const lead = await getLead(environment, leadId);
+  if (!lead) {
+    return null;
+  }
+
+  const record = {
+    actorEmail,
+    body,
+    contactId: null,
+    createdAt: now(),
+    id: id(),
+    kind,
+    leadId,
+    metadata: {},
+    opportunityId: null,
+    workspaceId: DEFAULT_WORKSPACE_ID,
+  };
+  await getDatabase(environment).insert(activities).values(record);
+  return record;
 };

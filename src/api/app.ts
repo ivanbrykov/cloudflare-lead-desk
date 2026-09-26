@@ -6,12 +6,17 @@ import {
   createContactCommand,
   createCustomFieldCommand,
   createIntakeCommand,
+  createLeadActivityCommand,
+  createLeadCommand,
   createManualOpportunityCommand,
   createPipelineCommand,
   createStageCommand,
   deleteContactCommand,
+  moveLeadsCommand,
   moveOpportunityCommand,
+  softDeleteLeadsCommand,
   updateContactCommand,
+  updateLeadCommand,
   updateOpportunityCommand,
 } from '@/application/commands';
 import { type DomainError, type PersistenceError } from '@/application/errors';
@@ -65,10 +70,14 @@ import {
   parseListLimit,
 } from '@/domain/pagination';
 import {
+  BulkDeleteLeadsRequest,
+  BulkMoveLeadsRequest,
   ContactInputRequest,
   CreateActivityRequest,
   CreateCustomFieldRequest,
   CreateInviteRequest,
+  CreateLeadActivityRequest,
+  CreateLeadRequest,
   CreateOpportunityRequest,
   CreatePipelineRequest,
   CreateStageRequest,
@@ -79,6 +88,7 @@ import {
   ListLeadsQueryRequest,
   MoveOpportunityRequest,
   SetStaffDisabledRequest,
+  UpdateLeadRequest,
   UpdateOpportunityRequest,
   ValidateInviteRequest,
 } from '@/domain/schemas';
@@ -710,9 +720,112 @@ const createAppWithAuth = (environment: Env, getAuth: AuthForRequest) =>
       },
       { query: Schema.standardSchemaV1(ListLeadsQueryRequest) },
     )
+    .post(
+      '/v1/leads',
+      async ({ body, request }) => {
+        const result = await run(request, createLeadCommand(environment, body));
+        return 'error' in result
+          ? result.error
+          : Response.json({ data: result.data }, { status: 201 });
+      },
+      { body: Schema.standardSchemaV1(CreateLeadRequest) },
+    )
+    .patch(
+      '/v1/leads/bulk',
+      async ({ body, request }) => {
+        const result = await run(
+          request,
+          moveLeadsCommand(environment, body.ids, body.stageId),
+        );
+        if ('error' in result) {
+          return result.error;
+        }
+
+        switch (result.data) {
+          case 'invalid_stage':
+            return errorResponse(
+              422,
+              'invalid_stage',
+              "The selected stage does not belong to these leads' pipeline.",
+            );
+          case 'moved':
+            return { data: { moved: body.ids.length } };
+          case 'not_found':
+            return errorResponse(
+              404,
+              'not_found',
+              'One or more leads were not found.',
+            );
+        }
+
+        return undefined;
+      },
+      { body: Schema.standardSchemaV1(BulkMoveLeadsRequest) },
+    )
+    .post(
+      '/v1/leads/bulk-delete',
+      async ({ body, request }) => {
+        const result = await run(
+          request,
+          softDeleteLeadsCommand(environment, body.ids),
+        );
+        return 'error' in result
+          ? result.error
+          : { data: { deleted: result.data } };
+      },
+      { body: Schema.standardSchemaV1(BulkDeleteLeadsRequest) },
+    )
+    .patch(
+      '/v1/leads/:id',
+      async ({ body, params, request }) => {
+        const result = await run(
+          request,
+          updateLeadCommand(environment, params.id, body),
+        );
+        if ('error' in result) {
+          return result.error;
+        }
+
+        if (result.data === 'invalid_stage') {
+          return errorResponse(
+            422,
+            'invalid_stage',
+            "The selected stage does not belong to this lead's pipeline.",
+          );
+        }
+
+        return result.data
+          ? { data: result.data }
+          : errorResponse(404, 'not_found', 'Lead not found.');
+      },
+      { body: Schema.standardSchemaV1(UpdateLeadRequest) },
+    )
     .get('/v1/leads/:id/activities', async ({ params }) => {
       return { data: await listLeadActivities(environment, params.id) };
     })
+    .post(
+      '/v1/leads/:id/activities',
+      async ({ adminEmail, body, params, request }) => {
+        const result = await run(
+          request,
+          createLeadActivityCommand(
+            environment,
+            params.id,
+            adminEmail,
+            body.kind ?? 'note',
+            body.body,
+          ),
+        );
+        if ('error' in result) {
+          return result.error;
+        }
+
+        return result.data
+          ? Response.json({ data: result.data }, { status: 201 })
+          : errorResponse(404, 'not_found', 'Lead not found.');
+      },
+      { body: Schema.standardSchemaV1(CreateLeadActivityRequest) },
+    )
     .get('/v1/leads/:id', async ({ params }) => {
       const lead = await getLead(environment, params.id);
       return lead
