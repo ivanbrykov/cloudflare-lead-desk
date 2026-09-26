@@ -7,6 +7,7 @@ import {
   CreateCustomFieldRequest,
   type PipelineView,
 } from './domain/schemas';
+import { LeadDetailPage, LeadsPage } from './leads';
 import {
   authClient,
   signIn,
@@ -117,6 +118,7 @@ type Token = {
 };
 
 const navigation = [
+  { href: '/leads', icon: LayoutList, label: 'Leads' },
   { href: '/opportunities', icon: LayoutList, label: 'Opportunities' },
   { href: '/contacts', icon: ContactRound, label: 'Contacts' },
   { href: '/settings/fields', icon: SlidersHorizontal, label: 'Fields' },
@@ -2999,6 +3001,12 @@ export const App = () => {
   return (
     <Shell>
       <Switch>
+        <Route path="/leads/:id">
+          {(parameters) => <LeadDetailPage id={parameters.id} />}
+        </Route>
+        <Route path="/leads">
+          <LeadsPage />
+        </Route>
         <Route path="/opportunities/:id">
           {(parameters) => <OpportunityDetail id={parameters.id} />}
         </Route>
@@ -3021,7 +3029,7 @@ export const App = () => {
           <StaffPage />
         </Route>
         <Route>
-          <OpportunitiesPage />
+          <LeadsPage />
         </Route>
       </Switch>
     </Shell>
