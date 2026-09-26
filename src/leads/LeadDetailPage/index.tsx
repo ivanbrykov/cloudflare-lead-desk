@@ -13,6 +13,7 @@ import { cn } from '@/lib/styles';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronLeft } from 'lucide-react';
 import { useState } from 'react';
+import { toast } from 'sonner';
 import { Link, useLocation } from 'wouter';
 
 const formatCustomValue = (value: unknown): string =>
@@ -69,6 +70,9 @@ export const LeadDetailPage = ({ id }: { readonly id: string }) => {
     void queryClient.invalidateQueries({ queryKey: ['leads'] });
   };
 
+  const stageName = (target: string) =>
+    pipeline?.stages.find((stage) => stage.id === target)?.name ?? 'stage';
+
   const save = useMutation({
     mutationFn: () =>
       request(`/v1/leads/${id}`, {
@@ -89,6 +93,7 @@ export const LeadDetailPage = ({ id }: { readonly id: string }) => {
       }),
     onSuccess: () => {
       setDraft(null);
+      toast.success('Lead saved');
       invalidate();
     },
   });
@@ -98,7 +103,10 @@ export const LeadDetailPage = ({ id }: { readonly id: string }) => {
         body: JSON.stringify({ stageId }),
         method: 'PATCH',
       }),
-    onSuccess: invalidate,
+    onSuccess: (_data, stageId) => {
+      toast.success(`Moved to ${stageName(stageId)}`);
+      invalidate();
+    },
   });
   const addNote = useMutation({
     mutationFn: () =>
@@ -108,6 +116,7 @@ export const LeadDetailPage = ({ id }: { readonly id: string }) => {
       }),
     onSuccess: () => {
       setNote('');
+      toast.success('Note added');
       void queryClient.invalidateQueries({
         queryKey: ['lead-activities', id],
       });
@@ -120,6 +129,7 @@ export const LeadDetailPage = ({ id }: { readonly id: string }) => {
         method: 'POST',
       }),
     onSuccess: () => {
+      toast.success('Lead deleted');
       void queryClient.invalidateQueries({ queryKey: ['leads'] });
       setLocation('/leads');
     },

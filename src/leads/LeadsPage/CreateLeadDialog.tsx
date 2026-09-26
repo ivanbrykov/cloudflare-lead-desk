@@ -7,6 +7,7 @@ import { type PipelineView } from '@/domain/schemas';
 import { request } from '@/lib/http';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
+import { toast } from 'sonner';
 
 export const CreateLeadDialog = ({
   onOpenChange,
@@ -45,6 +46,7 @@ export const CreateLeadDialog = ({
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['leads'] });
       void queryClient.invalidateQueries({ queryKey: ['lead-stage-counts'] });
+      toast.success('Lead created');
       onOpenChange(false);
     },
   });

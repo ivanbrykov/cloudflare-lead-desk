@@ -15,6 +15,7 @@ import {
 } from '@tanstack/react-query';
 import { Plus, Search } from 'lucide-react';
 import { useState } from 'react';
+import { toast } from 'sonner';
 import { Link } from 'wouter';
 
 type LeadPage = { data: LeadView[]; nextCursor: null | string };
@@ -95,13 +96,19 @@ export const LeadsPage = () => {
     void queryClient.invalidateQueries({ queryKey: ['lead-stage-counts'] });
   };
 
+  const stageName = (target: string) =>
+    pipeline?.stages.find((stage) => stage.id === target)?.name ?? 'stage';
+
   const moveSelected = useMutation({
     mutationFn: (target: string) =>
       request('/v1/leads/bulk', {
         body: JSON.stringify({ ids: selected, stageId: target }),
         method: 'PATCH',
       }),
-    onSuccess: () => {
+    onSuccess: (_data, target) => {
+      toast.success(
+        `${selected.length} ${selected.length === 1 ? 'lead' : 'leads'} moved to ${stageName(target)}`,
+      );
       setSelected([]);
       invalidate();
     },
@@ -113,6 +120,9 @@ export const LeadsPage = () => {
         method: 'POST',
       }),
     onSuccess: () => {
+      toast.success(
+        `${selected.length} ${selected.length === 1 ? 'lead' : 'leads'} deleted`,
+      );
       setSelected([]);
       invalidate();
     },
@@ -123,7 +133,10 @@ export const LeadsPage = () => {
         body: JSON.stringify({ stageId: target }),
         method: 'PATCH',
       }),
-    onSuccess: invalidate,
+    onSuccess: (_data, variables) => {
+      toast.success(`Moved to ${stageName(variables.target)}`);
+      invalidate();
+    },
   });
 
   const error =
