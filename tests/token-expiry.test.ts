@@ -398,8 +398,7 @@ test('intake rejects expired tokens with 401 before any idempotency or domain wr
     await seedToken(fx, 'boundary-token', boundaryRaw, Date.now());
 
     const idemBefore = await fx.count('idempotency_keys');
-    const contactsBefore = await fx.count('contacts');
-    const opportunitiesBefore = await fx.count('opportunities');
+    const leadsBefore = await fx.count('leads');
 
     const expired = await intake(
       fx,
@@ -419,8 +418,7 @@ test('intake rejects expired tokens with 401 before any idempotency or domain wr
     expect(boundaryResult.json.code).toBe('unauthorized');
 
     expect(await fx.count('idempotency_keys')).toBe(idemBefore);
-    expect(await fx.count('contacts')).toBe(contactsBefore);
-    expect(await fx.count('opportunities')).toBe(opportunitiesBefore);
+    expect(await fx.count('leads')).toBe(leadsBefore);
 
     // A denied token must not be marked as used.
     for (const id of ['expired-token', 'boundary-token']) {

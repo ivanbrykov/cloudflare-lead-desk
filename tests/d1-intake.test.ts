@@ -835,11 +835,12 @@ test('the byte limit applies to the intake route only', async () => {
     const pipeline = await fx.api('/v1/pipelines', 'POST', { name: big });
     expect(pipeline.status).toBe(201);
 
-    const contact = await fx.api('/v1/contacts', 'POST', {
+    const lead = await fx.api('/v1/leads', 'POST', {
       email: 'big@example.test',
       firstName: big,
+      source: 'manual',
     });
-    expect(contact.status).toBe(201);
+    expect(lead.status).toBe(201);
   } finally {
     await fx.dispose();
   }

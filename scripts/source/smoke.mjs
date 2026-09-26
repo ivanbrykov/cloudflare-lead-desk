@@ -225,8 +225,7 @@ const snapshot = async () => {
   // Capture complete durable business/account state without saving credential data in evidence.
   for (const table of [
     'workspaces',
-    'contacts',
-    'opportunities',
+    'leads',
     'user',
     'account',
     'session',
@@ -332,16 +331,16 @@ const ui = async (context, revision) => {
   const page = await context.newPage();
   const errors = [];
   page.on('pageerror', (error) => errors.push(error.message));
-  await page.goto(`${origin}/contacts`);
-  await page.getByRole('heading', { exact: true, name: 'Contacts' }).waitFor();
+  await page.goto(`${origin}/leads`);
+  await page.getByRole('heading', { exact: true, name: 'Leads' }).waitFor();
   await page.getByText('Survives Upgrade', { exact: true }).first().waitFor();
   await page.screenshot({
     fullPage: true,
-    path: join(output, `contacts-${revision.slice(0, 12)}.png`),
+    path: join(output, `leads-${revision.slice(0, 12)}.png`),
   });
   assert.deepEqual(errors, []);
   await page.close();
-  pass(`source-built SPA loads authenticated contacts at ${revision}`);
+  pass(`source-built SPA loads authenticated leads at ${revision}`);
 };
 
 try {
@@ -434,7 +433,7 @@ try {
     method: 'POST',
   });
   const contact = (
-    await api(context, '/v1/contacts', {
+    await api(context, '/v1/leads', {
       data: {
         email: 'lead@example.test',
         firstName: 'Survives',
@@ -522,7 +521,7 @@ try {
     secondRevision,
   );
   assert.equal(
-    (await api(context, `/v1/contacts/${contact.id}`)).data.email,
+    (await api(context, `/v1/leads/${contact.id}`)).data.email,
     'lead@example.test',
   );
   await ui(context, secondRevision);
@@ -534,7 +533,7 @@ try {
     data: { email: 'owner@example.test', password },
     method: 'POST',
   });
-  await api(fresh, '/v1/contacts');
+  await api(fresh, '/v1/leads');
   const invited = await browser.newContext({ ignoreHTTPSErrors: true });
   await api(invited, '/api/auth/sign-up/email', {
     data: {
