@@ -154,12 +154,12 @@ test('every API request emits one JSON line with method, path, status, and durat
   expect(logs[0].level).toBe('log');
 });
 
-test('the contacts query param is contact data and never reaches the logs', async () => {
-  await api('/v1/contacts?query=secret-lead@example.test&limit=5');
+test('the leads query param is contact data and never reaches the logs', async () => {
+  await api('/v1/leads?query=secret-lead@example.test&limit=5');
 
-  const lines = requestLines(0, 'GET', '/v1/contacts');
+  const lines = requestLines(0, 'GET', '/v1/leads');
   expect(lines).toHaveLength(1);
-  expect(lines[0].parsed.path).toBe('/v1/contacts');
+  expect(lines[0].parsed.path).toBe('/v1/leads');
   expect(lines[0].parsed.status).toBe(200);
   const raw = logs.map((entry) => entry.message).join('\n');
   expect(raw).not.toContain('secret-lead@example.test');
@@ -179,28 +179,20 @@ test('an unknown API route is logged with the 404 status at log level', async ()
 });
 
 test('a persistence failure is logged at error level with the class, never the cause message', async () => {
-  const field = await api('/v1/custom-fields', 'POST', {
-    entityType: 'contact',
-    key: 'logging_probe',
-    label: 'logging probe',
-    type: 'text',
-  });
-  expect(field.status).toBe(201);
-
   await database
     .prepare(
-      "CREATE TRIGGER logging_fail_insert BEFORE INSERT ON custom_field_values WHEN NEW.value_text = 'reject-value' BEGIN SELECT RAISE(ABORT, 'logging regression injected failure'); END",
+      "CREATE TRIGGER logging_fail_insert BEFORE INSERT ON leads WHEN NEW.email = 'reject-value@example.test' BEGIN SELECT RAISE(ABORT, 'logging regression injected failure'); END",
     )
     .run();
   try {
-    const result = await api('/v1/contacts', 'POST', {
-      customFields: { logging_probe: 'reject-value' },
-      email: 'logging-new@example.test',
-      firstName: 'New',
+    const result = await api('/v1/leads', 'POST', {
+      email: 'reject-value@example.test',
+      name: 'Logging probe',
+      source: 'manual',
     });
     expect(result.status).toBe(500);
 
-    const lines = requestLines(0, 'POST', '/v1/contacts');
+    const lines = requestLines(0, 'POST', '/v1/leads');
     const failure = lines.find(
       (line) => line.parsed.event === 'request.failure',
     );
@@ -223,7 +215,6 @@ test('a persistence failure is logged at error level with the class, never the c
     const raw = logs.map((entry) => entry.message).join('\n');
     expect(raw).not.toContain('logging regression injected failure');
     expect(raw).not.toContain('reject-value');
-    expect(raw).not.toContain('logging-new@example.test');
   } finally {
     await database.prepare('DROP TRIGGER logging_fail_insert').run();
   }

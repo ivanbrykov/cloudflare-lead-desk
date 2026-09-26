@@ -1,11 +1,11 @@
 # Cloudflare Lead Desk
 
-A self-hosted, Cloudflare-native CRM for teams handling inbound opportunities. It stores data in D1, serves a React workbench from Workers, and exposes a documented API for trusted form integrations.
+A self-hosted, Cloudflare-native CRM for teams handling inbound leads. It stores data in D1, serves a React workbench from Workers, and exposes a documented API for trusted form integrations.
 
 ## Alpha scope
 
-- Contacts, opportunities, pipelines, stages, notes, and a Kanban work queue.
-- Configurable fields for contacts and opportunities.
+- Leads, pipelines, stages, notes, and a table work queue.
+- JSON custom fields stored on each lead, with no definition registry.
 - Email + password staff authentication (Better Auth, D1-backed sessions) and displayed-once `intake:write` tokens.
 - Idempotent, atomic `POST /v1/intakes` capture for websites and other trusted systems.
 
@@ -190,7 +190,8 @@ installer prompts. Deployed configuration stays `ENVIRONMENT=production`.
 
 ## Integration API
 
-Create an intake token in **Settings → Tokens**, then send an idempotent form submission:
+Create an intake token in **Settings → Tokens**, then send an idempotent form
+submission. One submission creates one lead:
 
 ```sh
 curl https://crm.example.com/v1/intakes \
@@ -199,16 +200,16 @@ curl https://crm.example.com/v1/intakes \
   -H 'Idempotency-Key: a-stable-submission-id' \
   --data '{
     "source": "website_form",
-    "contact": { "email": "alex@example.com", "firstName": "Sam" },
-    "opportunity": {
-      "name": "New service inquiry",
-      "source": "calculator",
-      "customFields": { "segment": "Enterprise" }
-    }
+    "email": "alex@example.com",
+    "firstName": "Sam",
+    "name": "New service inquiry",
+    "customFields": { "segment": "Enterprise" }
   }'
 ```
 
-The interactive OpenAPI documentation is available at `/openapi`.
+`pipelineId` and `stageId` are optional; without them a submission uses the
+seeded default pipeline and stage. The interactive OpenAPI documentation is
+available at `/openapi`.
 
 ### Intake idempotency contract
 
@@ -246,39 +247,36 @@ the same bounded read; they never fall through to another body parser.
   revoking tokens never duplicates a submission. Each accepted key stores a
   deterministic SHA-256 fingerprint of the decoded request. The fingerprint
   sorts object keys recursively, preserves array order, and normalizes the
-  contact email (case/whitespace), so JSON whitespace, property order, and
-  email case never create a conflict. Omitted versus explicitly supplied
-  optional values are fingerprinted differently and may legitimately
-  conflict; use one stable form per logical submission.
-- **Replay.** Re-sending the same logical payload returns the original
-  `201` response and IDs without updating contacts or inserting history.
-  Replays skip current custom-field and pipeline validation, so an accepted
-  submission keeps replaying after fields are archived or newly required and
-  after pipelines are archived.
+  email (case/whitespace), so JSON whitespace, property order, and email case
+  never create a conflict. Omitted versus explicitly supplied optional values
+  are fingerprinted differently and may legitimately conflict; use one stable
+  form per logical submission.
+- **Replay.** Re-sending the same logical payload returns the original `201`
+  response and IDs without updating leads or inserting history. Replays skip
+  current pipeline validation, so an accepted submission keeps replaying after
+  its pipeline is archived.
 - **Conflicts.** A different payload under the same key returns
   `409 idempotency_conflict` without exposing the stored payload or hash.
   Concurrent same-key calls settle to one persisted winner; identical
   concurrent retries all return the original success.
 - **Legacy keys.** Keys accepted before fingerprints existed (null
   `request_hash`) return `409 idempotency_legacy_unverifiable`. Reconcile
-  them against the already stored opportunity (its ID is returned in
-  `details`) before considering another submission or key. The stored row is
-  never overwritten, backfilled from the new request, or deleted, and blind
-  new-key retries are not a substitute for reconciliation.
+  them against the already stored lead (its ID is returned in `details`)
+  before considering another submission or key. The stored row is never
+  overwritten, backfilled from the new request, or deleted, and blind new-key
+  retries are not a substitute for reconciliation.
 - **Routing.** The selected or default stage must belong to the selected or
   default pipeline, both must belong to the current workspace, and archived
   pipelines are rejected. Invalid combinations return `422 invalid_stage`
-  with no contact, opportunity, activity, custom-value, or idempotency
-  writes.
-- **Atomicity.** Contact upsert, opportunity, intake activity, custom-field
-  values, and the idempotency key commit in one D1 transaction. A failed
-  transaction reserves no key, so the same key can be retried after a
-  transient failure.
+  with no lead, activity, or idempotency writes.
+- **Atomicity.** The lead, its intake activity, and the idempotency key commit
+  in one D1 transaction. A failed transaction reserves no key, so the same key
+  can be retried after a transient failure.
 
-### List pagination and filters
+### Leads
 
-`GET /v1/contacts` is keyset (seek) paginated over `createdAt DESC`,
-tie-broken by `id DESC`:
+`GET /v1/leads` is keyset (seek) paginated over `createdAt DESC`, tie-broken
+by `id DESC`:
 
 - `limit` bounds a page to an integer between 1 and 100 (default 50).
   Non-numeric or out-of-range values return `422 validation_error`.
@@ -287,92 +285,64 @@ tie-broken by `id DESC`:
   ordering above. Omit it for the first page; the final page returns
   `nextCursor: null`. A missing, malformed, or tampered cursor returns
   `422 invalid_cursor`.
-- `query` keeps its search role and composes with pagination: a literal
-  substring match on first name, last name, or email (`%` and `_` match
-  literally).
-- Items keep the flat contact shape, including `customFields`.
-- Custom-field values are fetched for the whole page in batched `IN (...)`
-  queries chunked to D1's 100-bound-parameter limit, not one query per
-  contact.
+- `pipelineId` and `stageId` filter to a single pipeline or stage.
+- `query` is a literal substring match on name or email (`%` and `_` match
+  literally) and composes with pagination.
+- Items carry a `duplicateCount` hint: how many other live leads share the
+  normalized email, computed for the whole page in one grouped query.
+- Custom fields live in each lead's `customFields` JSON document; there is no
+  definition registry, so any key the sender supplies is stored as-is.
+
+`POST /v1/leads` creates a lead manually. At least one of `email`,
+`firstName`, or `lastName` is required (`422 lead_identity_required`), a
+non-empty `name` defaults from the person's name or email, `stageId` must
+belong to `pipelineId`, and `estimatedValue` must be a non-negative finite
+number. `PATCH /v1/leads/:id` updates one lead; `email`, `firstName`, and
+`lastName` accept `null` to clear, and `stageId` must belong to the lead's
+pipeline. Unknown or soft-deleted ids return `404 not_found`.
+
+`PATCH /v1/leads/bulk` moves up to 100 ids to one stage. `POST
+/v1/leads/bulk-delete` soft-deletes up to 100 ids: rows stay in D1 with
+`deletedAt` set, disappear from `GET /v1/leads` and stage counts, and keep
+their activity history. `GET /v1/leads/stage-counts` returns live lead counts
+per stage for one pipeline.
 
 Consistency while paging: each page is evaluated as of its own query (no
-snapshot spans pages). Pages are disjoint windows of the keyset ordering,
-so a row is never returned on two pages, and a pass over an unchanged
-dataset returns every matching row exactly once. If rows change while a
-client pages: a row deleted after its page was served is skipped (it never
-reappears); a row inserted after the current cursor position may surface
-in a later page; a row inserted before the cursor - newer timestamps, the
-usual case - sorts ahead of it and is only visible after restarting from
-the first page.
+snapshot spans pages). Pages are disjoint windows of the keyset ordering, so
+a row is never returned on two pages, and a pass over an unchanged dataset
+returns every matching row exactly once. If rows change while a client pages:
+a row deleted after its page was served is skipped (it never reappears); a row
+inserted after the current cursor position may surface in a later page; a row
+inserted before the cursor - newer timestamps, the usual case - sorts ahead of
+it and is only visible after restarting from the first page.
 
-`GET /v1/opportunities` is not paginated; the optional `pipelineId` query
-parameter restricts results to one active pipeline of the current workspace.
-An unknown or archived `pipelineId` returns `422 validation_error`.
-Soft-deleted opportunities never appear in this list. Opportunity
-custom-field values use the same batched read.
+### Lead activity
 
-### Opportunity editing
+`GET /v1/leads/:id/activities` lists a lead's activity newest first;
+`POST /v1/leads/:id/activities` adds a note. Activities belong to a lead;
+there is no separate contact or opportunity record.
 
-`PATCH /v1/opportunities/:id` updates the editable staff fields of an
-existing opportunity. It accepts `{ name?, estimatedValue? }`:
+### Pipelines and stages
 
-- At least one field is required; `{}` returns `422 validation_error`.
-- `name` must be non-empty without leading or trailing whitespace (the same
-  `NonEmptyString` contract as every other name field in the app); blank
-  names return `422 validation_error`.
-- `estimatedValue` must be a non-negative finite number. An explicit `null`
-  clears the stored value; omitting the field keeps it. Negative or
-  non-finite values return `422 validation_error`.
-- Unknown and soft-deleted ids return `404 not_found`. Staff authentication
-  is required; missing or invalid identities return `401 unauthorized`.
+`GET /v1/pipelines` lists active and archived pipelines with their stages.
+`POST /v1/pipelines` creates a pipeline and `POST /v1/pipelines/:id/stages`
+appends a stage. Rename, archive, reorder, and stage deletion are not exposed
+yet; a settings UI is the next step.
 
-The workbench exposes the endpoint as a minimal "Edit details" form on the
-opportunity detail page, and the board lists active pipelines in a pipeline
-selector whose selection drives `GET /v1/opportunities?pipelineId=`.
-
-### Opportunity deletion
-
-`DELETE /v1/opportunities/:id` soft-deletes an opportunity: the row stays in
-D1 and keeps its contact, pipeline, stage, custom-field values, and activity
-history. `deletedAt` is set and `updatedAt` moves forward.
-
-- A successful soft delete returns `204` with no body.
-- Soft-deleted opportunities no longer appear in `GET /v1/opportunities` (and
-  therefore leave the Kanban work queue), but `GET /v1/opportunities/:id`
-  still returns the record with `deletedAt` so existing links resolve.
-- Soft-deleting an already-deleted, unknown, or malformed id returns
-  `404 not_found`; there is no restore route.
-- Soft-deleted opportunities are read-only: `PATCH /v1/opportunities/:id`,
-  `POST /v1/opportunities/:id/move`, and activity creation return
-  `404 not_found`. The record and its activity history stay readable.
-- Staff authentication is required; missing or invalid identities return
-  `401 unauthorized`.
-
-The opportunity detail page exposes this as a "Delete" action with a
-confirmation dialog that returns staff to the work queue.
-
-## Custom fields
-
-Custom fields are configured per contact and opportunity (Settings → Fields) and validated against the active definitions:
-
-- Creation (`POST /v1/contacts`, `POST /v1/opportunities`, `POST /v1/intakes`) must provide every required field. `null` is rejected for required fields, and blank optional fields are simply omitted.
-- `PUT /v1/contacts/:id` treats `customFields` as a patch: omit the object or a key to keep the stored value, and send an explicit `null` to clear an optional field. Required fields cannot be cleared, and a custom-fields update still fails for a contact that has no stored value for a required field. Unknown or archived keys are always rejected.
-- Reads expose active definitions only. Archived definitions keep their stored values for historical export but are excluded from payloads, so an archived value never blocks editing a contact.
-- Core fields and custom-field values are written in a single D1 transaction, so a failed field write rolls back the whole request.
 
 ## Observability
 
 Every API request (`/health`, `/openapi`, and `/v1/*`) emits exactly one JSON log line, written synchronously before the response is returned (a Workers isolate can be suspended once the response is sent, so logging does not rely on post-response callbacks):
 
 ```json
-{"event":"request","method":"GET","path":"/v1/contacts","status":200,"durationMs":3.42}
+{"event":"request","method":"GET","path":"/v1/leads","status":200,"durationMs":3.42}
 ```
 
 Fields:
 
 - `event` — `request` for the per-request line; `request.failure` for structured failure lines emitted when a persistence write or a command fails.
 - `method` — the HTTP method.
-- `path` — the URL pathname (the actual route path, e.g. `/v1/contacts/01...`). Query strings are never logged, so the contact search `query` parameter of `GET /v1/contacts` does not reach the logs.
+- `path` — the URL pathname (the actual route path, e.g. `/v1/leads/01...`). Query strings are never logged, so the lead search `query` parameter of `GET /v1/leads` does not reach the logs.
 - `status` — the final HTTP status of the response.
 - `durationMs` — total processing time for the request in milliseconds.
 

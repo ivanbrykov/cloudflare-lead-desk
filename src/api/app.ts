@@ -2,22 +2,14 @@ import { logRequest } from './logging';
 import { openApiSpecification } from './openapi';
 import { mapIntakeBodyError, parseIntakeBody } from '@/api/intake-parser';
 import {
-  createActivityCommand,
-  createContactCommand,
-  createCustomFieldCommand,
   createIntakeCommand,
   createLeadActivityCommand,
   createLeadCommand,
-  createManualOpportunityCommand,
   createPipelineCommand,
   createStageCommand,
-  deleteContactCommand,
   moveLeadsCommand,
-  moveOpportunityCommand,
   softDeleteLeadsCommand,
-  updateContactCommand,
   updateLeadCommand,
-  updateOpportunityCommand,
 } from '@/application/commands';
 import { type DomainError, type PersistenceError } from '@/application/errors';
 import {
@@ -36,49 +28,32 @@ import {
 import { handleInvitationSignUp } from '@/auth/invitation-sign-up';
 import { handleDisabledAccountSignIn } from '@/auth/sign-in-guard';
 import {
-  archiveFieldDefinition,
   checkStaffInviteAvailability,
   countLeadsByStage,
   createApiToken,
   createStaffInvite,
   type Env,
-  getContact,
-  getFieldDefinitions,
   getLead,
-  getOpportunity,
-  getPipeline,
   isBootstrapGrantAvailable,
   isIntakeToken,
-  listActivities,
   listApiTokens,
-  listContacts,
   listLeadActivities,
   listLeads,
-  listOpportunities,
   listPipelines,
   listStaffAccounts,
   listStaffInvites,
   revokeApiToken,
   revokeStaffInvite,
   setStaffAccountDisabled,
-  softDeleteOpportunity,
 } from '@/db/repository';
 import { isIntakeKey } from '@/domain/intake';
-import {
-  decodeKeysetCursor,
-  LIST_LIMIT_DEFAULT,
-  parseListLimit,
-} from '@/domain/pagination';
+import { decodeKeysetCursor, LIST_LIMIT_DEFAULT } from '@/domain/pagination';
 import {
   BulkDeleteLeadsRequest,
   BulkMoveLeadsRequest,
-  ContactInputRequest,
-  CreateActivityRequest,
-  CreateCustomFieldRequest,
   CreateInviteRequest,
   CreateLeadActivityRequest,
   CreateLeadRequest,
-  CreateOpportunityRequest,
   CreatePipelineRequest,
   CreateStageRequest,
   CreateTokenRequest,
@@ -86,10 +61,8 @@ import {
   IntakeRequest,
   LeadStageCountsQueryRequest,
   ListLeadsQueryRequest,
-  MoveOpportunityRequest,
   SetStaffDisabledRequest,
   UpdateLeadRequest,
-  UpdateOpportunityRequest,
   ValidateInviteRequest,
 } from '@/domain/schemas';
 import { Effect, Either, Schema } from 'effect';
@@ -335,7 +308,7 @@ const createAppWithAuth = (environment: Env, getAuth: AuthForRequest) =>
           case 'created':
           case 'replayed':
             // Replays keep the original HTTP 201 and stored response for
-            // compatibility, without touching contacts or history.
+            // compatibility, without touching leads or history.
             return Response.json(
               { data: result.data.response },
               { status: 201 },
@@ -429,232 +402,6 @@ const createAppWithAuth = (environment: Env, getAuth: AuthForRequest) =>
 
       return { adminEmail: admin.email };
     })
-    .get('/v1/contacts', async ({ query }) => {
-      const limit =
-        query.limit === undefined
-          ? LIST_LIMIT_DEFAULT
-          : parseListLimit(query.limit);
-      if (limit === null) {
-        return errorResponse(
-          422,
-          'validation_error',
-          'limit must be an integer between 1 and 100.',
-        );
-      }
-
-      let cursor = null;
-      if (query.cursor !== undefined) {
-        cursor = decodeKeysetCursor(query.cursor);
-        if (cursor === null) {
-          return errorResponse(
-            422,
-            'invalid_cursor',
-            'cursor is invalid. Use the nextCursor value from a previous response.',
-          );
-        }
-      }
-
-      const page = await listContacts(environment, {
-        cursor,
-        limit,
-        query: query.query ?? undefined,
-      });
-      return { data: page.contacts, nextCursor: page.nextCursor };
-    })
-    .post('/v1/contacts', async ({ body, request }) => {
-      const parsed = await parse(ContactInputRequest, body);
-      if ('error' in parsed) {
-        return parsed.error;
-      }
-
-      const result = await run(
-        request,
-        createContactCommand(environment, parsed.data),
-      );
-      return 'error' in result
-        ? result.error
-        : Response.json({ data: result.data }, { status: 201 });
-    })
-    .get('/v1/contacts/:id', async ({ params }) => {
-      const contact = await getContact(environment, params.id);
-      return contact
-        ? { data: contact }
-        : errorResponse(404, 'not_found', 'Contact not found.');
-    })
-    .put('/v1/contacts/:id', async ({ body, params, request }) => {
-      const parsed = await parse(ContactInputRequest, body);
-      if ('error' in parsed) {
-        return parsed.error;
-      }
-
-      const result = await run(
-        request,
-        updateContactCommand(environment, params.id, parsed.data),
-      );
-      if ('error' in result) {
-        return result.error;
-      }
-
-      return result.data
-        ? { data: result.data }
-        : errorResponse(404, 'not_found', 'Contact not found.');
-    })
-    .delete('/v1/contacts/:id', async ({ params, request }) => {
-      const result = await run(
-        request,
-        deleteContactCommand(environment, params.id),
-      );
-      if ('error' in result) {
-        return result.error;
-      }
-
-      if (result.data === 'deleted') {
-        return new Response(null, { status: 204 });
-      }
-
-      if (result.data === 'has_opportunities') {
-        return errorResponse(
-          409,
-          'contact_has_opportunities',
-          'Contacts with opportunities cannot be deleted.',
-        );
-      }
-
-      return errorResponse(404, 'not_found', 'Contact not found.');
-    })
-    .post('/v1/opportunities', async ({ adminEmail, body, request }) => {
-      const parsed = await parse(CreateOpportunityRequest, body);
-      if ('error' in parsed) {
-        return parsed.error;
-      }
-
-      const result = await run(
-        request,
-        createManualOpportunityCommand(environment, parsed.data, adminEmail),
-      );
-      if ('error' in result) {
-        return result.error;
-      }
-
-      if (result.data === 'contact_not_found') {
-        return errorResponse(404, 'not_found', 'Contact not found.');
-      }
-
-      if (result.data === 'invalid_stage') {
-        return errorResponse(
-          422,
-          'invalid_stage',
-          'The selected stage does not belong to this pipeline.',
-        );
-      }
-
-      return Response.json({ data: result.data }, { status: 201 });
-    })
-    .get('/v1/opportunities', async ({ query }) => {
-      const pipelineId = query.pipelineId;
-      if (pipelineId !== undefined) {
-        // The filter only accepts pipelines of the current workspace that
-        // are not archived; anything else is rejected before listing.
-        const pipeline =
-          typeof pipelineId === 'string'
-            ? await getPipeline(environment, pipelineId)
-            : null;
-        if (!pipeline || pipeline.archivedAt !== null) {
-          return errorResponse(
-            422,
-            'validation_error',
-            'pipelineId must reference an active pipeline of the current workspace.',
-          );
-        }
-      }
-
-      return { data: await listOpportunities(environment, pipelineId) };
-    })
-    .get('/v1/opportunities/:id', async ({ params }) => {
-      const opportunity = await getOpportunity(environment, params.id);
-      return opportunity
-        ? { data: opportunity }
-        : errorResponse(404, 'not_found', 'Opportunity not found.');
-    })
-    .patch('/v1/opportunities/:id', async ({ body, params, request }) => {
-      const parsed = await parse(UpdateOpportunityRequest, body);
-      if ('error' in parsed) {
-        return parsed.error;
-      }
-
-      const result = await run(
-        request,
-        updateOpportunityCommand(environment, params.id, parsed.data),
-      );
-      if ('error' in result) {
-        return result.error;
-      }
-
-      return result.data
-        ? { data: result.data }
-        : errorResponse(404, 'not_found', 'Opportunity not found.');
-    })
-    .delete('/v1/opportunities/:id', async ({ params }) => {
-      return (await softDeleteOpportunity(environment, params.id))
-        ? new Response(null, { status: 204 })
-        : errorResponse(404, 'not_found', 'Opportunity not found.');
-    })
-    .post(
-      '/v1/opportunities/:id/move',
-      async ({ adminEmail, body, params, request }) => {
-        const parsed = await parse(MoveOpportunityRequest, body);
-        if ('error' in parsed) {
-          return parsed.error;
-        }
-
-        const result = await run(
-          request,
-          moveOpportunityCommand(
-            environment,
-            params.id,
-            parsed.data.stageId,
-            adminEmail,
-          ),
-        );
-        if ('error' in result) {
-          return result.error;
-        }
-
-        return result.data
-          ? { data: result.data }
-          : errorResponse(404, 'not_found', 'Opportunity not found.');
-      },
-    )
-    .get('/v1/opportunities/:id/activities', async ({ params }) => {
-      return { data: await listActivities(environment, params.id) };
-    })
-    .post(
-      '/v1/opportunities/:id/activities',
-      async ({ adminEmail, body, params, request }) => {
-        const parsed = await parse(CreateActivityRequest, body);
-        if ('error' in parsed) {
-          return parsed.error;
-        }
-
-        const result = await run(
-          request,
-          createActivityCommand(
-            environment,
-            params.id,
-            adminEmail,
-            parsed.data.kind ?? 'note',
-            parsed.data.body,
-          ),
-        );
-        if ('error' in result) {
-          return result.error;
-        }
-
-        return result.data
-          ? Response.json({ data: result.data }, { status: 201 })
-          : errorResponse(404, 'not_found', 'Opportunity not found.');
-      },
-    )
     .get('/v1/pipelines', async () => {
       return { data: await listPipelines(environment) };
     })
@@ -831,50 +578,6 @@ const createAppWithAuth = (environment: Env, getAuth: AuthForRequest) =>
       return lead
         ? { data: lead }
         : errorResponse(404, 'not_found', 'Lead not found.');
-    })
-    .get('/v1/custom-fields', async ({ query }) => {
-      if (
-        query.entityType !== 'contact' &&
-        query.entityType !== 'opportunity'
-      ) {
-        return errorResponse(
-          422,
-          'validation_error',
-          'entityType is required.',
-        );
-      }
-
-      return { data: await getFieldDefinitions(environment, query.entityType) };
-    })
-    .post('/v1/custom-fields', async ({ body, request }) => {
-      const parsed = await parse(CreateCustomFieldRequest, body);
-      if ('error' in parsed) {
-        return parsed.error;
-      }
-
-      if (
-        parsed.data.type === 'select' &&
-        (!parsed.data.options || parsed.data.options.length === 0)
-      ) {
-        return errorResponse(
-          422,
-          'validation_error',
-          'Select fields need at least one option.',
-        );
-      }
-
-      const result = await run(
-        request,
-        createCustomFieldCommand(environment, parsed.data),
-      );
-      return 'error' in result
-        ? result.error
-        : Response.json({ data: result.data }, { status: 201 });
-    })
-    .delete('/v1/custom-fields/:id', async ({ params }) => {
-      return (await archiveFieldDefinition(environment, params.id))
-        ? new Response(null, { status: 204 })
-        : errorResponse(404, 'not_found', 'Custom field not found.');
     })
     .get('/v1/tokens', async () => {
       return { data: await listApiTokens(environment) };

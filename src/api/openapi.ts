@@ -1,3 +1,22 @@
+const leadSchema = {
+  properties: {
+    customFields: { additionalProperties: true, type: 'object' },
+    email: { type: ['string', 'null'] },
+    estimatedValue: { type: ['number', 'null'] },
+    firstName: { type: ['string', 'null'] },
+    id: { type: 'string' },
+    lastName: { type: ['string', 'null'] },
+    name: { type: 'string' },
+    pipelineId: { type: 'string' },
+    source: { type: 'string' },
+    stageId: { type: 'string' },
+  },
+  required: ['id', 'name', 'pipelineId', 'source', 'stageId'],
+  type: 'object',
+} as const;
+
+const validationError = { description: 'validation_error' } as const;
+
 export const openApiSpecification = {
   components: {
     securitySchemes: {
@@ -32,7 +51,7 @@ export const openApiSpecification = {
             description:
               'invite_unavailable (used, revoked, expired, unknown, or bootstrap already consumed)',
           },
-          '422': { description: 'validation_error' },
+          '422': validationError,
         },
         summary: 'Check whether an invite or bootstrap token is still usable',
       },
@@ -43,130 +62,29 @@ export const openApiSpecification = {
         summary: 'Health check',
       },
     },
-    '/v1/contacts': {
-      get: {
-        description: [
-          'Lists contacts, newest first (createdAt DESC, tie-broken by id DESC), with keyset (seek) pagination.',
-          '',
-          "Pagination: `limit` (integer 1-100, default 50) bounds the page size. `cursor` takes the opaque `nextCursor` from a previous response - a base64url-encoded keyset over the last row's (createdAt, id); omit it for the first page. The final page returns `nextCursor: null`. A non-numeric or out-of-range limit returns 422 validation_error; a missing, malformed, or tampered cursor returns 422 invalid_cursor.",
-          '',
-          "Each item keeps the flat contact shape, including `customFields`. Custom-field values are fetched for the whole page in batched queries (chunked to D1's 100-bound-parameter limit), not one query per contact.",
-        ].join('\n'),
-        parameters: [
-          {
-            description:
-              'Search. Literal substring match on first name, last name, or email; `%` and `_` match literally.',
-            in: 'query',
-            name: 'query',
-            required: false,
-            schema: { type: 'string' },
-          },
-          {
-            description: 'Page size (1-100, default 50)',
-            in: 'query',
-            name: 'limit',
-            required: false,
-            schema: { default: 50, maximum: 100, minimum: 1, type: 'integer' },
-          },
-          {
-            description: 'Opaque keyset cursor from a previous response',
-            in: 'query',
-            name: 'cursor',
-            required: false,
-            schema: { type: 'string' },
-          },
-        ],
-        responses: {
-          '200': {
-            description:
-              'One page: { data: [contacts], nextCursor: string | null }',
-          },
-          '401': { description: 'Access required' },
-          '422': {
-            description:
-              'validation_error (limit) or invalid_cursor (malformed or tampered cursor)',
-          },
-        },
-        summary: 'List contacts (keyset pagination)',
-      },
-      post: {
-        responses: {
-          '201': { description: 'Contact created' },
-          '401': { description: 'Access required' },
-          '422': { description: 'Invalid contact' },
-        },
-        summary: 'Create contact',
-      },
-    },
-    '/v1/contacts/{id}': {
-      delete: {
-        responses: {
-          '204': { description: 'Contact deleted' },
-          '404': { description: 'Contact not found' },
-          '409': { description: 'Contact has opportunities' },
-        },
-        summary: 'Delete contact',
-      },
-      get: {
-        responses: {
-          '200': { description: 'Contact' },
-          '401': { description: 'Access required' },
-          '404': { description: 'Contact not found' },
-        },
-        summary: 'Get contact',
-      },
-      put: {
-        description:
-          'Update a contact. `customFields` is a patch: omit the object or a key to keep its stored value, or send an explicit `null` to clear an optional field. Required fields cannot be cleared or left without a value, unknown or archived keys are rejected, and the core fields plus all field writes commit in a single transaction.',
-        responses: {
-          '200': { description: 'Contact updated' },
-          '401': { description: 'Access required' },
-          '404': { description: 'Contact not found' },
-          '422': { description: 'Invalid contact' },
-        },
-        summary: 'Update contact',
-      },
-    },
     '/v1/intakes': {
       post: {
-        description: [
-          'Atomically captures a contact, opportunity, intake activity, custom-field values, and the idempotency key in one D1 transaction.',
-          '',
-          'Idempotency contract:',
-          '- The Idempotency-Key header is required: 1-128 printable ASCII characters (0x21-0x7E, no spaces). Missing or invalid keys are rejected with 400 before any intake data is written.',
-          '- Keys are workspace-scoped and persist across token rotation: a rotated token replays the stored response instead of duplicating the submission.',
-          '- A deterministic SHA-256 fingerprint of the decoded request (object keys sorted, array order preserved, email normalized) is stored with the accepted key. Re-sending the same logical payload - any JSON whitespace or property order, any email case - returns the original 201 response and IDs without updating contacts or inserting history.',
-          '- A different payload under the same key returns 409 idempotency_conflict without exposing the stored payload or hash.',
-          '- Keys accepted before fingerprints existed (null request_hash) return 409 idempotency_legacy_unverifiable. Reconcile them against the already stored opportunity (returned in details) before submitting again; the row is never overwritten, backfilled, or deleted.',
-          '- Replays skip current custom-field and pipeline validation, so an accepted submission keeps replaying after fields are archived or newly required and after pipelines are archived.',
-          '',
-          'Routing: the selected (or default) stage must belong to the selected (or default) pipeline, both must belong to the current workspace, and archived pipelines are rejected with 422 invalid_stage. No intake data is written for rejected routing.',
-          '',
-          'Size: the raw request body is limited to 65,536 actual bytes (streamed or declared) before JSON parsing and domain writes, on every accepted alias of this route; larger bodies return 413 payload_too_large and the open input stream is cancelled. Other routes are not size-limited here.',
-        ].join('\n'),
-        parameters: [
-          {
-            in: 'header',
-            name: 'Idempotency-Key',
-            required: true,
-            schema: {
-              maxLength: 128,
-              minLength: 1,
-              pattern: '^[\\u0021-\\u007e]{1,128}$',
-              type: 'string',
-            },
-          },
-        ],
+        description:
+          'The secret-token integration endpoint. One submission creates one lead. Idempotency-Key makes retries safe; the raw body is byte-limited to 65,536 bytes.',
         requestBody: {
           content: {
             'application/json': {
               schema: {
                 properties: {
-                  contact: { type: 'object' },
-                  opportunity: { type: 'object' },
+                  customFields: {
+                    additionalProperties: true,
+                    type: 'object',
+                  },
+                  email: { type: 'string' },
+                  estimatedValue: { type: 'number' },
+                  firstName: { type: 'string' },
+                  lastName: { type: 'string' },
+                  name: { type: 'string' },
+                  pipelineId: { type: 'string' },
                   source: { type: 'string' },
+                  stageId: { type: 'string' },
                 },
-                required: ['contact', 'opportunity', 'source'],
+                required: ['email', 'source'],
                 type: 'object',
               },
             },
@@ -174,56 +92,87 @@ export const openApiSpecification = {
           required: true,
         },
         responses: {
-          '201': {
-            description:
-              'Intake captured, or the stored response replayed for a matching retry',
-          },
-          '400': {
-            description:
-              'Idempotency-Key missing (idempotency_key_required) or not 1-128 printable ASCII (invalid_idempotency_key)',
-          },
-          '401': { description: 'Missing, invalid, or revoked intake token' },
+          '201': { description: '{ data: { created, leadId } }' },
+          '400': { description: 'invalid_json or fingerprint errors' },
+          '401': { description: 'Missing or invalid intake token' },
           '409': {
             description:
-              'idempotency_conflict (same key, different payload) or idempotency_legacy_unverifiable (pre-fingerprint key; reconcile against the stored opportunity first)',
+              'idempotency_conflict or idempotency_legacy_unverifiable',
           },
-          '413': {
-            description:
-              'payload_too_large (raw body over 65,536 bytes, regardless of media type)',
-          },
-          '415': {
-            description:
-              'unsupported_media_type (Content-Type must be application/json)',
-          },
-          '422': {
-            description:
-              'Invalid intake payload, custom-field value, or invalid_stage (stage/pipeline/workspace mismatch or archived pipeline)',
-          },
+          '413': { description: 'payload_too_large (over 65,536 bytes)' },
+          '415': { description: 'unsupported_media_type' },
+          '422': validationError,
         },
         security: [{ bearerAuth: [] }],
-        summary: 'Atomically capture a contact and opportunity',
+        summary: 'Create a lead from a trusted server integration',
       },
     },
-    '/v1/invites': {
+    '/v1/leads': {
       get: {
+        description:
+          'Lists leads, newest first, with keyset (seek) pagination and a per-page duplicate-email hint. Optional `pipelineId`, `stageId`, and `query` filters.',
+        parameters: [
+          { in: 'query', name: 'pipelineId', schema: { type: 'string' } },
+          { in: 'query', name: 'stageId', schema: { type: 'string' } },
+          { in: 'query', name: 'query', schema: { type: 'string' } },
+          { in: 'query', name: 'cursor', schema: { type: 'string' } },
+          { in: 'query', name: 'limit', schema: { type: 'integer' } },
+        ],
         responses: {
-          '200': {
-            description: 'Invites (token shown by 12-character prefix only)',
-          },
-          '401': { description: 'Access required' },
+          '200': { description: '{ data: [lead], nextCursor: string | null }' },
+          '422': validationError,
         },
-        summary: 'List staff invitations',
+        summary: 'List leads',
       },
+      post: {
+        requestBody: {
+          content: { 'application/json': { schema: leadSchema } },
+          required: true,
+        },
+        responses: {
+          '201': { description: '{ data: lead }' },
+          '422': {
+            description: 'validation_error or lead_identity_required',
+          },
+        },
+        summary: 'Create a lead manually',
+      },
+    },
+    '/v1/leads/bulk': {
+      patch: {
+        requestBody: {
+          content: {
+            'application/json': {
+              schema: {
+                properties: {
+                  ids: { items: { type: 'string' }, type: 'array' },
+                  stageId: { type: 'string' },
+                },
+                required: ['ids', 'stageId'],
+                type: 'object',
+              },
+            },
+          },
+          required: true,
+        },
+        responses: {
+          '200': { description: 'Moved' },
+          '404': { description: 'not_found' },
+          '422': { description: 'invalid_stage or validation_error' },
+        },
+        summary: 'Move leads to a stage',
+      },
+    },
+    '/v1/leads/bulk-delete': {
       post: {
         requestBody: {
           content: {
             'application/json': {
               schema: {
                 properties: {
-                  expiresAt: { type: 'string' },
-                  name: { type: 'string' },
+                  ids: { items: { type: 'string' }, type: 'array' },
                 },
-                required: ['name'],
+                required: ['ids'],
                 type: 'object',
               },
             },
@@ -231,84 +180,92 @@ export const openApiSpecification = {
           required: true,
         },
         responses: {
-          '201': {
-            description: 'Invite created (raw token returned exactly once)',
-          },
-          '401': { description: 'Access required' },
-          '422': { description: 'validation_error (invalid name or expiry)' },
+          '200': { description: 'Soft-deleted' },
+          '404': { description: 'not_found' },
+          '422': validationError,
         },
-        summary: 'Create a single-use staff invitation',
+        summary: 'Soft-delete leads',
       },
     },
-    '/v1/invites/{id}': {
-      delete: {
-        responses: {
-          '204': { description: 'Invitation revoked' },
-          '401': { description: 'Access required' },
-          '404': { description: 'Invitation not found' },
-        },
-        summary: 'Revoke a pending staff invitation',
-      },
-    },
-    '/v1/opportunities': {
+    '/v1/leads/stage-counts': {
       get: {
-        description:
-          "Lists opportunities that are not soft-deleted, newest first. Not paginated; the optional `pipelineId` query parameter restricts results to one active pipeline of the current workspace. An unknown or archived pipelineId returns 422 validation_error. Custom-field values are fetched for the whole list in batched queries (chunked to D1's 100-bound-parameter limit), not one query per opportunity.",
+        parameters: [
+          { in: 'query', name: 'pipelineId', schema: { type: 'string' } },
+        ],
+        responses: {
+          '200': { description: '[{ count, stageId }]' },
+          '422': validationError,
+        },
+        summary: 'Count live leads per stage',
+      },
+    },
+    '/v1/leads/{id}': {
+      get: {
         parameters: [
           {
-            description:
-              'Restrict to one active pipeline of the current workspace',
-            in: 'query',
-            name: 'pipelineId',
-            required: false,
+            in: 'path',
+            name: 'id',
+            required: true,
             schema: { type: 'string' },
           },
         ],
         responses: {
-          '200': { description: 'Opportunity list' },
-          '401': { description: 'Access required' },
-          '422': {
-            description: 'validation_error (unknown or archived pipelineId)',
-          },
+          '200': { description: '{ data: lead }' },
+          '404': { description: 'not_found' },
         },
-        summary: 'List opportunities (optional pipeline filter)',
-      },
-      post: {
-        responses: {
-          '201': { description: 'Opportunity created' },
-          '401': { description: 'Access required' },
-          '404': { description: 'Contact not found' },
-          '422': { description: 'Invalid opportunity' },
-        },
-        summary: 'Create opportunity',
-      },
-    },
-    '/v1/opportunities/{id}': {
-      delete: {
-        description:
-          'Soft-delete an opportunity. It keeps its contact, stage, custom-field values, and activity history, but disappears from `GET /v1/opportunities` and the work queue, and further writes (PATCH, move, activity creation) return 404 not_found. Soft-deleting an already-deleted or unknown id returns 404 not_found; there is no restore route yet.',
-        responses: {
-          '204': { description: 'Opportunity soft-deleted' },
-          '401': { description: 'Access required' },
-          '404': {
-            description: 'Opportunity not found or already deleted',
-          },
-        },
-        summary: 'Soft-delete an opportunity',
+        summary: 'Get a lead',
       },
       patch: {
         description:
-          'Update an opportunity. At least one of `name` (non-empty, no leading or trailing whitespace - the app-wide NonEmptyString contract) or `estimatedValue` (non-negative finite number, or an explicit `null` to clear it) is required. Omitted fields keep their stored values; an empty object or a whitespace-only name returns 422 validation_error, as do negative or non-finite values. Soft-deleted opportunities are read-only and return 404 not_found.',
+          'Partial update. `email`, `firstName`, and `lastName` accept `null` to clear; `customFields` replaces the JSON document.',
+        parameters: [
+          {
+            in: 'path',
+            name: 'id',
+            required: true,
+            schema: { type: 'string' },
+          },
+        ],
+        requestBody: {
+          content: { 'application/json': { schema: leadSchema } },
+          required: true,
+        },
+        responses: {
+          '200': { description: '{ data: lead }' },
+          '404': { description: 'not_found' },
+          '422': { description: 'invalid_stage or validation_error' },
+        },
+        summary: 'Update a lead',
+      },
+    },
+    '/v1/leads/{id}/activities': {
+      get: {
+        parameters: [
+          {
+            in: 'path',
+            name: 'id',
+            required: true,
+            schema: { type: 'string' },
+          },
+        ],
+        responses: { '200': { description: '[activity]' } },
+        summary: 'List a lead’s activity',
+      },
+      post: {
+        parameters: [
+          {
+            in: 'path',
+            name: 'id',
+            required: true,
+            schema: { type: 'string' },
+          },
+        ],
         requestBody: {
           content: {
             'application/json': {
               schema: {
-                properties: {
-                  estimatedValue: {
-                    anyOf: [{ type: 'number' }, { type: 'null' }],
-                  },
-                  name: { type: 'string' },
-                },
+                properties: { body: { type: 'string' } },
+                required: ['body'],
                 type: 'object',
               },
             },
@@ -316,53 +273,27 @@ export const openApiSpecification = {
           required: true,
         },
         responses: {
-          '200': { description: 'Opportunity updated' },
-          '401': { description: 'Access required' },
-          '404': { description: 'Opportunity not found' },
-          '422': {
-            description:
-              'validation_error (no fields, whitespace name, or negative or non-finite estimatedValue)',
-          },
+          '201': { description: '{ data: activity }' },
+          '404': { description: 'not_found' },
+          '422': validationError,
         },
-        summary: 'Update opportunity name and estimated value',
+        summary: 'Add a note to a lead',
       },
     },
     '/v1/pipelines': {
       get: {
         responses: {
-          '200': { description: 'Pipelines and stages' },
-          '401': { description: 'Access required' },
+          '200': { description: '{ data: [pipeline with stages] }' },
         },
-        summary: 'List pipelines',
+        summary: 'List pipelines with their stages',
       },
       post: {
-        responses: {
-          '201': { description: 'Pipeline created' },
-          '401': { description: 'Access required' },
-        },
-        summary: 'Create pipeline',
-      },
-    },
-    '/v1/staff': {
-      get: {
-        responses: {
-          '200': {
-            description:
-              'Staff accounts as { id, name, email, disabledAt }; no credential or session material',
-          },
-          '401': { description: 'Access required' },
-        },
-        summary: 'List staff accounts',
-      },
-    },
-    '/v1/staff/{id}': {
-      patch: {
         requestBody: {
           content: {
             'application/json': {
               schema: {
-                properties: { disabled: { type: 'boolean' } },
-                required: ['disabled'],
+                properties: { name: { type: 'string' } },
+                required: ['name'],
                 type: 'object',
               },
             },
@@ -370,34 +301,49 @@ export const openApiSpecification = {
           required: true,
         },
         responses: {
-          '200': {
-            description:
-              'Account updated as { id, name, email, disabledAt }. Disabling writes the durable flag and deletes all of the account sessions in one transaction; re-enabling keeps credentials but sessions stay revoked',
-          },
-          '401': { description: 'Access required' },
-          '404': { description: 'Staff account not found' },
-          '409': {
-            description:
-              'conflict: the actor cannot disable its own account, and the last enabled account cannot be disabled',
-          },
-          '422': {
-            description:
-              'validation_error (body must be { disabled: boolean })',
-          },
+          '201': { description: '{ data: pipeline }' },
+          '422': validationError,
         },
-        summary: 'Disable or re-enable a staff account',
+        summary: 'Create a pipeline',
+      },
+    },
+    '/v1/pipelines/{id}/stages': {
+      post: {
+        parameters: [
+          {
+            in: 'path',
+            name: 'id',
+            required: true,
+            schema: { type: 'string' },
+          },
+        ],
+        requestBody: {
+          content: {
+            'application/json': {
+              schema: {
+                properties: {
+                  color: { type: 'string' },
+                  name: { type: 'string' },
+                  position: { type: 'integer' },
+                },
+                required: ['name'],
+                type: 'object',
+              },
+            },
+          },
+          required: true,
+        },
+        responses: {
+          '201': { description: '{ data: stage }' },
+          '422': validationError,
+        },
+        summary: 'Add a stage to a pipeline',
       },
     },
     '/v1/tokens': {
       get: {
-        responses: {
-          '200': {
-            description:
-              'Intake tokens as { id, name, prefix, createdAt, expiresAt, revokedAt }; the raw token is never returned',
-          },
-          '401': { description: 'Access required' },
-        },
-        summary: 'List intake API tokens',
+        responses: { '200': { description: '{ data: [token] }' } },
+        summary: 'List intake tokens (prefixes only)',
       },
       post: {
         requestBody: {
@@ -416,25 +362,29 @@ export const openApiSpecification = {
           required: true,
         },
         responses: {
-          '201': {
-            description:
-              'Token created (raw token returned exactly once; expiresAt defaults to 90 days and must be in the future)',
-          },
-          '401': { description: 'Access required' },
-          '422': { description: 'validation_error (invalid name or expiry)' },
+          '201': { description: '{ data: token } — value shown once' },
+          '422': validationError,
         },
-        summary: 'Create an intake API token',
+        summary: 'Create an intake token',
       },
     },
     '/v1/tokens/{id}': {
       delete: {
+        parameters: [
+          {
+            in: 'path',
+            name: 'id',
+            required: true,
+            schema: { type: 'string' },
+          },
+        ],
         responses: {
-          '204': { description: 'Token revoked' },
-          '401': { description: 'Access required' },
-          '404': { description: 'Token not found' },
+          '204': { description: 'Revoked' },
+          '404': { description: 'not_found' },
         },
-        summary: 'Revoke an intake API token',
+        summary: 'Revoke an intake token',
       },
     },
   },
+  security: [{ bearerAuth: [] }],
 } as const;

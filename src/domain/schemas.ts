@@ -14,65 +14,14 @@ export const RecordId = Schema.String.pipe(
   Schema.filter((value) => value.length === 26),
 ).annotations({ description: 'A ULID record identifier.' });
 
-// These primitives keep the `Schema` suffix: their derived types own the plain
-// names (`FieldEntity`, `FieldType`, `CustomFieldValues`), and a value and type
-// cannot share a name under @typescript-eslint/no-redeclare.
-export const FieldEntitySchema = Schema.Literal('contact', 'opportunity');
-export type FieldEntity = Schema.Schema.Type<typeof FieldEntitySchema>;
-
-export const FieldTypeSchema = Schema.Literal(
-  'text',
-  'number',
-  'boolean',
-  'date',
-  'select',
-);
-export type FieldType = Schema.Schema.Type<typeof FieldTypeSchema>;
-
+// Free-form per-lead custom fields: a JSON document with no definition
+// registry. The `Schema` suffix keeps the value distinct from its type.
 export const CustomFieldValuesSchema = Schema.Record({
   key: Schema.String,
   value: Schema.Unknown,
 });
 export type CustomFieldValues = Schema.Schema.Type<
   typeof CustomFieldValuesSchema
->;
-
-export const ContactInputRequest = Schema.Struct({
-  customFields: Schema.optional(CustomFieldValuesSchema),
-  email: Schema.optional(Email),
-  firstName: Schema.optional(NonEmptyString),
-  lastName: Schema.optional(NonEmptyString),
-});
-export type ContactInput = Schema.Schema.Type<typeof ContactInputRequest>;
-
-export const OpportunityInputRequest = Schema.Struct({
-  customFields: Schema.optional(CustomFieldValuesSchema),
-  estimatedValue: Schema.optional(
-    Schema.Number.pipe(Schema.finite(), Schema.nonNegative()),
-  ),
-  name: NonEmptyString,
-  pipelineId: Schema.optional(RecordId),
-  source: Schema.optional(NonEmptyString),
-  stageId: Schema.optional(RecordId),
-});
-export type OpportunityInput = Schema.Schema.Type<
-  typeof OpportunityInputRequest
->;
-
-export const CreateOpportunityRequest = Schema.Struct({
-  contact: Schema.optional(ContactInputRequest),
-  contactId: Schema.optional(RecordId),
-  customFields: Schema.optional(CustomFieldValuesSchema),
-  estimatedValue: Schema.optional(
-    Schema.Number.pipe(Schema.finite(), Schema.nonNegative()),
-  ),
-  name: NonEmptyString,
-  pipelineId: Schema.optional(RecordId),
-  source: Schema.optional(NonEmptyString),
-  stageId: Schema.optional(RecordId),
-});
-export type CreateOpportunityInput = Schema.Schema.Type<
-  typeof CreateOpportunityRequest
 >;
 
 // Intake is the flat lead payload: one submission creates one lead. The old
@@ -260,41 +209,6 @@ export const CreateLeadActivityRequest = Schema.Struct({
 });
 export type CreateLeadActivityInput = Schema.Schema.Type<
   typeof CreateLeadActivityRequest
->;
-
-export const MoveOpportunityRequest = Schema.Struct({
-  stageId: RecordId,
-});
-
-export const UpdateOpportunityRequest = Schema.Struct({
-  estimatedValue: Schema.optional(
-    Schema.NullOr(Schema.Number.pipe(Schema.finite(), Schema.nonNegative())),
-  ),
-  name: Schema.optional(NonEmptyString),
-}).pipe(
-  Schema.filter(
-    (value) => value.name !== undefined || value.estimatedValue !== undefined,
-  ),
-);
-export type UpdateOpportunityInput = Schema.Schema.Type<
-  typeof UpdateOpportunityRequest
->;
-
-export const CreateActivityRequest = Schema.Struct({
-  body: NonEmptyString,
-  kind: Schema.optional(Schema.Literal('note', 'contact_attempt')),
-});
-
-export const CreateCustomFieldRequest = Schema.Struct({
-  entityType: FieldEntitySchema,
-  key: NonEmptyString.pipe(Schema.pattern(/^[a-z][\d_a-z]*$/u)),
-  label: NonEmptyString,
-  options: Schema.optional(Schema.Array(NonEmptyString)),
-  required: Schema.optional(Schema.Boolean),
-  type: FieldTypeSchema,
-});
-export type CreateCustomField = Schema.Schema.Type<
-  typeof CreateCustomFieldRequest
 >;
 
 // A future UTC ISO-8601 date (optional time, offset, or Z) for expiry

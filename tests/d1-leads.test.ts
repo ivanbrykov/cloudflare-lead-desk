@@ -353,3 +353,43 @@ test('leads can be created, updated, moved, deleted, and annotated', async () =>
     await fx.dispose();
   }
 });
+
+test('equal createdAt ties order by id DESC and page without gaps', async () => {
+  const fx = await startFixture();
+  try {
+    const fixed = ms(5_000);
+    for (const name of ['alpha', 'beta', 'delta', 'gamma', 'zeta']) {
+      await insertLead(fx.db, { createdAt: fixed, id: name, name });
+    }
+
+    const page1 = await fx.api(`/v1/leads?pipelineId=${PIPELINE}&limit=2`);
+    expect(page1.status, JSON.stringify(page1)).toBe(200);
+    expect(
+      (page1.json.data as Array<Record<string, unknown>>).map(
+        (lead) => lead['id'],
+      ),
+    ).toEqual(['zeta', 'gamma']);
+    expect(typeof page1.json.nextCursor).toBe('string');
+
+    const page2 = await fx.api(
+      `/v1/leads?pipelineId=${PIPELINE}&limit=2&cursor=${encodeURIComponent(String(page1.json.nextCursor))}`,
+    );
+    expect(
+      (page2.json.data as Array<Record<string, unknown>>).map(
+        (lead) => lead['id'],
+      ),
+    ).toEqual(['delta', 'beta']);
+
+    const page3 = await fx.api(
+      `/v1/leads?pipelineId=${PIPELINE}&limit=2&cursor=${encodeURIComponent(String(page2.json.nextCursor))}`,
+    );
+    expect(
+      (page3.json.data as Array<Record<string, unknown>>).map(
+        (lead) => lead['id'],
+      ),
+    ).toEqual(['alpha']);
+    expect(page3.json.nextCursor).toBeNull();
+  } finally {
+    await fx.dispose();
+  }
+});

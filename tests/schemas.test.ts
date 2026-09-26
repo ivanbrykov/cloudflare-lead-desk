@@ -1,4 +1,4 @@
-import { CreateOpportunityRequest, IntakeRequest } from '@/domain/schemas';
+import { CreateLeadRequest, IntakeRequest } from '@/domain/schemas';
 import { Schema } from 'effect';
 import { describe, expect, test } from 'vitest';
 
@@ -29,13 +29,12 @@ describe('intake contract', () => {
     ).rejects.toThrow();
   });
 
-  test('decodes a manual opportunity for an existing contact', async () => {
-    const input = await Schema.decodeUnknownPromise(CreateOpportunityRequest)({
-      contactId: '01ARZ3NDEKTSV4RRFFQ69G5FAY',
+  test('decodes a manual lead', async () => {
+    const input = await Schema.decodeUnknownPromise(CreateLeadRequest)({
+      email: 'alex@example.com',
       name: 'New service inquiry',
       source: 'Manual entry',
     });
-    expect(input.contactId).toBe('01ARZ3NDEKTSV4RRFFQ69G5FAY');
     expect(input.name).toContain('service');
   });
 });

@@ -221,7 +221,7 @@ const signUp = async (
 test('an unauthenticated request is rejected with 401', async () => {
   const fx = await startFixture();
   try {
-    expectUnauthorized(await fx.raw('/v1/contacts'), 'unauthenticated');
+    expectUnauthorized(await fx.raw('/v1/leads'), 'unauthenticated');
   } finally {
     await fx.dispose();
   }
@@ -234,7 +234,7 @@ test('an unexpected session lookup failure is a generic 500, not a 401', async (
     // D1 fault mid-lookup, not proof of an invalid session.
     const cookie = await signUp(fx);
     await fx.db.prepare('DROP TABLE session').run();
-    const result = await fx.raw('/v1/contacts', 'GET', undefined, {
+    const result = await fx.raw('/v1/leads', 'GET', undefined, {
       Cookie: cookie,
     });
     expect(result.status, JSON.stringify(result)).toBe(500);
@@ -259,7 +259,7 @@ test('protected reads validate without refreshing; the auth endpoint can still r
       .bind(expiresAt)
       .run();
 
-    const protectedRead = await fx.raw('/v1/opportunities', 'GET', undefined, {
+    const protectedRead = await fx.raw('/v1/leads', 'GET', undefined, {
       Cookie: cookie,
     });
     expect(protectedRead.status, JSON.stringify(protectedRead)).toBe(200);
@@ -295,7 +295,7 @@ test('sign-up without an invite token is rejected and grants no access', async (
     });
     expectRejectedSignUp(result, 'sign-up without token');
     expect(await userCount(fx), 'no user row may be written').toBe(0);
-    expectUnauthorized(await fx.raw('/v1/contacts'), 'no token, no access');
+    expectUnauthorized(await fx.raw('/v1/leads'), 'no token, no access');
   } finally {
     await fx.dispose();
   }
@@ -345,7 +345,7 @@ test('sign-up with the bootstrap token grants access to any email', async () => 
   const fx = await startFixture();
   try {
     const cookie = await signUp(fx, 'anyone@example.test');
-    const contacts = await fx.raw('/v1/contacts', 'GET', undefined, { cookie });
+    const contacts = await fx.raw('/v1/leads', 'GET', undefined, { cookie });
     expect(contacts.status, JSON.stringify(contacts)).toBe(200);
     expect(Array.isArray(contacts.json.data)).toBe(true);
   } finally {
@@ -450,7 +450,7 @@ test('production infers the request origin for sign-up, sign-in, sessions, and A
     expect(session.status, JSON.stringify(session)).toBe(200);
     expect(session.json.user).toMatchObject({ email: 'admin@example.test' });
     expect(
-      (await fx.raw('/v1/contacts', 'GET', undefined, { cookie })).status,
+      (await fx.raw('/v1/leads', 'GET', undefined, { cookie })).status,
     ).toBe(200);
   } finally {
     await fx.dispose();
@@ -762,7 +762,7 @@ test.each([
         {},
         origin,
       );
-      const api = await fx.raw('/v1/contacts', 'GET', undefined, {}, origin);
+      const api = await fx.raw('/v1/leads', 'GET', undefined, {}, origin);
       for (const result of [signUpResult, signIn, session, api]) {
         expect(result.status, JSON.stringify(result)).toBe(503);
         expect(result.json.code, JSON.stringify(result)).toBe(
