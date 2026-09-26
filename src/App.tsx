@@ -1,5 +1,5 @@
-import { Button } from './components/ui/button';
-import { Dialog } from './components/ui/dialog';
+import { Button } from './components/ui/Button';
+import { Dialog } from './components/ui/Dialog';
 import {
   type ContactInput,
   ContactInputRequest,
@@ -7,7 +7,8 @@ import {
   CreateCustomFieldRequest,
   type PipelineView,
 } from './domain/schemas';
-import { LeadDetailPage, LeadsPage } from './leads';
+import { LeadDetailPage } from './leads/LeadDetailPage';
+import { LeadsPage } from './leads/LeadsPage';
 import {
   authClient,
   signIn,
