@@ -156,7 +156,7 @@ export const LeadDetailPage = ({ id }: { readonly id: string }) => {
               save.mutate();
             }}
           >
-            <Field label="Name">
+            <Field label="Title">
               <input
                 className={inputClass}
                 onChange={(event) =>

@@ -62,25 +62,6 @@ export const CreateLeadDialog = ({
           create.mutate();
         }}
       >
-        <Field label="Name">
-          <input
-            className={inputClass}
-            onChange={(event) =>
-              setValues({ ...values, name: event.target.value })
-            }
-            value={values.name}
-          />
-        </Field>
-        <Field label="Email">
-          <input
-            className={inputClass}
-            onChange={(event) =>
-              setValues({ ...values, email: event.target.value })
-            }
-            type="email"
-            value={values.email}
-          />
-        </Field>
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label="First name">
             <input
@@ -101,6 +82,29 @@ export const CreateLeadDialog = ({
             />
           </Field>
         </div>
+        <Field label="Email">
+          <input
+            className={inputClass}
+            onChange={(event) =>
+              setValues({ ...values, email: event.target.value })
+            }
+            type="email"
+            value={values.email}
+          />
+        </Field>
+        <Field
+          hint="Shown as the lead name. Defaults to the person's name or email."
+          label="Title"
+        >
+          <input
+            className={inputClass}
+            onChange={(event) =>
+              setValues({ ...values, name: event.target.value })
+            }
+            placeholder="New service inquiry"
+            value={values.name}
+          />
+        </Field>
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label="Source">
             <input
