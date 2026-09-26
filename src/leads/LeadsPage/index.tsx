@@ -1,5 +1,6 @@
 import { CreateLeadDialog } from './CreateLeadDialog';
 import { StageChip } from './StageChip';
+import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { Notice } from '@/components/Notice';
 import { PageHeader } from '@/components/PageHeader';
 import { Button } from '@/components/ui/Button';
@@ -31,6 +32,7 @@ export const LeadsPage = () => {
   const [selected, setSelected] = useState<string[]>([]);
   const [bulkStageId, setBulkStageId] = useState('');
   const [showCreate, setShowCreate] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const pipelines = useQuery({
     queryFn: () => request<PipelineView[]>('/v1/pipelines'),
@@ -124,6 +126,7 @@ export const LeadsPage = () => {
         `${selected.length} ${selected.length === 1 ? 'lead' : 'leads'} deleted`,
       );
       setSelected([]);
+      setConfirmDelete(false);
       invalidate();
     },
   });
@@ -261,8 +264,7 @@ export const LeadsPage = () => {
               Move
             </Button>
             <Button
-              disabled={deleteSelected.isPending}
-              onClick={() => deleteSelected.mutate()}
+              onClick={() => setConfirmDelete(true)}
               tone="danger"
             >
               Delete
@@ -397,6 +399,14 @@ export const LeadsPage = () => {
           pipeline={pipeline}
         />
       )}
+      <ConfirmDialog
+        description={`Delete ${selected.length} ${selected.length === 1 ? 'lead' : 'leads'}? This removes them from your workspace.`}
+        onConfirm={() => deleteSelected.mutate()}
+        onOpenChange={setConfirmDelete}
+        open={confirmDelete}
+        pending={deleteSelected.isPending}
+        title={`Delete ${selected.length === 1 ? 'lead' : 'leads'}`}
+      />
     </>
   );
 };

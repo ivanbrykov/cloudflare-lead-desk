@@ -1,3 +1,4 @@
+import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { Notice } from '@/components/Notice';
 import { PageHeader } from '@/components/PageHeader';
 import { Button } from '@/components/ui/Button';
@@ -41,6 +42,7 @@ export const LeadDetailPage = ({ id }: { readonly id: string }) => {
     (item) => item.id === lead.data?.pipelineId,
   );
   const [note, setNote] = useState('');
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [draft, setDraft] = useState<null | {
     email: string;
     estimatedValue: string;
@@ -159,8 +161,7 @@ export const LeadDetailPage = ({ id }: { readonly id: string }) => {
               <ChevronLeft size={16} /> Leads
             </Link>
             <Button
-              disabled={remove.isPending}
-              onClick={() => remove.mutate()}
+              onClick={() => setConfirmDelete(true)}
               tone="danger"
             >
               Delete
@@ -336,6 +337,14 @@ export const LeadDetailPage = ({ id }: { readonly id: string }) => {
           </ul>
         </section>
       </div>
+      <ConfirmDialog
+        description={`Delete "${record.name}"? This removes the lead from your workspace.`}
+        onConfirm={() => remove.mutate()}
+        onOpenChange={setConfirmDelete}
+        open={confirmDelete}
+        pending={remove.isPending}
+        title="Delete lead"
+      />
     </>
   );
 };
