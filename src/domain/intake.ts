@@ -2,12 +2,28 @@ import { type IntakeInput, normalizeEmail } from './schemas';
 
 /**
  * The response persisted for every accepted intake and replayed unchanged on
- * matching retries. Kept in this shape for compatibility with clients written
- * against the original contract.
+ * matching retries. One submission creates one lead.
  */
 export type IntakeResponse = {
   created: boolean;
-  opportunityId: string;
+  leadId: string;
+};
+
+/**
+ * Display name for a lead: the explicit name, else the person's name, else the
+ * email. Every lead has a stable title for the table without requiring the
+ * sender to provide one.
+ */
+export const leadDisplayName = (input: IntakeInput): string => {
+  if (input.name) {
+    return input.name;
+  }
+
+  const person = [input.firstName, input.lastName]
+    .filter((part): part is string => typeof part === 'string')
+    .join(' ')
+    .trim();
+  return person || input.email;
 };
 
 /**
@@ -37,7 +53,7 @@ const canonicalize = (value: unknown): unknown =>
  *
  * - Recursively sorts object keys and preserves array order, so JSON
  *   whitespace and property order never create a conflict.
- * - Normalizes the contact email with the existing `normalizeEmail`, so
+ * - Normalizes the lead email with the existing `normalizeEmail`, so
  *   case/whitespace differences in the email never create a conflict either.
  * - Uses no field-definition or pipeline lookup: the fingerprint is a pure
  *   function of the decoded request, so mutable workspace state can never
@@ -53,7 +69,7 @@ export const intakeRequestFingerprint = async (
 ): Promise<string> => {
   const normalized: IntakeInput = {
     ...input,
-    contact: { ...input.contact, email: normalizeEmail(input.contact.email) },
+    email: normalizeEmail(input.email),
   };
   const canonical = JSON.stringify(canonicalize(normalized));
   const digest = await crypto.subtle.digest(

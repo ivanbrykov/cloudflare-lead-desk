@@ -388,52 +388,6 @@ test('required fields reject null and cannot be bypassed on edit', async () => {
   expect(unknown.status).toBe(422);
 });
 
-test('intake rejects null for required fields and omits blank optional fields', async () => {
-  await createField('required_text', 'text', true);
-  const token = await ok<{ token: string }>('/v1/tokens', 'POST', {
-    name: 'regression-intake',
-  });
-  const headers = { Authorization: `Bearer ${token.token}` };
-
-  const bad = await api(
-    '/v1/intakes',
-    'POST',
-    {
-      contact: {
-        customFields: { required_text: null },
-        email: 'intake-required@example.test',
-      },
-      opportunity: { name: 'Intake inquiry', source: 'calculator' },
-      source: 'website_form',
-    },
-    { 'Idempotency-Key': 'regression-intake-bad', ...headers },
-  );
-  expect(bad.status).toBe(422);
-
-  const good = await api(
-    '/v1/intakes',
-    'POST',
-    {
-      contact: {
-        customFields: { optional_text: null, required_text: 'intake' },
-        email: 'intake-optional@example.test',
-      },
-      opportunity: { name: 'Intake inquiry', source: 'calculator' },
-      source: 'website_form',
-    },
-    { 'Idempotency-Key': 'regression-intake-good', ...headers },
-  );
-  expect(good.status).toBe(201);
-
-  const contact = await database
-    .prepare('SELECT id FROM contacts WHERE normalized_email = ?')
-    .bind('intake-optional@example.test')
-    .first();
-  expect(contact).not.toBeNull();
-  const contactId = (contact as { id: string }).id;
-  expect(await valueRow('optional_text', contactId)).toBeNull();
-});
-
 test('manual opportunity creation rejects null for required contact fields', async () => {
   await createField('required_text', 'text', true);
   const bad = await api('/v1/opportunities', 'POST', {

@@ -335,9 +335,9 @@ const createAppWithAuth = (environment: Env, getAuth: AuthForRequest) =>
             return errorResponse(
               409,
               'idempotency_legacy_unverifiable',
-              'This Idempotency-Key was accepted before request fingerprints existed and cannot be verified. Reconcile it against the already stored opportunity before submitting again.',
-              typeof stored.opportunityId === 'string'
-                ? { opportunityId: stored.opportunityId }
+              'This Idempotency-Key was accepted before request fingerprints existed and cannot be verified. Reconcile it against the already stored lead before submitting again.',
+              typeof stored.leadId === 'string'
+                ? { leadId: stored.leadId }
                 : undefined,
             );
           }

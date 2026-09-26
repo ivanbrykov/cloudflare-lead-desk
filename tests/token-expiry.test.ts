@@ -222,8 +222,8 @@ const intake = (fx: Fixture, token: string, key: string, email: string) =>
     '/v1/intakes',
     'POST',
     {
-      contact: { email },
-      opportunity: { name: 'Token expiry probe', source: 'test' },
+      email,
+      name: 'Token expiry probe',
       source: 'test',
     },
     { Authorization: `Bearer ${token}`, 'Idempotency-Key': key },
