@@ -208,6 +208,60 @@ export const LeadStageCountsQueryRequest = Schema.Struct({
   pipelineId: Schema.optional(RecordId),
 });
 
+// Lead writes. `CreateLeadRequest` covers manual/operator entry; intake has its
+// own flat `IntakeRequest` because it is the unauthenticated-token contract.
+export const CreateLeadRequest = Schema.Struct({
+  customFields: Schema.optional(CustomFieldValuesSchema),
+  email: Schema.optional(Email),
+  estimatedValue: Schema.optional(
+    Schema.Number.pipe(Schema.finite(), Schema.nonNegative()),
+  ),
+  firstName: Schema.optional(NonEmptyString),
+  lastName: Schema.optional(NonEmptyString),
+  name: Schema.optional(NonEmptyString),
+  pipelineId: Schema.optional(RecordId),
+  source: Schema.optional(NonEmptyString),
+  stageId: Schema.optional(RecordId),
+});
+export type CreateLeadInput = Schema.Schema.Type<typeof CreateLeadRequest>;
+
+export const UpdateLeadRequest = Schema.Struct({
+  customFields: Schema.optional(CustomFieldValuesSchema),
+  email: Schema.optional(Schema.NullOr(Email)),
+  estimatedValue: Schema.optional(
+    Schema.NullOr(Schema.Number.pipe(Schema.finite(), Schema.nonNegative())),
+  ),
+  firstName: Schema.optional(Schema.NullOr(NonEmptyString)),
+  lastName: Schema.optional(Schema.NullOr(NonEmptyString)),
+  name: Schema.optional(NonEmptyString),
+  source: Schema.optional(NonEmptyString),
+  stageId: Schema.optional(RecordId),
+});
+export type UpdateLeadInput = Schema.Schema.Type<typeof UpdateLeadRequest>;
+
+export const BulkMoveLeadsRequest = Schema.Struct({
+  ids: Schema.Array(RecordId).pipe(Schema.minItems(1), Schema.maxItems(100)),
+  stageId: RecordId,
+});
+export type BulkMoveLeadsInput = Schema.Schema.Type<
+  typeof BulkMoveLeadsRequest
+>;
+
+export const BulkDeleteLeadsRequest = Schema.Struct({
+  ids: Schema.Array(RecordId).pipe(Schema.minItems(1), Schema.maxItems(100)),
+});
+export type BulkDeleteLeadsInput = Schema.Schema.Type<
+  typeof BulkDeleteLeadsRequest
+>;
+
+export const CreateLeadActivityRequest = Schema.Struct({
+  body: NonEmptyString,
+  kind: Schema.optional(Schema.Literal('note', 'contact_attempt')),
+});
+export type CreateLeadActivityInput = Schema.Schema.Type<
+  typeof CreateLeadActivityRequest
+>;
+
 export const MoveOpportunityRequest = Schema.Struct({
   stageId: RecordId,
 });

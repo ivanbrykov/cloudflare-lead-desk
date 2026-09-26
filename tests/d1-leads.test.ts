@@ -277,3 +277,79 @@ test('staff routes require a session', async () => {
     await fx.dispose();
   }
 });
+
+test('leads can be created, updated, moved, deleted, and annotated', async () => {
+  const fx = await startFixture();
+  try {
+    const created = await fx.api('/v1/leads', 'POST', {
+      email: 'manual@example.test',
+      firstName: 'Manual',
+      name: 'Manual lead',
+      source: 'Manual entry',
+    });
+    expect(created.status, JSON.stringify(created)).toBe(201);
+    const lead = created.json.data as {
+      id: string;
+      name: string;
+      stageId: string;
+    };
+    expect(lead.name).toBe('Manual lead');
+
+    // Identity is required for a manual lead.
+    const invalid = await fx.api('/v1/leads', 'POST', { name: 'No identity' });
+    expect(invalid.status).toBe(422);
+    expect(invalid.json).toMatchObject({ code: 'lead_identity_required' });
+
+    const updated = await fx.api(`/v1/leads/${lead.id}`, 'PATCH', {
+      estimatedValue: 2_500,
+      name: 'Renamed lead',
+    });
+    expect(updated.status, JSON.stringify(updated)).toBe(200);
+    expect((updated.json.data as { name: string }).name).toBe('Renamed lead');
+
+    const stage = await fx.api(`/v1/pipelines/${PIPELINE}/stages`, 'POST', {
+      name: 'Qualified',
+    });
+    expect(stage.status, JSON.stringify(stage)).toBe(201);
+    const stageId = (stage.json.data as { id: string }).id;
+    const moved = await fx.api('/v1/leads/bulk', 'PATCH', {
+      ids: [lead.id],
+      stageId,
+    });
+    expect(moved.status, JSON.stringify(moved)).toBe(200);
+    const detail = await fx.api(`/v1/leads/${lead.id}`);
+    expect((detail.json.data as { stageId: string }).stageId).toBe(stageId);
+
+    // A stage from another pipeline is rejected without moving anything.
+    const other = await fx.api('/v1/pipelines', 'POST', { name: 'Other' });
+    const otherPipelineId = (other.json.data as { id: string }).id;
+    const foreignStage = await fx.api(
+      `/v1/pipelines/${otherPipelineId}/stages`,
+      'POST',
+      { name: 'Foreign' },
+    );
+    const foreignStageId = (foreignStage.json.data as { id: string }).id;
+    const foreignMove = await fx.api('/v1/leads/bulk', 'PATCH', {
+      ids: [lead.id],
+      stageId: foreignStageId,
+    });
+    expect(foreignMove.status).toBe(422);
+    expect(foreignMove.json).toMatchObject({ code: 'invalid_stage' });
+
+    const activity = await fx.api(`/v1/leads/${lead.id}/activities`, 'POST', {
+      body: 'Called them',
+    });
+    expect(activity.status, JSON.stringify(activity)).toBe(201);
+    const activities = await fx.api(`/v1/leads/${lead.id}/activities`);
+    expect(activities.json.data).toHaveLength(1);
+
+    const deleted = await fx.api('/v1/leads/bulk-delete', 'POST', {
+      ids: [lead.id],
+    });
+    expect(deleted.status, JSON.stringify(deleted)).toBe(200);
+    const list = await fx.api('/v1/leads');
+    expect(list.json.data).toHaveLength(0);
+  } finally {
+    await fx.dispose();
+  }
+});

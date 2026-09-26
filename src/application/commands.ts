@@ -3,10 +3,14 @@ import {
   createActivity,
   createContact,
   createFieldDefinition,
+  createLead,
+  createLeadActivity,
   createLeadAtomically,
   createManualOpportunity,
   createPipeline,
   createStage,
+  DEFAULT_PIPELINE_ID,
+  DEFAULT_STAGE_ID,
   deleteContact,
   type Env,
   getContact,
@@ -16,9 +20,12 @@ import {
   intakePipelineId,
   intakeStageId,
   isStageInActiveWorkspacePipeline,
+  moveLeads,
   moveOpportunity,
   outcomeForStoredIntakeKey,
+  softDeleteLeads,
   updateContact,
+  updateLead,
   updateOpportunity,
 } from '@/db/repository';
 import { validateCustomFields } from '@/domain/custom-fields';
@@ -26,8 +33,10 @@ import { intakeRequestFingerprint } from '@/domain/intake';
 import {
   type ContactInput,
   type CreateCustomField,
+  type CreateLeadInput,
   type CreateOpportunityInput,
   type IntakeInput,
+  type UpdateLeadInput,
   type UpdateOpportunityInput,
 } from '@/domain/schemas';
 import { Effect } from 'effect';
@@ -210,6 +219,64 @@ export const createIntakeCommand = (
       createLeadAtomically(environment, input, idempotencyKey, requestHash),
     );
   });
+
+export const createLeadCommand = (environment: Env, input: CreateLeadInput) =>
+  Effect.gen(function* () {
+    yield* validate(() => {
+      if (!input.email && !input.firstName && !input.lastName) {
+        throw new DomainError({
+          code: 'lead_identity_required',
+          message: 'Enter an email, first name, or last name.',
+        });
+      }
+    });
+    const routingValid = yield* persist(() =>
+      isStageInActiveWorkspacePipeline(
+        environment,
+        input.pipelineId ?? DEFAULT_PIPELINE_ID,
+        input.stageId ?? DEFAULT_STAGE_ID,
+      ),
+    );
+    if (!routingValid) {
+      return yield* Effect.fail(
+        new DomainError({
+          code: 'invalid_stage',
+          message:
+            'The selected stage must belong to the selected pipeline, both must be active in this workspace.',
+        }),
+      );
+    }
+
+    return yield* persist(() => createLead(environment, input));
+  });
+
+export const updateLeadCommand = (
+  environment: Env,
+  leadId: string,
+  input: UpdateLeadInput,
+) => persist(() => updateLead(environment, leadId, input));
+
+export const moveLeadsCommand = (
+  environment: Env,
+  ids: readonly string[],
+  stageId: string,
+) => persist(() => moveLeads(environment, ids, stageId));
+
+export const softDeleteLeadsCommand = (
+  environment: Env,
+  ids: readonly string[],
+) => persist(() => softDeleteLeads(environment, ids));
+
+export const createLeadActivityCommand = (
+  environment: Env,
+  leadId: string,
+  actorEmail: string,
+  kind: string,
+  body: string,
+) =>
+  persist(() =>
+    createLeadActivity(environment, leadId, actorEmail, kind, body),
+  );
 
 export const createCustomFieldCommand = (
   environment: Env,
