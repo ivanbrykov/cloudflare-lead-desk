@@ -18,6 +18,9 @@ import { Link, useLocation } from 'wouter';
 const formatCustomValue = (value: unknown): string =>
   typeof value === 'string' ? value : JSON.stringify(value);
 
+const nullable = (value: string): null | string =>
+  value.trim() === '' ? null : value.trim();
+
 export const LeadDetailPage = ({ id }: { readonly id: string }) => {
   const queryClient = useQueryClient();
   const [, setLocation] = useLocation();
@@ -38,7 +41,10 @@ export const LeadDetailPage = ({ id }: { readonly id: string }) => {
   );
   const [note, setNote] = useState('');
   const [draft, setDraft] = useState<null | {
+    email: string;
     estimatedValue: string;
+    firstName: string;
+    lastName: string;
     name: string;
     source: string;
   }>(null);
@@ -48,8 +54,11 @@ export const LeadDetailPage = ({ id }: { readonly id: string }) => {
     draft ??
     (record
       ? {
+          email: record.email ?? '',
           estimatedValue:
             record.estimatedValue === null ? '' : String(record.estimatedValue),
+          firstName: record.firstName ?? '',
+          lastName: record.lastName ?? '',
           name: record.name,
           source: record.source,
         }
@@ -64,10 +73,15 @@ export const LeadDetailPage = ({ id }: { readonly id: string }) => {
     mutationFn: () =>
       request(`/v1/leads/${id}`, {
         body: JSON.stringify({
+          email: currentDraft ? nullable(currentDraft.email) : undefined,
           estimatedValue:
             currentDraft && currentDraft.estimatedValue.trim() === ''
               ? null
               : Number(currentDraft?.estimatedValue),
+          firstName: currentDraft
+            ? nullable(currentDraft.firstName)
+            : undefined,
+          lastName: currentDraft ? nullable(currentDraft.lastName) : undefined,
           name: currentDraft?.name.trim() || undefined,
           source: currentDraft?.source.trim() || undefined,
         }),
@@ -156,7 +170,40 @@ export const LeadDetailPage = ({ id }: { readonly id: string }) => {
               save.mutate();
             }}
           >
-            <Field label="Title">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="First name">
+                <input
+                  className={inputClass}
+                  onChange={(event) =>
+                    setDraft({ ...currentDraft, firstName: event.target.value })
+                  }
+                  value={currentDraft.firstName}
+                />
+              </Field>
+              <Field label="Last name">
+                <input
+                  className={inputClass}
+                  onChange={(event) =>
+                    setDraft({ ...currentDraft, lastName: event.target.value })
+                  }
+                  value={currentDraft.lastName}
+                />
+              </Field>
+            </div>
+            <Field label="Email">
+              <input
+                className={inputClass}
+                onChange={(event) =>
+                  setDraft({ ...currentDraft, email: event.target.value })
+                }
+                type="email"
+                value={currentDraft.email}
+              />
+            </Field>
+            <Field
+              hint="Shown as the lead name. Defaults to the person's name or email."
+              label="Title"
+            >
               <input
                 className={inputClass}
                 onChange={(event) =>
@@ -217,18 +264,6 @@ export const LeadDetailPage = ({ id }: { readonly id: string }) => {
             </div>
           </form>
           <dl className="mt-5 grid gap-2 text-sm">
-            <div className="flex justify-between gap-4">
-              <dt className="text-slate-500">Email</dt>
-              <dd className="text-slate-200">{record.email ?? '—'}</dd>
-            </div>
-            <div className="flex justify-between gap-4">
-              <dt className="text-slate-500">Contact</dt>
-              <dd className="text-slate-200">
-                {[record.firstName, record.lastName]
-                  .filter(Boolean)
-                  .join(' ') || '—'}
-              </dd>
-            </div>
             {Object.entries(record.customFields).map(([key, value]) => (
               <div
                 className="flex justify-between gap-4"
