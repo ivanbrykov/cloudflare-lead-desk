@@ -6,19 +6,17 @@ import {
   createPipeline,
   createStage,
   DEFAULT_PIPELINE_ID,
-  DEFAULT_STAGE_ID,
   deleteStage,
   type Env,
   getIntakeKey,
   getPipeline,
   type IntakePersistenceOutcome,
   intakePipelineId,
-  intakeStageId,
   isActivePipelineNameTaken,
-  isStageInActiveWorkspacePipeline,
   moveLeads,
   outcomeForStoredIntakeKey,
   reorderStages,
+  resolveActiveRouting,
   softDeleteLeads,
   updateLead,
   updatePipeline,
@@ -76,15 +74,12 @@ export const createIntakeCommand = (
       return storedOutcome;
     }
 
-    // Mutable application rules apply to NEW submissions only.
-    const routingValid = yield* persist(() =>
-      isStageInActiveWorkspacePipeline(
-        environment,
-        intakePipelineId(input),
-        intakeStageId(input),
-      ),
+    // Mutable application rules apply to NEW submissions only. An omitted
+    // stage resolves to the selected pipeline's initial stage.
+    const routing = yield* persist(() =>
+      resolveActiveRouting(environment, intakePipelineId(input), input.stageId),
     );
-    if (!routingValid) {
+    if (routing === null) {
       return yield* Effect.fail(
         new DomainError({
           code: 'invalid_stage',
@@ -95,7 +90,13 @@ export const createIntakeCommand = (
     }
 
     return yield* persist((): Promise<IntakePersistenceOutcome> =>
-      createLeadAtomically(environment, input, idempotencyKey, requestHash),
+      createLeadAtomically(
+        environment,
+        input,
+        routing,
+        idempotencyKey,
+        requestHash,
+      ),
     );
   });
 
@@ -109,14 +110,14 @@ export const createLeadCommand = (environment: Env, input: CreateLeadInput) =>
         });
       }
     });
-    const routingValid = yield* persist(() =>
-      isStageInActiveWorkspacePipeline(
+    const routing = yield* persist(() =>
+      resolveActiveRouting(
         environment,
         input.pipelineId ?? DEFAULT_PIPELINE_ID,
-        input.stageId ?? DEFAULT_STAGE_ID,
+        input.stageId,
       ),
     );
-    if (!routingValid) {
+    if (routing === null) {
       return yield* Effect.fail(
         new DomainError({
           code: 'invalid_stage',
@@ -126,7 +127,13 @@ export const createLeadCommand = (environment: Env, input: CreateLeadInput) =>
       );
     }
 
-    return yield* persist(() => createLead(environment, input));
+    return yield* persist(() =>
+      createLead(environment, {
+        ...input,
+        pipelineId: routing.pipelineId,
+        stageId: routing.stageId,
+      }),
+    );
   });
 
 export const updateLeadCommand = (

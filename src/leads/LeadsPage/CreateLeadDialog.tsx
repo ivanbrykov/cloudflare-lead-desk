@@ -24,7 +24,7 @@ export const CreateLeadDialog = ({
     lastName: '',
     name: '',
     source: 'Website',
-    stageId: '',
+    stageId: pipeline?.stages[0]?.id ?? '',
   });
   const create = useMutation({
     mutationFn: () =>
@@ -38,6 +38,7 @@ export const CreateLeadDialog = ({
           firstName: values.firstName.trim() || undefined,
           lastName: values.lastName.trim() || undefined,
           name: values.name.trim() || undefined,
+          pipelineId: pipeline?.id,
           source: values.source.trim() || undefined,
           stageId: values.stageId || undefined,
         }),
@@ -64,6 +65,16 @@ export const CreateLeadDialog = ({
           create.mutate();
         }}
       >
+        <p className="text-xs text-slate-500">
+          {pipeline ? (
+            <>
+              Creating in{' '}
+              <span className="text-slate-300">{pipeline.name}</span>
+            </>
+          ) : (
+            'No pipeline available. Create one in Settings → Pipelines.'
+          )}
+        </p>
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label="First name">
             <input
@@ -132,12 +143,15 @@ export const CreateLeadDialog = ({
         <Field label="Stage">
           <select
             className={selectClass}
+            disabled={!pipeline || pipeline.stages.length === 0}
             onChange={(event) =>
               setValues({ ...values, stageId: event.target.value })
             }
             value={values.stageId}
           >
-            <option value="">Default stage</option>
+            {(!pipeline || pipeline.stages.length === 0) && (
+              <option value="">{pipeline ? 'No stages' : 'No pipeline'}</option>
+            )}
             {pipeline?.stages.map((stage) => (
               <option
                 key={stage.id}
@@ -157,7 +171,7 @@ export const CreateLeadDialog = ({
             Cancel
           </Button>
           <Button
-            disabled={create.isPending}
+            disabled={create.isPending || values.stageId === ''}
             type="submit"
           >
             Create lead

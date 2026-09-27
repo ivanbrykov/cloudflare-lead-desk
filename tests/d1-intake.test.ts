@@ -841,3 +841,40 @@ test('the byte limit applies to the intake route only', async () => {
     await fx.dispose();
   }
 });
+
+test('intake without an explicit stage uses the selected pipeline initial stage', async () => {
+  const fx = await startFixture();
+  try {
+    const token = await fx.createToken();
+    const pipelineResponse = await fx.api('/v1/pipelines', 'POST', {
+      name: 'Intake target',
+    });
+    expect(pipelineResponse.status, JSON.stringify(pipelineResponse)).toBe(201);
+    const pipeline = pipelineResponse.json.data as {
+      id: string;
+      stages: Array<{ id: string }>;
+    };
+    const initialStage = pipeline.stages[0];
+    if (initialStage === undefined) {
+      throw new Error('expected a seeded stage');
+    }
+
+    const result = await fx.intake(
+      'pipeline-initial-stage',
+      { ...payload('pipeline-intake@example.test'), pipelineId: pipeline.id },
+      token.token,
+    );
+    expect(result.status, JSON.stringify(result)).toBe(201);
+    const leadId = (result.json.data as { leadId: string }).leadId;
+    const row = await fx.db
+      .prepare('SELECT pipeline_id, stage_id FROM leads WHERE id = ?')
+      .bind(leadId)
+      .first();
+    expect(row).toEqual({
+      pipeline_id: pipeline.id,
+      stage_id: initialStage.id,
+    });
+  } finally {
+    await fx.dispose();
+  }
+});

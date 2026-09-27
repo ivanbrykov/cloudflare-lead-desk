@@ -292,20 +292,11 @@ export const listLeadActivities = async (environment: Env, leadId: string) =>
     )
     .orderBy(desc(activities.createdAt));
 
-// Intake preserves the current workspace defaults rather than inventing new
-// routing: a submission without explicit pipeline/stage uses the default
-// pipeline and stage bootstrapped by the schema migration.
+// Intake preserves the current workspace default pipeline when a submission
+// omits one.
 export const intakePipelineId = (input: IntakeInput): string =>
   input.pipelineId ?? DEFAULT_PIPELINE_ID;
-export const intakeStageId = (input: IntakeInput): string =>
-  input.stageId ?? DEFAULT_STAGE_ID;
 
-/**
- * A routing pair is valid when the stage exists in the selected pipeline and
- * both belong to the current workspace, and the pipeline is not archived.
- * Defaults are resolved by callers, so this check also covers default
- * routing: archiving the default pipeline rejects default intake.
- */
 export const getPipeline = async (
   environment: Env,
   pipelineId: string,
@@ -323,17 +314,33 @@ export const getPipeline = async (
   return row ?? null;
 };
 
-export const isStageInActiveWorkspacePipeline = async (
+export type ResolvedRouting = { pipelineId: string; stageId: string };
+
+/**
+ * Resolves the routing for a new lead: the pipeline must exist in this
+ * workspace and be active, and an omitted stage resolves to the pipeline's
+ * initial (first) stage. Returns null for a missing or archived pipeline, or
+ * a stage that is not part of it.
+ */
+export const resolveActiveRouting = async (
   environment: Env,
   pipelineId: string,
-  stageId: string,
-): Promise<boolean> => {
+  stageId?: string,
+): Promise<null | ResolvedRouting> => {
   const pipeline = await getPipeline(environment, pipelineId);
-  return (
-    pipeline !== null &&
-    pipeline.archivedAt === null &&
-    pipeline.stages.some((stage) => stage.id === stageId)
-  );
+  if (pipeline === null || pipeline.archivedAt !== null) {
+    return null;
+  }
+
+  const resolvedStageId = stageId ?? pipeline.stages[0]?.id;
+  if (
+    resolvedStageId === undefined ||
+    !pipeline.stages.some((stage) => stage.id === resolvedStageId)
+  ) {
+    return null;
+  }
+
+  return { pipelineId, stageId: resolvedStageId };
 };
 
 export const listPipelines = async (environment: Env) =>
@@ -1080,6 +1087,7 @@ export const outcomeForStoredIntakeKey = (
 export const createLeadAtomically = async (
   environment: Env,
   input: IntakeInput,
+  routing: ResolvedRouting,
   idempotencyKey: string,
   requestHash: string,
 ): Promise<IntakePersistenceOutcome> => {
@@ -1088,8 +1096,7 @@ export const createLeadAtomically = async (
   const leadId = id();
   const activityId = id();
   const email = normalizeEmail(input.email);
-  const pipelineId = intakePipelineId(input);
-  const stageId = intakeStageId(input);
+  const { pipelineId, stageId } = routing;
   const response: IntakeResponse = { created: true, leadId };
   const statements: D1PreparedStatement[] = [
     environment.DB.prepare(
@@ -1175,7 +1182,7 @@ const leadName = (parts: {
 
 export const createLead = async (
   environment: Env,
-  input: CreateLeadInput,
+  input: CreateLeadInput & { pipelineId: string; stageId: string },
 ): Promise<LeadRecord> => {
   const timestamp = now();
   const email = input.email ?? null;
@@ -1193,10 +1200,10 @@ export const createLead = async (
     name: leadName({ email, firstName, lastName, name: input.name }),
     normalizedEmail: email ? normalizeEmail(email) : null,
     origin: null,
-    pipelineId: input.pipelineId ?? DEFAULT_PIPELINE_ID,
+    pipelineId: input.pipelineId,
     publicKeyId: null,
     source: input.source ?? 'Manual entry',
-    stageId: input.stageId ?? DEFAULT_STAGE_ID,
+    stageId: input.stageId,
     updatedAt: timestamp,
     workspaceId: DEFAULT_WORKSPACE_ID,
   };
@@ -1255,16 +1262,16 @@ export const updateLead = async (
   }
 
   if (input.stageId !== undefined) {
-    const valid = await isStageInActiveWorkspacePipeline(
+    const routing = await resolveActiveRouting(
       environment,
       existing.pipelineId,
       input.stageId,
     );
-    if (!valid) {
+    if (routing === null) {
       return 'invalid_stage';
     }
 
-    patch.stageId = input.stageId;
+    patch.stageId = routing.stageId;
   }
 
   await getDatabase(environment)

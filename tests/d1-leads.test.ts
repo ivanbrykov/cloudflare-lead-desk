@@ -393,3 +393,46 @@ test('equal createdAt ties order by id DESC and page without gaps', async () => 
     await fx.dispose();
   }
 });
+
+test('manual creation honors the selected pipeline and its initial stage', async () => {
+  const fx = await startFixture();
+  try {
+    const pipelineResponse = await fx.api('/v1/pipelines', 'POST', {
+      name: 'Second pipeline',
+    });
+    expect(pipelineResponse.status, JSON.stringify(pipelineResponse)).toBe(201);
+    const pipeline = pipelineResponse.json.data as {
+      id: string;
+      stages: Array<{ id: string; name: string }>;
+    };
+    const initialStage = pipeline.stages[0];
+    if (initialStage === undefined) {
+      throw new Error('expected a seeded stage');
+    }
+
+    // Only pipelineId: the lead goes to that pipeline's initial stage.
+    const created = await fx.api('/v1/leads', 'POST', {
+      email: 'pipeline@example.test',
+      name: 'Pipeline routed',
+      pipelineId: pipeline.id,
+      source: 'Manual entry',
+    });
+    expect(created.status, JSON.stringify(created)).toBe(201);
+    expect(created.json.data).toMatchObject({
+      pipelineId: pipeline.id,
+      stageId: initialStage.id,
+    });
+
+    // A stage from another pipeline is rejected when the pipeline is omitted.
+    const foreign = await fx.api('/v1/leads', 'POST', {
+      email: 'foreign@example.test',
+      name: 'Foreign stage',
+      source: 'Manual entry',
+      stageId: initialStage.id,
+    });
+    expect(foreign.status, JSON.stringify(foreign)).toBe(422);
+    expect(foreign.json).toMatchObject({ code: 'invalid_stage' });
+  } finally {
+    await fx.dispose();
+  }
+});
