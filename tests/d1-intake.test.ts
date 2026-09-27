@@ -565,10 +565,6 @@ test('invalid or foreign pipeline-stage pairs reject atomically', async () => {
       )
       .bind(foreignWorkspace, other.id)
       .run();
-    await fx.db
-      .prepare('UPDATE stages SET workspace_id = ? WHERE id = ?')
-      .bind(foreignWorkspace, stage.id)
-      .run();
     const foreign = payload('foreign@example.test');
     foreign.pipelineId = other.id;
     foreign.stageId = stage.id;

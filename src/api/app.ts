@@ -428,8 +428,12 @@ const createAppWithAuth = (environment: Env, getAuth: AuthForRequest) =>
         request,
         createStageCommand(environment, params.id, parsed.data),
       );
-      return 'error' in result
-        ? result.error
+      if ('error' in result) {
+        return result.error;
+      }
+
+      return result.data === null
+        ? errorResponse(404, 'not_found', 'Pipeline not found.')
         : Response.json({ data: result.data }, { status: 201 });
     })
     .get(

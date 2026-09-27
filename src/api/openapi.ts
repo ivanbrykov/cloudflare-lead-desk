@@ -324,7 +324,6 @@ export const openApiSpecification = {
                 properties: {
                   color: { type: 'string' },
                   name: { type: 'string' },
-                  position: { type: 'integer' },
                 },
                 required: ['name'],
                 type: 'object',

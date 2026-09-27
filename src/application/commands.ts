@@ -154,5 +154,5 @@ export const createPipelineCommand = (environment: Env, name: string) =>
 export const createStageCommand = (
   environment: Env,
   pipelineId: string,
-  input: { color?: string; name: string; position?: number },
+  input: { color?: string; name: string },
 ) => persist(() => createStage(environment, pipelineId, input));

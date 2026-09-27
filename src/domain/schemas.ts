@@ -49,7 +49,6 @@ export const CreatePipelineRequest = Schema.Struct({
 export const CreateStageRequest = Schema.Struct({
   color: Schema.optional(NonEmptyString),
   name: NonEmptyString,
-  position: Schema.optional(Schema.Number.pipe(Schema.nonNegative())),
 });
 
 // Response contracts. Values are named `...Response` — the import site already
@@ -61,13 +60,8 @@ export const HealthResponse = Schema.Struct({ ok: Schema.Boolean });
 
 export const StageViewResponse = Schema.Struct({
   color: Schema.String,
-  createdAt: Schema.DateFromSelf,
   id: Schema.String,
   name: Schema.String,
-  pipelineId: Schema.String,
-  position: Schema.Number,
-  updatedAt: Schema.DateFromSelf,
-  workspaceId: Schema.String,
 });
 
 export const PipelineViewResponse = Schema.Struct({

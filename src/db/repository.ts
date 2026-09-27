@@ -7,7 +7,6 @@ import {
   pipelines,
   session,
   staffInvites,
-  stages,
   user,
 } from './schema';
 import { type RegistrationGrant } from '@/auth/registration-repository';
@@ -306,28 +305,6 @@ export const intakeStageId = (input: IntakeInput): string =>
  * Defaults are resolved by callers, so this check also covers default
  * routing: archiving the default pipeline rejects default intake.
  */
-export const isStageInActiveWorkspacePipeline = async (
-  environment: Env,
-  pipelineId: string,
-  stageId: string,
-): Promise<boolean> => {
-  const row = await getDatabase(environment)
-    .select({ ok: sql<number>`1` })
-    .from(stages)
-    .innerJoin(pipelines, eq(pipelines.id, stages.pipelineId))
-    .where(
-      and(
-        eq(stages.id, stageId),
-        eq(stages.pipelineId, pipelineId),
-        eq(stages.workspaceId, DEFAULT_WORKSPACE_ID),
-        eq(pipelines.workspaceId, DEFAULT_WORKSPACE_ID),
-        isNull(pipelines.archivedAt),
-      ),
-    )
-    .get();
-  return row !== undefined;
-};
-
 export const getPipeline = async (
   environment: Env,
   pipelineId: string,
@@ -345,23 +322,25 @@ export const getPipeline = async (
   return row ?? null;
 };
 
-export const listPipelines = async (environment: Env) => {
-  const database = getDatabase(environment);
-  const pipelineRows = await database
+export const isStageInActiveWorkspacePipeline = async (
+  environment: Env,
+  pipelineId: string,
+  stageId: string,
+): Promise<boolean> => {
+  const pipeline = await getPipeline(environment, pipelineId);
+  return (
+    pipeline !== null &&
+    pipeline.archivedAt === null &&
+    pipeline.stages.some((stage) => stage.id === stageId)
+  );
+};
+
+export const listPipelines = async (environment: Env) =>
+  getDatabase(environment)
     .select()
     .from(pipelines)
     .where(eq(pipelines.workspaceId, DEFAULT_WORKSPACE_ID))
     .orderBy(asc(pipelines.name));
-  const stageRows = await database
-    .select()
-    .from(stages)
-    .where(eq(stages.workspaceId, DEFAULT_WORKSPACE_ID))
-    .orderBy(asc(stages.position));
-  return pipelineRows.map((pipeline) => ({
-    ...pipeline,
-    stages: stageRows.filter((stage) => stage.pipelineId === pipeline.id),
-  }));
-};
 
 export const createPipeline = async (environment: Env, name: string) => {
   const timestamp = now();
@@ -369,6 +348,7 @@ export const createPipeline = async (environment: Env, name: string) => {
     createdAt: timestamp,
     id: id(),
     name,
+    stages: [],
     updatedAt: timestamp,
     workspaceId: DEFAULT_WORKSPACE_ID,
   };
@@ -376,74 +356,34 @@ export const createPipeline = async (environment: Env, name: string) => {
   return pipeline;
 };
 
-// (pipeline_id, position) is unique (stages_pipeline_position_unique).
-// Concurrent creators can read the same max and race for the same slot; the
-// loser recomputes from the committed state and retries, bounded so a
-// persistent conflict surfaces as a persistence error instead of looping.
-const STAGE_CREATE_MAX_ATTEMPTS = 10;
-
-const isStagePositionConflict = (error: unknown): boolean => {
-  const visit = (candidate: unknown): boolean => {
-    if (!(candidate instanceof Error)) {
-      return false;
-    }
-
-    if (
-      candidate.message.includes('UNIQUE constraint failed') &&
-      candidate.message.includes('stages.pipeline_id') &&
-      candidate.message.includes('stages.position')
-    ) {
-      return true;
-    }
-
-    const cause = (candidate as { cause?: unknown }).cause;
-    return cause !== undefined && cause !== candidate && visit(cause);
-  };
-
-  return visit(error);
-};
-
+// Stages live in `pipelines.stages` as an ordered JSON array. The append is a
+// single statement (`json_insert` with `$[#]`), so concurrent stage creation
+// cannot lose a writer the way read-modify-write could.
 export const createStage = async (
   environment: Env,
   pipelineId: string,
-  input: { color?: string; name: string; position?: number },
+  input: { color?: string; name: string },
 ) => {
-  for (let attempt = 1; attempt <= STAGE_CREATE_MAX_ATTEMPTS; attempt += 1) {
-    const timestamp = now();
-    const max = await getDatabase(environment)
-      .select({ position: sql<number>`max(${stages.position})` })
-      .from(stages)
-      .where(eq(stages.pipelineId, pipelineId))
-      .get();
-    const stage = {
-      color: input.color ?? 'slate',
-      createdAt: timestamp,
-      id: id(),
-      name: input.name,
-      pipelineId,
-      position: input.position ?? (max?.position ?? -1) + 1,
-      updatedAt: timestamp,
-      workspaceId: DEFAULT_WORKSPACE_ID,
-    };
-    try {
-      await getDatabase(environment).insert(stages).values(stage);
-      return stage;
-    } catch (error) {
-      // Only a computed position is retryable: an explicit colliding
-      // position (or a same-name conflict) will keep failing on recompute.
-      if (
-        input.position === undefined &&
-        isStagePositionConflict(error) &&
-        attempt < STAGE_CREATE_MAX_ATTEMPTS
-      ) {
-        continue;
-      }
-
-      throw error;
-    }
+  const stageId = id();
+  const color = input.color ?? 'slate';
+  const result = await getDatabase(environment)
+    .update(pipelines)
+    .set({
+      stages: sql`json_insert(${pipelines.stages}, '$[#]', json_object('id', ${stageId}, 'name', ${input.name}, 'color', ${color}))`,
+      updatedAt: now(),
+    })
+    .where(
+      and(
+        eq(pipelines.id, pipelineId),
+        eq(pipelines.workspaceId, DEFAULT_WORKSPACE_ID),
+      ),
+    )
+    .run();
+  if (result.meta.changes === 0) {
+    return null;
   }
 
-  throw new Error('unreachable: stage creation exhausted its bounded attempts');
+  return { color, id: stageId, name: input.name };
 };
 
 const hashToken = async (token: string): Promise<string> => {
@@ -1172,14 +1112,18 @@ export const moveLeads = async (
     return 'not_found';
   }
 
-  const stage = await getDatabase(environment)
-    .select({ pipelineId: stages.pipelineId })
-    .from(stages)
-    .where(
-      and(eq(stages.id, stageId), eq(stages.workspaceId, DEFAULT_WORKSPACE_ID)),
-    )
-    .get();
-  if (!stage || rows.some((row) => row.pipelineId !== stage.pipelineId)) {
+  const pipelineIds = new Set(rows.map((row) => row.pipelineId));
+  const [pipelineId] = pipelineIds;
+  if (pipelineId === undefined || pipelineIds.size > 1) {
+    return 'invalid_stage';
+  }
+
+  const pipeline = await getPipeline(environment, pipelineId);
+  if (
+    pipeline === null ||
+    pipeline.archivedAt !== null ||
+    !pipeline.stages.some((stage) => stage.id === stageId)
+  ) {
     return 'invalid_stage';
   }
 

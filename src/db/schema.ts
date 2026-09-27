@@ -21,6 +21,12 @@ export const workspaces = sqliteTable('workspaces', {
   updatedAt: timestampMs('updated_at').notNull(),
 });
 
+export type StageDefinition = {
+  color: string;
+  id: string;
+  name: string;
+};
+
 export const pipelines = sqliteTable(
   'pipelines',
   {
@@ -28,6 +34,12 @@ export const pipelines = sqliteTable(
     createdAt: timestampMs('created_at').notNull(),
     id: text('id').primaryKey(),
     name: text('name').notNull(),
+    // Ordered stage definitions: array order is the stage order. Leads
+    // reference a stage by id only; there is no foreign key.
+    stages: text('stages', { mode: 'json' })
+      .$type<StageDefinition[]>()
+      .notNull()
+      .default(sql`'[]'`),
     updatedAt: timestampMs('updated_at').notNull(),
     workspaceId: text('workspace_id')
       .notNull()
@@ -38,32 +50,6 @@ export const pipelines = sqliteTable(
       table.workspaceId,
       table.name,
     ),
-  ],
-);
-
-export const stages = sqliteTable(
-  'stages',
-  {
-    color: text('color').notNull().default('slate'),
-    createdAt: timestampMs('created_at').notNull(),
-    id: text('id').primaryKey(),
-    name: text('name').notNull(),
-    pipelineId: text('pipeline_id')
-      .notNull()
-      .references(() => pipelines.id),
-    position: integer('position').notNull(),
-    updatedAt: timestampMs('updated_at').notNull(),
-    workspaceId: text('workspace_id')
-      .notNull()
-      .references(() => workspaces.id),
-  },
-  (table) => [
-    index('stages_pipeline_position_idx').on(table.pipelineId, table.position),
-    uniqueIndex('stages_pipeline_position_unique').on(
-      table.pipelineId,
-      table.position,
-    ),
-    uniqueIndex('stages_pipeline_name_unique').on(table.pipelineId, table.name),
   ],
 );
 
@@ -89,9 +75,7 @@ export const leads = sqliteTable(
       .references(() => pipelines.id),
     publicKeyId: text('public_key_id'),
     source: text('source').notNull(),
-    stageId: text('stage_id')
-      .notNull()
-      .references(() => stages.id),
+    stageId: text('stage_id').notNull(),
     updatedAt: timestampMs('updated_at').notNull(),
     workspaceId: text('workspace_id')
       .notNull()
