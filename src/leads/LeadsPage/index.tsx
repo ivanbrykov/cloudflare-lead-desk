@@ -23,6 +23,16 @@ type LeadPage = { data: LeadView[]; nextCursor: null | string };
 
 type StageCount = { count: number; stageId: string };
 
+// Active pipelines first; archived pipelines stay selectable so their leads
+// never become unreachable.
+const pipelineOptions = (pipelines: PipelineView[]): PipelineView[] => [
+  ...pipelines.filter((item) => item.archivedAt === null),
+  ...pipelines.filter((item) => item.archivedAt !== null),
+];
+
+const defaultPipelineIdFor = (pipelines: PipelineView[]): string | undefined =>
+  pipelines.find((item) => item.stages.length > 0)?.id ?? pipelines[0]?.id;
+
 export const LeadsPage = () => {
   const queryClient = useQueryClient();
   const [pipelineId, setPipelineId] = useState<null | string>(null);
@@ -38,14 +48,10 @@ export const LeadsPage = () => {
     queryFn: () => request<PipelineView[]>('/v1/pipelines'),
     queryKey: ['pipelines'],
   });
-  const activePipelines = (pipelines.data ?? []).filter(
-    (item) => item.archivedAt === null,
-  );
-  const defaultPipelineId =
-    activePipelines.find((item) => item.stages.length > 0)?.id ??
-    activePipelines[0]?.id;
+  const selectablePipelines = pipelineOptions(pipelines.data ?? []);
+  const defaultPipelineId = defaultPipelineIdFor(selectablePipelines);
   const effectivePipelineId = pipelineId ?? defaultPipelineId;
-  const pipeline = activePipelines.find(
+  const pipeline = selectablePipelines.find(
     (item) => item.id === effectivePipelineId,
   );
 
@@ -167,7 +173,7 @@ export const LeadsPage = () => {
           <Field label="Pipeline">
             <select
               className={selectClass}
-              disabled={activePipelines.length === 0}
+              disabled={selectablePipelines.length === 0}
               onChange={(event) => {
                 setPipelineId(event.target.value);
                 setStageId(null);
@@ -175,15 +181,16 @@ export const LeadsPage = () => {
               }}
               value={effectivePipelineId ?? ''}
             >
-              {activePipelines.length === 0 && (
-                <option value="">No active pipelines</option>
+              {selectablePipelines.length === 0 && (
+                <option value="">No pipelines</option>
               )}
-              {activePipelines.map((item) => (
+              {selectablePipelines.map((item) => (
                 <option
                   key={item.id}
                   value={item.id}
                 >
                   {item.name}
+                  {item.archivedAt === null ? '' : ' (archived)'}
                 </option>
               ))}
             </select>

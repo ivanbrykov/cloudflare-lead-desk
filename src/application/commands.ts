@@ -7,22 +7,31 @@ import {
   createStage,
   DEFAULT_PIPELINE_ID,
   DEFAULT_STAGE_ID,
+  deleteStage,
   type Env,
   getIntakeKey,
+  getPipeline,
   type IntakePersistenceOutcome,
   intakePipelineId,
   intakeStageId,
+  isActivePipelineNameTaken,
   isStageInActiveWorkspacePipeline,
   moveLeads,
   outcomeForStoredIntakeKey,
+  reorderStages,
   softDeleteLeads,
   updateLead,
+  updatePipeline,
+  updateStage,
 } from '@/db/repository';
 import { intakeRequestFingerprint } from '@/domain/intake';
 import {
   type CreateLeadInput,
   type IntakeInput,
+  type ReorderStagesInput,
   type UpdateLeadInput,
+  type UpdatePipelineInput,
+  type UpdateStageInput,
 } from '@/domain/schemas';
 import { Effect } from 'effect';
 
@@ -149,10 +158,90 @@ export const createLeadActivityCommand = (
   );
 
 export const createPipelineCommand = (environment: Env, name: string) =>
-  persist(() => createPipeline(environment, name));
+  Effect.gen(function* () {
+    const taken = yield* persist(() =>
+      isActivePipelineNameTaken(environment, name),
+    );
+    if (taken) {
+      return yield* Effect.fail(
+        new DomainError({
+          code: 'pipeline_name_taken',
+          message: 'An active pipeline with this name already exists.',
+        }),
+      );
+    }
+
+    return yield* persist(() => createPipeline(environment, name));
+  });
+
+export const updatePipelineCommand = (
+  environment: Env,
+  pipelineId: string,
+  input: UpdatePipelineInput,
+) =>
+  Effect.gen(function* () {
+    // Renaming and unarchiving both put a name into the active namespace, so
+    // either must check it against the active pipelines (excluding self).
+    if (input.name !== undefined || input.archived === false) {
+      const existing = yield* persist(() =>
+        getPipeline(environment, pipelineId),
+      );
+      if (existing === null) {
+        return yield* Effect.fail(
+          new DomainError({
+            code: 'not_found',
+            message: 'Pipeline not found.',
+          }),
+        );
+      }
+
+      const name = input.name ?? existing.name;
+      const taken = yield* persist(() =>
+        isActivePipelineNameTaken(environment, name, pipelineId),
+      );
+      if (taken) {
+        return yield* Effect.fail(
+          new DomainError({
+            code: 'pipeline_name_taken',
+            message: 'An active pipeline with this name already exists.',
+          }),
+        );
+      }
+    }
+
+    const pipeline = yield* persist(() =>
+      updatePipeline(environment, pipelineId, input),
+    );
+    if (pipeline === null) {
+      return yield* Effect.fail(
+        new DomainError({ code: 'not_found', message: 'Pipeline not found.' }),
+      );
+    }
+
+    return pipeline;
+  });
 
 export const createStageCommand = (
   environment: Env,
   pipelineId: string,
   input: { color?: string; name: string },
 ) => persist(() => createStage(environment, pipelineId, input));
+
+export const updateStageCommand = (
+  environment: Env,
+  pipelineId: string,
+  stageId: string,
+  input: UpdateStageInput,
+) => persist(() => updateStage(environment, pipelineId, stageId, input));
+
+export const reorderStagesCommand = (
+  environment: Env,
+  pipelineId: string,
+  input: ReorderStagesInput,
+) => persist(() => reorderStages(environment, pipelineId, input.stageIds));
+
+export const deleteStageCommand = (
+  environment: Env,
+  pipelineId: string,
+  stageId: string,
+) => persist(() => deleteStage(environment, pipelineId, stageId));

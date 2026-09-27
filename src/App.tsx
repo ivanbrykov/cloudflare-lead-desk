@@ -12,6 +12,7 @@ import {
   type SignUpFailure,
 } from './lib/registration-flow';
 import { cn } from './lib/styles';
+import { PipelinesPage } from './pipelines/PipelinesPage';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Copy,
@@ -22,6 +23,7 @@ import {
   PanelsTopLeft,
   Plus,
   Users,
+  Workflow,
 } from 'lucide-react';
 import { useReducer, useRef, useState } from 'react';
 import { Link, Route, Switch, useLocation } from 'wouter';
@@ -58,6 +60,7 @@ type Token = {
 
 const navigation = [
   { href: '/leads', icon: LayoutList, label: 'Leads' },
+  { href: '/settings/pipelines', icon: Workflow, label: 'Pipelines' },
   { href: '/settings/invites', icon: Mail, label: 'Invitations' },
   { href: '/settings/staff', icon: Users, label: 'Staff' },
   { href: '/settings/tokens', icon: KeyRound, label: 'Tokens' },
@@ -1230,6 +1233,9 @@ export const App = () => {
         </Route>
         <Route path="/leads">
           <LeadsPage />
+        </Route>
+        <Route path="/settings/pipelines">
+          <PipelinesPage />
         </Route>
         <Route path="/settings/tokens">
           <TokensPage />

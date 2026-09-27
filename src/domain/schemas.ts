@@ -51,6 +51,38 @@ export const CreateStageRequest = Schema.Struct({
   name: NonEmptyString,
 });
 
+export const UpdatePipelineRequest = Schema.Struct({
+  archived: Schema.optional(Schema.Boolean),
+  name: Schema.optional(NonEmptyString),
+}).pipe(
+  Schema.filter(
+    (value) => value.name !== undefined || value.archived !== undefined,
+  ),
+);
+export type UpdatePipelineInput = Schema.Schema.Type<
+  typeof UpdatePipelineRequest
+>;
+
+export const UpdateStageRequest = Schema.Struct({
+  color: Schema.optional(NonEmptyString),
+  name: Schema.optional(NonEmptyString),
+}).pipe(
+  Schema.filter(
+    (value) => value.name !== undefined || value.color !== undefined,
+  ),
+);
+export type UpdateStageInput = Schema.Schema.Type<typeof UpdateStageRequest>;
+
+export const ReorderStagesRequest = Schema.Struct({
+  stageIds: Schema.Array(RecordId).pipe(
+    Schema.minItems(1),
+    Schema.maxItems(100),
+  ),
+});
+export type ReorderStagesInput = Schema.Schema.Type<
+  typeof ReorderStagesRequest
+>;
+
 // Response contracts. Values are named `...Response` — the import site already
 // says it is a schema, so the suffix names the role instead. Derived types keep
 // plain descriptive names. Response values are in-process objects, so

@@ -288,6 +288,8 @@ export const openApiSpecification = {
         summary: 'List pipelines with their stages',
       },
       post: {
+        description:
+          'Creates a pipeline with one initial stage ("New inquiry", blue) so it is immediately usable.',
         requestBody: {
           content: {
             'application/json': {
@@ -305,6 +307,40 @@ export const openApiSpecification = {
           '422': validationError,
         },
         summary: 'Create a pipeline',
+      },
+    },
+    '/v1/pipelines/{id}': {
+      patch: {
+        description:
+          'Renames and/or archives a pipeline. Archiving keeps the leads and their stages; a new active pipeline may reuse an archived name.',
+        parameters: [
+          {
+            in: 'path',
+            name: 'id',
+            required: true,
+            schema: { type: 'string' },
+          },
+        ],
+        requestBody: {
+          content: {
+            'application/json': {
+              schema: {
+                properties: {
+                  archived: { type: 'boolean' },
+                  name: { type: 'string' },
+                },
+                type: 'object',
+              },
+            },
+          },
+          required: true,
+        },
+        responses: {
+          '200': { description: '{ data: pipeline }' },
+          '404': { description: 'not_found' },
+          '422': { description: 'validation_error or pipeline_name_taken' },
+        },
+        summary: 'Rename or archive a pipeline',
       },
     },
     '/v1/pipelines/{id}/stages': {
@@ -337,6 +373,102 @@ export const openApiSpecification = {
           '422': validationError,
         },
         summary: 'Add a stage to a pipeline',
+      },
+    },
+    '/v1/pipelines/{id}/stages/reorder': {
+      post: {
+        description:
+          'stageIds must contain exactly the pipeline stages, once each, in the new order.',
+        parameters: [
+          {
+            in: 'path',
+            name: 'id',
+            required: true,
+            schema: { type: 'string' },
+          },
+        ],
+        requestBody: {
+          content: {
+            'application/json': {
+              schema: {
+                properties: {
+                  stageIds: { items: { type: 'string' }, type: 'array' },
+                },
+                required: ['stageIds'],
+                type: 'object',
+              },
+            },
+          },
+          required: true,
+        },
+        responses: {
+          '200': { description: '{ data: pipeline }' },
+          '404': { description: 'not_found' },
+          '422': { description: 'invalid_stages or validation_error' },
+        },
+        summary: 'Reorder a pipeline’s stages',
+      },
+    },
+    '/v1/pipelines/{id}/stages/{stageId}': {
+      delete: {
+        description:
+          'Deletes an empty stage. A pipeline keeps at least one stage, and a stage with live leads returns stage_in_use with the count.',
+        parameters: [
+          {
+            in: 'path',
+            name: 'id',
+            required: true,
+            schema: { type: 'string' },
+          },
+          {
+            in: 'path',
+            name: 'stageId',
+            required: true,
+            schema: { type: 'string' },
+          },
+        ],
+        responses: {
+          '200': { description: '{ data: pipeline }' },
+          '404': { description: 'not_found' },
+          '422': { description: 'last_stage or stage_in_use' },
+        },
+        summary: 'Delete an empty stage',
+      },
+      patch: {
+        parameters: [
+          {
+            in: 'path',
+            name: 'id',
+            required: true,
+            schema: { type: 'string' },
+          },
+          {
+            in: 'path',
+            name: 'stageId',
+            required: true,
+            schema: { type: 'string' },
+          },
+        ],
+        requestBody: {
+          content: {
+            'application/json': {
+              schema: {
+                properties: {
+                  color: { type: 'string' },
+                  name: { type: 'string' },
+                },
+                type: 'object',
+              },
+            },
+          },
+          required: true,
+        },
+        responses: {
+          '200': { description: '{ data: pipeline }' },
+          '404': { description: 'not_found' },
+          '422': validationError,
+        },
+        summary: 'Rename or recolor a stage',
       },
     },
     '/v1/tokens': {

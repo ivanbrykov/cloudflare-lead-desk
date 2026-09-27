@@ -27,6 +27,7 @@ import {
   inArray,
   isNotNull,
   isNull,
+  ne,
   or,
   sql,
 } from 'drizzle-orm';
@@ -348,12 +349,200 @@ export const createPipeline = async (environment: Env, name: string) => {
     createdAt: timestamp,
     id: id(),
     name,
-    stages: [],
+    // A new pipeline starts with one stage so it is immediately usable and
+    // public intake has an initial stage to target.
+    stages: [{ color: 'blue', id: id(), name: 'New inquiry' }],
     updatedAt: timestamp,
     workspaceId: DEFAULT_WORKSPACE_ID,
   };
   await getDatabase(environment).insert(pipelines).values(pipeline);
   return pipeline;
+};
+
+export const isActivePipelineNameTaken = async (
+  environment: Env,
+  name: string,
+  exceptId?: string,
+): Promise<boolean> => {
+  const row = await getDatabase(environment)
+    .select({ id: pipelines.id })
+    .from(pipelines)
+    .where(
+      and(
+        eq(pipelines.workspaceId, DEFAULT_WORKSPACE_ID),
+        eq(pipelines.name, name),
+        isNull(pipelines.archivedAt),
+        exceptId === undefined ? undefined : ne(pipelines.id, exceptId),
+      ),
+    )
+    .get();
+  return row !== undefined;
+};
+
+export const updatePipeline = async (
+  environment: Env,
+  pipelineId: string,
+  input: { archived?: boolean; name?: string },
+): Promise<null | typeof pipelines.$inferSelect> => {
+  const patch: Partial<typeof pipelines.$inferInsert> = { updatedAt: now() };
+  if (input.archived !== undefined) {
+    patch.archivedAt = input.archived ? now() : null;
+  }
+
+  if (input.name !== undefined) {
+    patch.name = input.name;
+  }
+
+  const result = await getDatabase(environment)
+    .update(pipelines)
+    .set(patch)
+    .where(
+      and(
+        eq(pipelines.id, pipelineId),
+        eq(pipelines.workspaceId, DEFAULT_WORKSPACE_ID),
+      ),
+    )
+    .run();
+  if (result.meta.changes === 0) {
+    return null;
+  }
+
+  return getPipeline(environment, pipelineId);
+};
+
+export type StageOperationOutcome =
+  | { code: 'invalid_stages' }
+  | { code: 'last_stage' }
+  | { code: 'not_found' }
+  | { code: 'stage_in_use'; count: number }
+  | { code: 'updated'; pipeline: typeof pipelines.$inferSelect };
+
+export const countLeadsForStage = async (
+  environment: Env,
+  stageId: string,
+): Promise<number> => {
+  const row = await getDatabase(environment)
+    .select({ count: sql<number>`count(*)` })
+    .from(leads)
+    .where(
+      and(
+        eq(leads.workspaceId, DEFAULT_WORKSPACE_ID),
+        eq(leads.stageId, stageId),
+        isNull(leads.deletedAt),
+      ),
+    )
+    .get();
+  return Number(row?.count ?? 0);
+};
+
+const writePipelineStages = async (
+  environment: Env,
+  pipelineId: string,
+  pipeline: typeof pipelines.$inferSelect,
+  stages: typeof pipelines.$inferSelect.stages,
+): Promise<StageOperationOutcome> => {
+  const timestamp = now();
+  await getDatabase(environment)
+    .update(pipelines)
+    .set({ stages, updatedAt: timestamp })
+    .where(
+      and(
+        eq(pipelines.id, pipelineId),
+        eq(pipelines.workspaceId, DEFAULT_WORKSPACE_ID),
+      ),
+    )
+    .run();
+  return {
+    code: 'updated',
+    pipeline: { ...pipeline, stages, updatedAt: timestamp },
+  };
+};
+
+export const updateStage = async (
+  environment: Env,
+  pipelineId: string,
+  stageId: string,
+  input: { color?: string; name?: string },
+): Promise<StageOperationOutcome> => {
+  const pipeline = await getPipeline(environment, pipelineId);
+  if (
+    pipeline === null ||
+    !pipeline.stages.some((stage) => stage.id === stageId)
+  ) {
+    return { code: 'not_found' };
+  }
+
+  const stages = pipeline.stages.map((stage) =>
+    stage.id === stageId
+      ? {
+          color: input.color ?? stage.color,
+          id: stage.id,
+          name: input.name ?? stage.name,
+        }
+      : stage,
+  );
+  return writePipelineStages(environment, pipelineId, pipeline, stages);
+};
+
+export const reorderStages = async (
+  environment: Env,
+  pipelineId: string,
+  stageIds: readonly string[],
+): Promise<StageOperationOutcome> => {
+  const pipeline = await getPipeline(environment, pipelineId);
+  if (pipeline === null) {
+    return { code: 'not_found' };
+  }
+
+  const byId = new Map(pipeline.stages.map((stage) => [stage.id, stage]));
+  if (
+    stageIds.length !== pipeline.stages.length ||
+    new Set(stageIds).size !== stageIds.length
+  ) {
+    return { code: 'invalid_stages' };
+  }
+
+  const stages = [];
+  for (const stageId of stageIds) {
+    const stage = byId.get(stageId);
+    if (stage === undefined) {
+      return { code: 'invalid_stages' };
+    }
+
+    stages.push(stage);
+  }
+
+  return writePipelineStages(environment, pipelineId, pipeline, stages);
+};
+
+export const deleteStage = async (
+  environment: Env,
+  pipelineId: string,
+  stageId: string,
+): Promise<StageOperationOutcome> => {
+  const pipeline = await getPipeline(environment, pipelineId);
+  if (
+    pipeline === null ||
+    !pipeline.stages.some((stage) => stage.id === stageId)
+  ) {
+    return { code: 'not_found' };
+  }
+
+  if (pipeline.stages.length <= 1) {
+    return { code: 'last_stage' };
+  }
+
+  const count = await countLeadsForStage(environment, stageId);
+  if (count > 0) {
+    return { code: 'stage_in_use', count };
+  }
+
+  return writePipelineStages(
+    environment,
+    pipelineId,
+    pipeline,
+    pipeline.stages.filter((stage) => stage.id !== stageId),
+  );
 };
 
 // Stages live in `pipelines.stages` as an ordered JSON array. The append is a

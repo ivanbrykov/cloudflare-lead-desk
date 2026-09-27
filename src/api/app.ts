@@ -7,9 +7,13 @@ import {
   createLeadCommand,
   createPipelineCommand,
   createStageCommand,
+  deleteStageCommand,
   moveLeadsCommand,
+  reorderStagesCommand,
   softDeleteLeadsCommand,
   updateLeadCommand,
+  updatePipelineCommand,
+  updateStageCommand,
 } from '@/application/commands';
 import { type DomainError, type PersistenceError } from '@/application/errors';
 import {
@@ -45,6 +49,7 @@ import {
   revokeApiToken,
   revokeStaffInvite,
   setStaffAccountDisabled,
+  type StageOperationOutcome,
 } from '@/db/repository';
 import { isIntakeKey } from '@/domain/intake';
 import { decodeKeysetCursor, LIST_LIMIT_DEFAULT } from '@/domain/pagination';
@@ -61,8 +66,11 @@ import {
   IntakeRequest,
   LeadStageCountsQueryRequest,
   ListLeadsQueryRequest,
+  ReorderStagesRequest,
   SetStaffDisabledRequest,
   UpdateLeadRequest,
+  UpdatePipelineRequest,
+  UpdateStageRequest,
   ValidateInviteRequest,
 } from '@/domain/schemas';
 import { Effect, Either, Schema } from 'effect';
@@ -133,6 +141,36 @@ const run = async <A>(
         'The request could not be completed.',
       ),
     } as const;
+  }
+};
+
+const stageOutcomeResponse = (outcome: StageOperationOutcome) => {
+  switch (outcome.code) {
+    case 'invalid_stages':
+      return errorResponse(
+        422,
+        'invalid_stages',
+        'stageIds must list exactly the pipeline stages, once each, in the new order.',
+      );
+    case 'last_stage':
+      return errorResponse(
+        422,
+        'last_stage',
+        'A pipeline must keep at least one stage.',
+      );
+    case 'not_found':
+      return errorResponse(404, 'not_found', 'Pipeline or stage not found.');
+    case 'stage_in_use':
+      return errorResponse(
+        422,
+        'stage_in_use',
+        `Move the ${outcome.count} ${outcome.count === 1 ? 'lead' : 'leads'} in this stage before deleting it.`,
+        { count: outcome.count },
+      );
+    case 'updated':
+      return Response.json({ data: outcome.pipeline });
+    default:
+      throw new Error('unreachable: unknown stage outcome');
   }
 };
 
@@ -436,6 +474,70 @@ const createAppWithAuth = (environment: Env, getAuth: AuthForRequest) =>
         ? errorResponse(404, 'not_found', 'Pipeline not found.')
         : Response.json({ data: result.data }, { status: 201 });
     })
+    .patch(
+      '/v1/pipelines/:id',
+      async ({ body, params, request }) => {
+        const result = await run(
+          request,
+          updatePipelineCommand(environment, params.id, body),
+        );
+        return 'error' in result
+          ? result.error
+          : Response.json({ data: result.data });
+      },
+      { body: Schema.standardSchemaV1(UpdatePipelineRequest) },
+    )
+    .post(
+      '/v1/pipelines/:id/stages/reorder',
+      async ({ body, params, request }) => {
+        const parsed = await parse(ReorderStagesRequest, body);
+        if ('error' in parsed) {
+          return parsed.error;
+        }
+
+        const result = await run(
+          request,
+          reorderStagesCommand(environment, params.id, parsed.data),
+        );
+        return 'error' in result
+          ? result.error
+          : stageOutcomeResponse(result.data);
+      },
+    )
+    .patch(
+      '/v1/pipelines/:id/stages/:stageId',
+      async ({ body, params, request }) => {
+        const parsed = await parse(UpdateStageRequest, body);
+        if ('error' in parsed) {
+          return parsed.error;
+        }
+
+        const result = await run(
+          request,
+          updateStageCommand(
+            environment,
+            params.id,
+            params.stageId,
+            parsed.data,
+          ),
+        );
+        return 'error' in result
+          ? result.error
+          : stageOutcomeResponse(result.data);
+      },
+    )
+    .delete(
+      '/v1/pipelines/:id/stages/:stageId',
+      async ({ params, request }) => {
+        const result = await run(
+          request,
+          deleteStageCommand(environment, params.id, params.stageId),
+        );
+        return 'error' in result
+          ? result.error
+          : stageOutcomeResponse(result.data);
+      },
+    )
     .get(
       '/v1/leads/stage-counts',
       async ({ query }) => {

@@ -324,10 +324,24 @@ there is no separate contact or opportunity record.
 
 ### Pipelines and stages
 
-`GET /v1/pipelines` lists active and archived pipelines with their stages.
-`POST /v1/pipelines` creates a pipeline and `POST /v1/pipelines/:id/stages`
-appends a stage. Rename, archive, reorder, and stage deletion are not exposed
-yet; a settings UI is the next step.
+Pipelines own an ordered list of stages (`{ id, name, color }`); leads
+reference a stage by id. `GET /v1/pipelines` lists active and archived
+pipelines with their stages, and `POST /v1/pipelines` creates one with an
+initial "New inquiry" stage.
+
+- `PATCH /v1/pipelines/:id` renames and/or archives (`{ name?, archived? }`).
+  Archived pipelines stay listed and selectable; they just leave the active
+  name space, so a new pipeline can reuse the name. Unarchiving fails with
+  `pipeline_name_taken` if that name is active again.
+- `POST /v1/pipelines/:id/stages` appends a stage.
+- `PATCH /v1/pipelines/:id/stages/:stageId` renames and/or recolors a stage.
+- `POST /v1/pipelines/:id/stages/reorder` takes exactly the pipeline's stage
+  ids, once each, in the new order; anything else returns `invalid_stages`.
+- `DELETE /v1/pipelines/:id/stages/:stageId` deletes an empty stage: the last
+  stage is refused (`last_stage`), and a stage with live leads is refused with
+  the count (`stage_in_use`).
+
+Staff manage all of this in **Settings → Pipelines**.
 
 
 ## Observability

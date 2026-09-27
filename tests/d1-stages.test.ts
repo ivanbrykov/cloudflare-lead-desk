@@ -59,7 +59,12 @@ const bundleWorker = async (): Promise<string> => {
   return script;
 };
 
-type Pipeline = { id: string; name: string; stages: Stage[] };
+type Pipeline = {
+  archivedAt: null | string;
+  id: string;
+  name: string;
+  stages: Stage[];
+};
 type Stage = { color: string; id: string; name: string };
 
 type StageFixture = {
@@ -218,7 +223,8 @@ test('adding stages appends to the pipeline JSON in order', async () => {
     const created = await fx.ok<Pipeline>('/v1/pipelines', 'POST', {
       name: 'JSON stages',
     });
-    expect(created.stages).toEqual([]);
+    expect(created.stages).toHaveLength(1);
+    expect(created.stages[0]?.name).toBe('New inquiry');
 
     const first = await fx.ok<Stage>(
       `/v1/pipelines/${created.id}/stages`,
@@ -238,11 +244,12 @@ test('adding stages appends to the pipeline JSON in order', async () => {
       (pipeline) => pipeline.id === created.id,
     );
     expect(loaded?.stages.map((stage) => stage.name)).toEqual([
+      'New inquiry',
       'Contacted',
       'Qualified',
     ]);
     // The default color applies when omitted; no extra stage fields leak.
-    expect(loaded?.stages[1]).toEqual({
+    expect(loaded?.stages[2]).toEqual({
       color: 'slate',
       id: expect.any(String) as unknown as string,
       name: 'Qualified',
@@ -272,9 +279,9 @@ test('concurrent stage creation keeps every stage', async () => {
     const loaded = (await pipelines(fx)).find(
       (item) => item.id === pipeline.id,
     );
-    expect(loaded?.stages).toHaveLength(6);
-    expect(new Set(loaded?.stages.map((stage) => stage.id)).size).toBe(6);
-    expect(new Set(loaded?.stages.map((stage) => stage.name)).size).toBe(6);
+    expect(loaded?.stages).toHaveLength(7);
+    expect(new Set(loaded?.stages.map((stage) => stage.id)).size).toBe(7);
+    expect(new Set(loaded?.stages.map((stage) => stage.name)).size).toBe(7);
   } finally {
     await fx.dispose();
   }
@@ -310,6 +317,183 @@ test('Standard Schema routes keep the shared validation envelope', async () => {
     const healthy = await fx.api('/health');
     expect(healthy.status).toBe(200);
     expect(healthy.json).toEqual({ ok: true });
+  } finally {
+    await fx.dispose();
+  }
+});
+
+test('rename, archive, name reuse, and unarchive conflicts', async () => {
+  const fx = await startFixture();
+  try {
+    const alpha = await fx.ok<Pipeline>('/v1/pipelines', 'POST', {
+      name: 'Alpha',
+    });
+    const renamed = await fx.ok<Pipeline>(
+      `/v1/pipelines/${alpha.id}`,
+      'PATCH',
+      {
+        name: 'Beta',
+      },
+    );
+    expect(renamed.name).toBe('Beta');
+
+    const gamma = await fx.ok<Pipeline>('/v1/pipelines', 'POST', {
+      name: 'Gamma',
+    });
+    const duplicate = await fx.api(`/v1/pipelines/${gamma.id}`, 'PATCH', {
+      name: 'Beta',
+    });
+    expect(duplicate.status, JSON.stringify(duplicate)).toBe(422);
+    expect(duplicate.json.code).toBe('pipeline_name_taken');
+
+    const archived = await fx.ok<Pipeline>(
+      `/v1/pipelines/${alpha.id}`,
+      'PATCH',
+      { archived: true },
+    );
+    expect(archived.archivedAt).not.toBeNull();
+
+    const reused = await fx.ok<Pipeline>('/v1/pipelines', 'POST', {
+      name: 'Beta',
+    });
+    expect(reused.name).toBe('Beta');
+
+    const unarchiveConflict = await fx.api(
+      `/v1/pipelines/${alpha.id}`,
+      'PATCH',
+      { archived: false },
+    );
+    expect(unarchiveConflict.status, JSON.stringify(unarchiveConflict)).toBe(
+      422,
+    );
+    expect(unarchiveConflict.json.code).toBe('pipeline_name_taken');
+
+    await fx.ok<Pipeline>(`/v1/pipelines/${reused.id}`, 'PATCH', {
+      archived: true,
+    });
+    const unarchived = await fx.ok<Pipeline>(
+      `/v1/pipelines/${alpha.id}`,
+      'PATCH',
+      { archived: false },
+    );
+    expect(unarchived.archivedAt).toBeNull();
+  } finally {
+    await fx.dispose();
+  }
+});
+
+test('stage rename, recolor, reorder, and delete rules', async () => {
+  const fx = await startFixture();
+  try {
+    const pipeline = await fx.ok<Pipeline>('/v1/pipelines', 'POST', {
+      name: 'Stages',
+    });
+    const seeded = pipeline.stages[0];
+    if (seeded === undefined) {
+      throw new Error('expected a seeded stage');
+    }
+
+    const added = await fx.ok<Stage>(
+      `/v1/pipelines/${pipeline.id}/stages`,
+      'POST',
+      { color: 'amber', name: 'Contacted' },
+    );
+
+    const updated = await fx.ok<Pipeline>(
+      `/v1/pipelines/${pipeline.id}/stages/${seeded.id}`,
+      'PATCH',
+      { color: 'emerald', name: 'Inbox' },
+    );
+    expect(updated.stages[0]).toEqual({
+      color: 'emerald',
+      id: seeded.id,
+      name: 'Inbox',
+    });
+
+    const reordered = await fx.ok<Pipeline>(
+      `/v1/pipelines/${pipeline.id}/stages/reorder`,
+      'POST',
+      { stageIds: [added.id, seeded.id] },
+    );
+    expect(reordered.stages.map((stage) => stage.id)).toEqual([
+      added.id,
+      seeded.id,
+    ]);
+
+    const invalid = await fx.api(
+      `/v1/pipelines/${pipeline.id}/stages/reorder`,
+      'POST',
+      { stageIds: [added.id] },
+    );
+    expect(invalid.status, JSON.stringify(invalid)).toBe(422);
+    expect(invalid.json.code).toBe('invalid_stages');
+
+    const lastStage = await fx.api(
+      `/v1/pipelines/${DEFAULT_PIPELINE_ID}/stages/${DEFAULT_STAGE_ID}`,
+      'DELETE',
+    );
+    expect(lastStage.status, JSON.stringify(lastStage)).toBe(422);
+    expect(lastStage.json.code).toBe('last_stage');
+
+    const deleted = await fx.ok<Pipeline>(
+      `/v1/pipelines/${pipeline.id}/stages/${added.id}`,
+      'DELETE',
+    );
+    expect(deleted.stages.map((stage) => stage.id)).toEqual([seeded.id]);
+
+    const unknownStage = await fx.api(
+      `/v1/pipelines/${pipeline.id}/stages/01ARZ3NDEKTSV4RRFFQ69G5FAZ`,
+      'DELETE',
+    );
+    expect(unknownStage.status).toBe(404);
+  } finally {
+    await fx.dispose();
+  }
+});
+
+test('a stage with live leads cannot be deleted', async () => {
+  const fx = await startFixture();
+  try {
+    const pipeline = await fx.ok<Pipeline>('/v1/pipelines', 'POST', {
+      name: 'In use',
+    });
+    const stage = pipeline.stages[0];
+    if (stage === undefined) {
+      throw new Error('expected a seeded stage');
+    }
+
+    await fx.ok(`/v1/pipelines/${pipeline.id}/stages`, 'POST', {
+      name: 'Second',
+    });
+    const timestamp = Date.now();
+    await fx.db
+      .prepare(
+        `INSERT INTO leads (
+          id, workspace_id, pipeline_id, stage_id, email, normalized_email,
+          first_name, last_name, name, source, estimated_value, custom_fields,
+          origin, public_key_id, created_at, updated_at, deleted_at
+        ) VALUES (?, ?, ?, ?, NULL, NULL, NULL, NULL, 'Blocked', 'website',
+          NULL, '{}', NULL, NULL, ?, ?, NULL)`,
+      )
+      .bind(
+        'lead-in-use',
+        DEFAULT_WORKSPACE_ID,
+        pipeline.id,
+        stage.id,
+        timestamp,
+        timestamp,
+      )
+      .run();
+
+    const result = await fx.api(
+      `/v1/pipelines/${pipeline.id}/stages/${stage.id}`,
+      'DELETE',
+    );
+    expect(result.status, JSON.stringify(result)).toBe(422);
+    expect(result.json).toMatchObject({
+      code: 'stage_in_use',
+      details: { count: 1 },
+    });
   } finally {
     await fx.dispose();
   }

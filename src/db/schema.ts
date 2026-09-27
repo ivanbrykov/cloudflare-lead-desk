@@ -46,10 +46,11 @@ export const pipelines = sqliteTable(
       .references(() => workspaces.id),
   },
   (table) => [
-    uniqueIndex('pipelines_workspace_name_unique').on(
-      table.workspaceId,
-      table.name,
-    ),
+    // Archived pipelines keep their names out of the active namespace, so
+    // archiving "Sales" allows a new active "Sales" pipeline.
+    uniqueIndex('pipelines_workspace_active_name_unique')
+      .on(table.workspaceId, table.name)
+      .where(sql`archived_at IS NULL`),
   ],
 );
 
