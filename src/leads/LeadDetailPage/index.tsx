@@ -110,6 +110,19 @@ export const LeadDetailPage = ({ id }: { readonly id: string }) => {
       invalidate();
     },
   });
+  const setPipeline = useMutation({
+    mutationFn: (target: string) =>
+      request(`/v1/leads/${id}`, {
+        body: JSON.stringify({ pipelineId: target }),
+        method: 'PATCH',
+      }),
+    onSuccess: (_data, target) => {
+      const name =
+        pipelines.data?.find((item) => item.id === target)?.name ?? 'pipeline';
+      toast.success(`Moved to ${name}`);
+      invalidate();
+    },
+  });
   const addNote = useMutation({
     mutationFn: () =>
       request(`/v1/leads/${id}/activities`, {
@@ -248,6 +261,28 @@ export const LeadDetailPage = ({ id }: { readonly id: string }) => {
                 />
               </Field>
             </div>
+            <Field label="Pipeline">
+              <select
+                className={selectClass}
+                onChange={(event) => setPipeline.mutate(event.target.value)}
+                value={record.pipelineId}
+              >
+                {(pipelines.data ?? [])
+                  .filter(
+                    (item) =>
+                      item.archivedAt === null || item.id === record.pipelineId,
+                  )
+                  .map((item) => (
+                    <option
+                      key={item.id}
+                      value={item.id}
+                    >
+                      {item.name}
+                      {item.archivedAt === null ? '' : ' (archived)'}
+                    </option>
+                  ))}
+              </select>
+            </Field>
             <Field label="Stage">
               <select
                 className={selectClass}

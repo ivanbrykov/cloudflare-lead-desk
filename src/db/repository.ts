@@ -1211,10 +1211,43 @@ export const createLead = async (
   return toLead(record, new Map());
 };
 
+const routingLabel = async (
+  environment: Env,
+  routing: ResolvedRouting,
+): Promise<string> => {
+  const pipeline = await getPipeline(environment, routing.pipelineId);
+  const stage = pipeline?.stages.find((item) => item.id === routing.stageId);
+  return pipeline && stage
+    ? `${pipeline.name} · ${stage.name}`
+    : `${routing.pipelineId} · ${routing.stageId}`;
+};
+
+const recordLeadMove = async (
+  environment: Env,
+  leadId: string,
+  actorEmail: null | string,
+  from: ResolvedRouting,
+  to: ResolvedRouting,
+): Promise<void> => {
+  await getDatabase(environment)
+    .insert(activities)
+    .values({
+      actorEmail,
+      body: `Moved from ${await routingLabel(environment, from)} to ${await routingLabel(environment, to)}`,
+      createdAt: now(),
+      id: id(),
+      kind: 'moved',
+      leadId,
+      metadata: { from, to },
+      workspaceId: DEFAULT_WORKSPACE_ID,
+    });
+};
+
 export const updateLead = async (
   environment: Env,
   leadId: string,
   input: UpdateLeadInput,
+  actorEmail: null | string,
 ): Promise<'invalid_stage' | LeadRecord | null> => {
   const existing = await getDatabase(environment)
     .select()
@@ -1261,17 +1294,29 @@ export const updateLead = async (
     patch.source = input.source;
   }
 
-  if (input.stageId !== undefined) {
+  let move: null | { from: ResolvedRouting; to: ResolvedRouting } = null;
+  const targetPipelineId = input.pipelineId ?? existing.pipelineId;
+  if (input.stageId !== undefined || targetPipelineId !== existing.pipelineId) {
     const routing = await resolveActiveRouting(
       environment,
-      existing.pipelineId,
+      targetPipelineId,
       input.stageId,
     );
     if (routing === null) {
       return 'invalid_stage';
     }
 
+    patch.pipelineId = routing.pipelineId;
     patch.stageId = routing.stageId;
+    if (
+      routing.pipelineId !== existing.pipelineId ||
+      routing.stageId !== existing.stageId
+    ) {
+      move = {
+        from: { pipelineId: existing.pipelineId, stageId: existing.stageId },
+        to: routing,
+      };
+    }
   }
 
   await getDatabase(environment)
@@ -1281,6 +1326,10 @@ export const updateLead = async (
       and(eq(leads.workspaceId, DEFAULT_WORKSPACE_ID), eq(leads.id, leadId)),
     )
     .run();
+  if (move !== null) {
+    await recordLeadMove(environment, leadId, actorEmail, move.from, move.to);
+  }
+
   return getLead(environment, leadId);
 };
 
@@ -1291,11 +1340,16 @@ export const updateLead = async (
 export const moveLeads = async (
   environment: Env,
   ids: readonly string[],
-  stageId: string,
+  target: { pipelineId?: string; stageId: string },
+  actorEmail: null | string,
 ): Promise<'invalid_stage' | 'moved' | 'not_found'> => {
   const uniqueIds = [...new Set(ids)];
   const rows = await getDatabase(environment)
-    .select({ id: leads.id, pipelineId: leads.pipelineId })
+    .select({
+      id: leads.id,
+      pipelineId: leads.pipelineId,
+      stageId: leads.stageId,
+    })
     .from(leads)
     .where(
       and(
@@ -1308,24 +1362,33 @@ export const moveLeads = async (
     return 'not_found';
   }
 
-  const pipelineIds = new Set(rows.map((row) => row.pipelineId));
-  const [pipelineId] = pipelineIds;
-  if (pipelineId === undefined || pipelineIds.size > 1) {
+  // A stage-only move keeps every lead in its own pipeline, which requires
+  // them to share one; a pipelineId targets one pipeline for the whole batch.
+  const pipelineId = target.pipelineId ?? rows[0]?.pipelineId;
+  if (
+    pipelineId === undefined ||
+    (target.pipelineId === undefined &&
+      rows.some((row) => row.pipelineId !== pipelineId))
+  ) {
     return 'invalid_stage';
   }
 
-  const pipeline = await getPipeline(environment, pipelineId);
-  if (
-    pipeline === null ||
-    pipeline.archivedAt !== null ||
-    !pipeline.stages.some((stage) => stage.id === stageId)
-  ) {
+  const routing = await resolveActiveRouting(
+    environment,
+    pipelineId,
+    target.stageId,
+  );
+  if (routing === null) {
     return 'invalid_stage';
   }
 
   await getDatabase(environment)
     .update(leads)
-    .set({ stageId, updatedAt: now() })
+    .set({
+      pipelineId: routing.pipelineId,
+      stageId: routing.stageId,
+      updatedAt: now(),
+    })
     .where(
       and(
         eq(leads.workspaceId, DEFAULT_WORKSPACE_ID),
@@ -1334,6 +1397,36 @@ export const moveLeads = async (
       ),
     )
     .run();
+
+  const moved = rows.filter(
+    (row) =>
+      row.pipelineId !== routing.pipelineId || row.stageId !== routing.stageId,
+  );
+  if (moved.length > 0) {
+    const label = await routingLabel(environment, routing);
+    const timestamp = now().getTime();
+    await environment.DB.batch(
+      moved.map((row) =>
+        environment.DB.prepare(
+          `INSERT INTO activities (
+              id, workspace_id, actor_email, lead_id, kind, body, metadata, created_at
+            ) VALUES (?, ?, ?, ?, 'moved', ?, ?, ?)`,
+        ).bind(
+          id(),
+          DEFAULT_WORKSPACE_ID,
+          actorEmail,
+          row.id,
+          `Moved to ${label}`,
+          JSON.stringify({
+            from: { pipelineId: row.pipelineId, stageId: row.stageId },
+            to: routing,
+          }),
+          timestamp,
+        ),
+      ),
+    );
+  }
+
   return 'moved';
 };
 

@@ -11,7 +11,7 @@ const leadSchema = {
     source: { type: 'string' },
     stageId: { type: 'string' },
   },
-  required: ['id', 'name', 'pipelineId', 'source', 'stageId'],
+  required: ['name', 'source'],
   type: 'object',
 } as const;
 
@@ -140,12 +140,15 @@ export const openApiSpecification = {
     },
     '/v1/leads/bulk': {
       patch: {
+        description:
+          'Moves leads to a stage. Without pipelineId every lead must already share one pipeline; with pipelineId the whole batch moves to that pipeline.',
         requestBody: {
           content: {
             'application/json': {
               schema: {
                 properties: {
                   ids: { items: { type: 'string' }, type: 'array' },
+                  pipelineId: { type: 'string' },
                   stageId: { type: 'string' },
                 },
                 required: ['ids', 'stageId'],
@@ -156,7 +159,7 @@ export const openApiSpecification = {
           required: true,
         },
         responses: {
-          '200': { description: 'Moved' },
+          '200': { description: 'Moved; each lead records a “moved” activity' },
           '404': { description: 'not_found' },
           '422': { description: 'invalid_stage or validation_error' },
         },
@@ -217,7 +220,7 @@ export const openApiSpecification = {
       },
       patch: {
         description:
-          'Partial update. `email`, `firstName`, and `lastName` accept `null` to clear; `customFields` replaces the JSON document.',
+          'Partial update. `email`, `firstName`, and `lastName` accept `null` to clear; `customFields` replaces the JSON document. Changing `pipelineId` moves the lead, and an omitted `stageId` resolves to the target pipeline initial stage; each move is recorded as a `moved` activity.',
         parameters: [
           {
             in: 'path',
@@ -227,7 +230,27 @@ export const openApiSpecification = {
           },
         ],
         requestBody: {
-          content: { 'application/json': { schema: leadSchema } },
+          content: {
+            'application/json': {
+              schema: {
+                properties: {
+                  customFields: {
+                    additionalProperties: true,
+                    type: 'object',
+                  },
+                  email: { type: ['string', 'null'] },
+                  estimatedValue: { type: ['number', 'null'] },
+                  firstName: { type: ['string', 'null'] },
+                  lastName: { type: ['string', 'null'] },
+                  name: { type: 'string' },
+                  pipelineId: { type: 'string' },
+                  source: { type: 'string' },
+                  stageId: { type: 'string' },
+                },
+                type: 'object',
+              },
+            },
+          },
           required: true,
         },
         responses: {

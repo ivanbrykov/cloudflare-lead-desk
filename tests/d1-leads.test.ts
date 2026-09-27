@@ -341,7 +341,12 @@ test('leads can be created, updated, moved, deleted, and annotated', async () =>
     });
     expect(activity.status, JSON.stringify(activity)).toBe(201);
     const activities = await fx.api(`/v1/leads/${lead.id}/activities`);
-    expect(activities.json.data).toHaveLength(1);
+    // The earlier stage move recorded a `moved` activity, then the note.
+    expect(
+      (activities.json.data as Array<{ kind: string }>)
+        .map((item) => item.kind)
+        .toSorted(),
+    ).toEqual(['moved', 'note']);
 
     const deleted = await fx.api('/v1/leads/bulk-delete', 'POST', {
       ids: [lead.id],
@@ -432,6 +437,126 @@ test('manual creation honors the selected pipeline and its initial stage', async
     });
     expect(foreign.status, JSON.stringify(foreign)).toBe(422);
     expect(foreign.json).toMatchObject({ code: 'invalid_stage' });
+  } finally {
+    await fx.dispose();
+  }
+});
+
+test('a lead can move between pipelines and records the move', async () => {
+  const fx = await startFixture();
+  try {
+    const pipelineResponse = await fx.api('/v1/pipelines', 'POST', {
+      name: 'Move target',
+    });
+    expect(pipelineResponse.status, JSON.stringify(pipelineResponse)).toBe(201);
+    const target = pipelineResponse.json.data as {
+      id: string;
+      stages: Array<{ id: string; name: string }>;
+    };
+    const initialStage = target.stages[0];
+    if (initialStage === undefined) {
+      throw new Error('expected a seeded stage');
+    }
+
+    const created = await fx.api('/v1/leads', 'POST', {
+      email: 'move@example.test',
+      name: 'Movable',
+      source: 'Manual entry',
+    });
+    expect(created.status).toBe(201);
+    const lead = created.json.data as {
+      id: string;
+      pipelineId: string;
+      stageId: string;
+    };
+
+    // Pipeline-only move resolves to the target pipeline's initial stage.
+    const moved = await fx.api(`/v1/leads/${lead.id}`, 'PATCH', {
+      pipelineId: target.id,
+    });
+    expect(moved.status, JSON.stringify(moved)).toBe(200);
+    expect(moved.json.data).toMatchObject({
+      pipelineId: target.id,
+      stageId: initialStage.id,
+    });
+
+    const activities = await fx.api(`/v1/leads/${lead.id}/activities`);
+    const movedActivity = (
+      activities.json.data as Array<{ body: string; kind: string }>
+    ).find((item) => item.kind === 'moved');
+    expect(movedActivity?.body).toContain('Move target');
+    expect(movedActivity?.body).toContain('New inquiry');
+
+    // Archived pipelines cannot be move targets.
+    await fx.api(`/v1/pipelines/${target.id}`, 'PATCH', { archived: true });
+    const denied = await fx.api('/v1/leads/bulk', 'PATCH', {
+      ids: [lead.id],
+      pipelineId: target.id,
+      stageId: initialStage.id,
+    });
+    expect(denied.status, JSON.stringify(denied)).toBe(422);
+    expect(denied.json).toMatchObject({ code: 'invalid_stage' });
+  } finally {
+    await fx.dispose();
+  }
+});
+
+test('bulk move targets another pipeline and refuses mixed pipelines', async () => {
+  const fx = await startFixture();
+  try {
+    const pipelineResponse = await fx.api('/v1/pipelines', 'POST', {
+      name: 'Batch target',
+    });
+    const target = pipelineResponse.json.data as {
+      id: string;
+      stages: Array<{ id: string; name: string }>;
+    };
+    const secondStageResponse = await fx.api(
+      `/v1/pipelines/${target.id}/stages`,
+      'POST',
+      { color: 'amber', name: 'Second' },
+    );
+    const secondStage = secondStageResponse.json.data as { id: string };
+
+    const first = await fx.api('/v1/leads', 'POST', {
+      email: 'batch1@example.test',
+      name: 'Batch 1',
+      source: 'Manual entry',
+    });
+    const second = await fx.api('/v1/leads', 'POST', {
+      email: 'batch2@example.test',
+      name: 'Batch 2',
+      source: 'Manual entry',
+    });
+    const ids = [
+      (first.json.data as { id: string }).id,
+      (second.json.data as { id: string }).id,
+    ];
+
+    // Move one lead to the target pipeline: the batch is now mixed.
+    await fx.api(`/v1/leads/${ids[1]}`, 'PATCH', { pipelineId: target.id });
+
+    // A stage-only bulk move cannot span two pipelines.
+    const mixed = await fx.api('/v1/leads/bulk', 'PATCH', {
+      ids,
+      stageId: DEFAULT_STAGE_ID,
+    });
+    expect(mixed.status, JSON.stringify(mixed)).toBe(422);
+    expect(mixed.json).toMatchObject({ code: 'invalid_stage' });
+
+    const moved = await fx.api('/v1/leads/bulk', 'PATCH', {
+      ids,
+      pipelineId: target.id,
+      stageId: secondStage.id,
+    });
+    expect(moved.status, JSON.stringify(moved)).toBe(200);
+    expect(moved.json.data).toMatchObject({ moved: 2 });
+
+    const list = await fx.api(`/v1/leads?pipelineId=${target.id}`);
+    const rows = list.json.data as Array<{ id: string; stageId: string }>;
+    for (const id of ids) {
+      expect(rows.find((row) => row.id === id)?.stageId).toBe(secondStage.id);
+    }
   } finally {
     await fx.dispose();
   }

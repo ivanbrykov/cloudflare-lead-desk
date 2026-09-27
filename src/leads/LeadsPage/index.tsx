@@ -41,6 +41,7 @@ export const LeadsPage = () => {
   const [searchDraft, setSearchDraft] = useState('');
   const [selected, setSelected] = useState<string[]>([]);
   const [bulkStageId, setBulkStageId] = useState('');
+  const [bulkPipelineId, setBulkPipelineId] = useState('');
   const [showCreate, setShowCreate] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
@@ -49,19 +50,29 @@ export const LeadsPage = () => {
     queryKey: ['pipelines'],
   });
   const selectablePipelines = pipelineOptions(pipelines.data ?? []);
+  const activePipelines = selectablePipelines.filter(
+    (item) => item.archivedAt === null,
+  );
   const defaultPipelineId = defaultPipelineIdFor(selectablePipelines);
-  const effectivePipelineId = pipelineId ?? defaultPipelineId;
-  const pipeline = selectablePipelines.find(
-    (item) => item.id === effectivePipelineId,
+  // Null means all pipelines: the Leads page is a global inbox by default.
+  const pipeline = selectablePipelines.find((item) => item.id === pipelineId);
+  const stagesByPipeline = new Map(
+    selectablePipelines.map((item) => [item.id, item.stages]),
+  );
+  const stageById = new Map(
+    selectablePipelines.flatMap((item) =>
+      item.stages.map((stage) => [
+        stage.id,
+        { name: stage.name, pipelineName: item.name },
+      ]),
+    ),
   );
 
   const counts = useQuery({
-    enabled: Boolean(effectivePipelineId),
+    enabled: pipelineId !== null,
     queryFn: () =>
-      request<StageCount[]>(
-        `/v1/leads/stage-counts?pipelineId=${effectivePipelineId}`,
-      ),
-    queryKey: ['lead-stage-counts', effectivePipelineId],
+      request<StageCount[]>(`/v1/leads/stage-counts?pipelineId=${pipelineId}`),
+    queryKey: ['lead-stage-counts', pipelineId],
   });
   const countByStage = new Map(
     (counts.data ?? []).map((entry) => [entry.stageId, entry.count]),
@@ -72,13 +83,12 @@ export const LeadsPage = () => {
   );
 
   const leads = useInfiniteQuery({
-    enabled: Boolean(effectivePipelineId),
     getNextPageParam: (lastPage: LeadPage) => lastPage.nextCursor ?? undefined,
     initialPageParam: undefined as string | undefined,
     queryFn: ({ pageParam }) => {
       const parameters = new URLSearchParams();
-      if (effectivePipelineId) {
-        parameters.set('pipelineId', effectivePipelineId);
+      if (pipelineId !== null) {
+        parameters.set('pipelineId', pipelineId);
       }
 
       if (stageId) {
@@ -95,7 +105,7 @@ export const LeadsPage = () => {
 
       return requestBody<LeadPage>(`/v1/leads?${parameters.toString()}`);
     },
-    queryKey: ['leads', effectivePipelineId, stageId, search],
+    queryKey: ['leads', pipelineId, stageId, search],
   });
   const rows = leads.data?.pages.flatMap((page) => page.data) ?? [];
 
@@ -104,20 +114,25 @@ export const LeadsPage = () => {
     void queryClient.invalidateQueries({ queryKey: ['lead-stage-counts'] });
   };
 
-  const stageName = (target: string) =>
-    pipeline?.stages.find((stage) => stage.id === target)?.name ?? 'stage';
+  const stageName = (target: string) => stageById.get(target)?.name ?? 'stage';
 
   const moveSelected = useMutation({
-    mutationFn: (target: string) =>
+    mutationFn: (target: { pipelineId: string; stageId: string }) =>
       request('/v1/leads/bulk', {
-        body: JSON.stringify({ ids: selected, stageId: target }),
+        body: JSON.stringify({
+          ids: selected,
+          pipelineId: target.pipelineId,
+          stageId: target.stageId,
+        }),
         method: 'PATCH',
       }),
     onSuccess: (_data, target) => {
       toast.success(
-        `${selected.length} ${selected.length === 1 ? 'lead' : 'leads'} moved to ${stageName(target)}`,
+        `${selected.length} ${selected.length === 1 ? 'lead' : 'leads'} moved to ${stageName(target.stageId)}`,
       );
       setSelected([]);
+      setBulkPipelineId('');
+      setBulkStageId('');
       invalidate();
     },
   });
@@ -175,15 +190,15 @@ export const LeadsPage = () => {
               className={selectClass}
               disabled={selectablePipelines.length === 0}
               onChange={(event) => {
-                setPipelineId(event.target.value);
+                setPipelineId(
+                  event.target.value === '' ? null : event.target.value,
+                );
                 setStageId(null);
                 setSelected([]);
               }}
-              value={effectivePipelineId ?? ''}
+              value={pipelineId ?? ''}
             >
-              {selectablePipelines.length === 0 && (
-                <option value="">No pipelines</option>
-              )}
+              <option value="">All pipelines</option>
               {selectablePipelines.map((item) => (
                 <option
                   key={item.id}
@@ -218,29 +233,31 @@ export const LeadsPage = () => {
               <Search size={16} />
             </Button>
           </form>
-          <div className="flex flex-wrap items-center gap-1">
-            <StageChip
-              active={stageId === null}
-              count={allCount}
-              label="All"
-              onClick={() => {
-                setStageId(null);
-                setSelected([]);
-              }}
-            />
-            {pipeline?.stages.map((stage) => (
+          {pipeline && (
+            <div className="flex flex-wrap items-center gap-1">
               <StageChip
-                active={stageId === stage.id}
-                count={countByStage.get(stage.id) ?? 0}
-                key={stage.id}
-                label={stage.name}
+                active={stageId === null}
+                count={allCount}
+                label="All"
                 onClick={() => {
-                  setStageId(stage.id);
+                  setStageId(null);
                   setSelected([]);
                 }}
               />
-            ))}
-          </div>
+              {pipeline.stages.map((stage) => (
+                <StageChip
+                  active={stageId === stage.id}
+                  count={countByStage.get(stage.id) ?? 0}
+                  key={stage.id}
+                  label={stage.name}
+                  onClick={() => {
+                    setStageId(stage.id);
+                    setSelected([]);
+                  }}
+                />
+              ))}
+            </div>
+          )}
         </div>
 
         {selected.length > 0 && (
@@ -250,11 +267,30 @@ export const LeadsPage = () => {
             </span>
             <select
               className={selectClass}
+              onChange={(event) => {
+                setBulkPipelineId(event.target.value);
+                setBulkStageId('');
+              }}
+              value={bulkPipelineId}
+            >
+              <option value="">Pipeline…</option>
+              {activePipelines.map((item) => (
+                <option
+                  key={item.id}
+                  value={item.id}
+                >
+                  {item.name}
+                </option>
+              ))}
+            </select>
+            <select
+              className={selectClass}
+              disabled={bulkPipelineId === ''}
               onChange={(event) => setBulkStageId(event.target.value)}
               value={bulkStageId}
             >
-              <option value="">Move to…</option>
-              {pipeline?.stages.map((stage) => (
+              <option value="">Stage…</option>
+              {(stagesByPipeline.get(bulkPipelineId) ?? []).map((stage) => (
                 <option
                   key={stage.id}
                   value={stage.id}
@@ -264,8 +300,17 @@ export const LeadsPage = () => {
               ))}
             </select>
             <Button
-              disabled={!bulkStageId || moveSelected.isPending}
-              onClick={() => moveSelected.mutate(bulkStageId)}
+              disabled={
+                bulkPipelineId === '' ||
+                bulkStageId === '' ||
+                moveSelected.isPending
+              }
+              onClick={() =>
+                moveSelected.mutate({
+                  pipelineId: bulkPipelineId,
+                  stageId: bulkStageId,
+                })
+              }
               tone="secondary"
             >
               Move
@@ -302,6 +347,7 @@ export const LeadsPage = () => {
                     />
                   </th>
                   <th className="px-4 py-3">Lead</th>
+                  <th className="px-4 py-3">Pipeline</th>
                   <th className="px-4 py-3">Stage</th>
                   <th className="px-4 py-3">Source</th>
                   <th className="px-4 py-3">Value</th>
@@ -346,6 +392,9 @@ export const LeadsPage = () => {
                         <p className="text-xs text-slate-500">{lead.email}</p>
                       )}
                     </td>
+                    <td className="px-4 py-3 text-slate-400">
+                      {stageById.get(lead.stageId)?.pipelineName ?? '—'}
+                    </td>
                     <td className="px-4 py-3">
                       <select
                         className={selectClass}
@@ -357,14 +406,16 @@ export const LeadsPage = () => {
                         }
                         value={lead.stageId}
                       >
-                        {pipeline?.stages.map((stage) => (
-                          <option
-                            key={stage.id}
-                            value={stage.id}
-                          >
-                            {stage.name}
-                          </option>
-                        ))}
+                        {(stagesByPipeline.get(lead.pipelineId) ?? []).map(
+                          (stage) => (
+                            <option
+                              key={stage.id}
+                              value={stage.id}
+                            >
+                              {stage.name}
+                            </option>
+                          ),
+                        )}
                       </select>
                     </td>
                     <td className="px-4 py-3 text-slate-400">{lead.source}</td>
@@ -402,8 +453,9 @@ export const LeadsPage = () => {
       </div>
       {showCreate && (
         <CreateLeadDialog
+          defaultPipelineId={pipelineId ?? defaultPipelineId}
           onOpenChange={setShowCreate}
-          pipeline={pipeline}
+          pipelines={activePipelines}
         />
       )}
       <ConfirmDialog

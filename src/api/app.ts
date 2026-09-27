@@ -585,10 +585,15 @@ const createAppWithAuth = (environment: Env, getAuth: AuthForRequest) =>
     )
     .patch(
       '/v1/leads/bulk',
-      async ({ body, request }) => {
+      async ({ adminEmail, body, request }) => {
         const result = await run(
           request,
-          moveLeadsCommand(environment, body.ids, body.stageId),
+          moveLeadsCommand(
+            environment,
+            body.ids,
+            { pipelineId: body.pipelineId, stageId: body.stageId },
+            adminEmail,
+          ),
         );
         if ('error' in result) {
           return result.error;
@@ -599,7 +604,7 @@ const createAppWithAuth = (environment: Env, getAuth: AuthForRequest) =>
             return errorResponse(
               422,
               'invalid_stage',
-              "The selected stage does not belong to these leads' pipeline.",
+              'The selected stage is not valid for these leads.',
             );
           case 'moved':
             return { data: { moved: body.ids.length } };
@@ -630,10 +635,10 @@ const createAppWithAuth = (environment: Env, getAuth: AuthForRequest) =>
     )
     .patch(
       '/v1/leads/:id',
-      async ({ body, params, request }) => {
+      async ({ adminEmail, body, params, request }) => {
         const result = await run(
           request,
-          updateLeadCommand(environment, params.id, body),
+          updateLeadCommand(environment, params.id, body, adminEmail),
         );
         if ('error' in result) {
           return result.error;
@@ -643,7 +648,7 @@ const createAppWithAuth = (environment: Env, getAuth: AuthForRequest) =>
           return errorResponse(
             422,
             'invalid_stage',
-            "The selected stage does not belong to this lead's pipeline.",
+            'The selected pipeline or stage is not valid for this lead.',
           );
         }
 

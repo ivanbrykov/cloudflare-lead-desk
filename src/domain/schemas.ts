@@ -209,6 +209,7 @@ export const UpdateLeadRequest = Schema.Struct({
   firstName: Schema.optional(Schema.NullOr(NonEmptyString)),
   lastName: Schema.optional(Schema.NullOr(NonEmptyString)),
   name: Schema.optional(NonEmptyString),
+  pipelineId: Schema.optional(RecordId),
   source: Schema.optional(NonEmptyString),
   stageId: Schema.optional(RecordId),
 });
@@ -216,6 +217,7 @@ export type UpdateLeadInput = Schema.Schema.Type<typeof UpdateLeadRequest>;
 
 export const BulkMoveLeadsRequest = Schema.Struct({
   ids: Schema.Array(RecordId).pipe(Schema.minItems(1), Schema.maxItems(100)),
+  pipelineId: Schema.optional(RecordId),
   stageId: RecordId,
 });
 export type BulkMoveLeadsInput = Schema.Schema.Type<

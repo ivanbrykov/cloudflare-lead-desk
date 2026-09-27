@@ -140,13 +140,15 @@ export const updateLeadCommand = (
   environment: Env,
   leadId: string,
   input: UpdateLeadInput,
-) => persist(() => updateLead(environment, leadId, input));
+  actorEmail: null | string,
+) => persist(() => updateLead(environment, leadId, input, actorEmail));
 
 export const moveLeadsCommand = (
   environment: Env,
   ids: readonly string[],
-  stageId: string,
-) => persist(() => moveLeads(environment, ids, stageId));
+  target: { pipelineId?: string; stageId: string },
+  actorEmail: null | string,
+) => persist(() => moveLeads(environment, ids, target, actorEmail));
 
 export const softDeleteLeadsCommand = (
   environment: Env,

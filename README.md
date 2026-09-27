@@ -298,10 +298,14 @@ by `id DESC`:
 non-empty `name` defaults from the person's name or email, `stageId` must
 belong to `pipelineId`, and `estimatedValue` must be a non-negative finite
 number. `PATCH /v1/leads/:id` updates one lead; `email`, `firstName`, and
-`lastName` accept `null` to clear, and `stageId` must belong to the lead's
-pipeline. Unknown or soft-deleted ids return `404 not_found`.
+`lastName` accept `null` to clear. Setting `pipelineId` moves the lead, and an
+omitted `stageId` resolves to the target pipeline's initial stage; each move is
+recorded as a `moved` activity. Unknown or soft-deleted ids return
+`404 not_found`.
 
-`PATCH /v1/leads/bulk` moves up to 100 ids to one stage. `POST
+`PATCH /v1/leads/bulk` moves up to 100 ids to one stage. Without `pipelineId`
+the selected leads must already share a pipeline; with `pipelineId` the whole
+batch moves across pipelines (targets must be active). `POST
 /v1/leads/bulk-delete` soft-deletes up to 100 ids: rows stay in D1 with
 `deletedAt` set, disappear from `GET /v1/leads` and stage counts, and keep
 their activity history. `GET /v1/leads/stage-counts` returns live lead counts
@@ -341,7 +345,9 @@ initial "New inquiry" stage.
   stage is refused (`last_stage`), and a stage with live leads is refused with
   the count (`stage_in_use`).
 
-Staff manage all of this in **Settings → Pipelines**.
+Staff manage all of this in **Settings → Pipelines**. The Leads workbench shows
+every pipeline by default and reveals the stage filter chips once a pipeline is
+selected; bulk move targets a pipeline and stage pair.
 
 
 ## Observability

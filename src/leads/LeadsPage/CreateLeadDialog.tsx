@@ -10,13 +10,22 @@ import { useState } from 'react';
 import { toast } from 'sonner';
 
 export const CreateLeadDialog = ({
+  defaultPipelineId,
   onOpenChange,
-  pipeline,
+  pipelines,
 }: {
+  readonly defaultPipelineId?: string;
   readonly onOpenChange: (open: boolean) => void;
-  readonly pipeline: PipelineView | undefined;
+  readonly pipelines: PipelineView[];
 }) => {
   const queryClient = useQueryClient();
+  const [pipelineId, setPipelineId] = useState(
+    defaultPipelineId ??
+      pipelines.find((item) => item.stages.length > 0)?.id ??
+      pipelines[0]?.id ??
+      '',
+  );
+  const pipeline = pipelines.find((item) => item.id === pipelineId);
   const [values, setValues] = useState({
     email: '',
     estimatedValue: '',
@@ -38,7 +47,7 @@ export const CreateLeadDialog = ({
           firstName: values.firstName.trim() || undefined,
           lastName: values.lastName.trim() || undefined,
           name: values.name.trim() || undefined,
-          pipelineId: pipeline?.id,
+          pipelineId: pipelineId || undefined,
           source: values.source.trim() || undefined,
           stageId: values.stageId || undefined,
         }),
@@ -65,16 +74,33 @@ export const CreateLeadDialog = ({
           create.mutate();
         }}
       >
-        <p className="text-xs text-slate-500">
-          {pipeline ? (
-            <>
-              Creating in{' '}
-              <span className="text-slate-300">{pipeline.name}</span>
-            </>
-          ) : (
-            'No pipeline available. Create one in Settings → Pipelines.'
-          )}
-        </p>
+        <Field label="Pipeline">
+          <select
+            className={selectClass}
+            disabled={pipelines.length === 0}
+            onChange={(event) => {
+              const next = pipelines.find(
+                (item) => item.id === event.target.value,
+              );
+              setPipelineId(event.target.value);
+              setValues({
+                ...values,
+                stageId: next?.stages[0]?.id ?? '',
+              });
+            }}
+            value={pipelineId}
+          >
+            {pipelines.length === 0 && <option value="">No pipelines</option>}
+            {pipelines.map((item) => (
+              <option
+                key={item.id}
+                value={item.id}
+              >
+                {item.name}
+              </option>
+            ))}
+          </select>
+        </Field>
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label="First name">
             <input
@@ -150,7 +176,7 @@ export const CreateLeadDialog = ({
             value={values.stageId}
           >
             {(!pipeline || pipeline.stages.length === 0) && (
-              <option value="">{pipeline ? 'No stages' : 'No pipeline'}</option>
+              <option value="">No stages</option>
             )}
             {pipeline?.stages.map((stage) => (
               <option
