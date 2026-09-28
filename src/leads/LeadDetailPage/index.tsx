@@ -38,9 +38,6 @@ export const LeadDetailPage = ({ id }: { readonly id: string }) => {
     queryFn: () => request<PipelineView[]>('/v1/pipelines'),
     queryKey: ['pipelines'],
   });
-  const pipeline = (pipelines.data ?? []).find(
-    (item) => item.id === lead.data?.pipelineId,
-  );
   const [note, setNote] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [draft, setDraft] = useState<null | {
@@ -49,7 +46,9 @@ export const LeadDetailPage = ({ id }: { readonly id: string }) => {
     firstName: string;
     lastName: string;
     name: string;
+    pipelineId: string;
     source: string;
+    stageId: string;
   }>(null);
 
   const record = lead.data;
@@ -63,17 +62,19 @@ export const LeadDetailPage = ({ id }: { readonly id: string }) => {
           firstName: record.firstName ?? '',
           lastName: record.lastName ?? '',
           name: record.name,
+          pipelineId: record.pipelineId,
           source: record.source,
+          stageId: record.stageId,
         }
       : null);
+  const draftPipeline = (pipelines.data ?? []).find(
+    (item) => item.id === currentDraft?.pipelineId,
+  );
 
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: ['lead', id] });
     void queryClient.invalidateQueries({ queryKey: ['leads'] });
   };
-
-  const stageName = (target: string) =>
-    pipeline?.stages.find((stage) => stage.id === target)?.name ?? 'stage';
 
   const save = useMutation({
     mutationFn: () =>
@@ -89,37 +90,15 @@ export const LeadDetailPage = ({ id }: { readonly id: string }) => {
             : undefined,
           lastName: currentDraft ? nullable(currentDraft.lastName) : undefined,
           name: currentDraft?.name.trim() || undefined,
+          pipelineId: currentDraft?.pipelineId,
           source: currentDraft?.source.trim() || undefined,
+          stageId: currentDraft?.stageId,
         }),
         method: 'PATCH',
       }),
     onSuccess: () => {
       setDraft(null);
       toast.success('Lead saved');
-      invalidate();
-    },
-  });
-  const setStage = useMutation({
-    mutationFn: (stageId: string) =>
-      request(`/v1/leads/${id}`, {
-        body: JSON.stringify({ stageId }),
-        method: 'PATCH',
-      }),
-    onSuccess: (_data, stageId) => {
-      toast.success(`Moved to ${stageName(stageId)}`);
-      invalidate();
-    },
-  });
-  const setPipeline = useMutation({
-    mutationFn: (target: string) =>
-      request(`/v1/leads/${id}`, {
-        body: JSON.stringify({ pipelineId: target }),
-        method: 'PATCH',
-      }),
-    onSuccess: (_data, target) => {
-      const name =
-        pipelines.data?.find((item) => item.id === target)?.name ?? 'pipeline';
-      toast.success(`Moved to ${name}`);
       invalidate();
     },
   });
@@ -264,13 +243,23 @@ export const LeadDetailPage = ({ id }: { readonly id: string }) => {
             <Field label="Pipeline">
               <select
                 className={selectClass}
-                onChange={(event) => setPipeline.mutate(event.target.value)}
-                value={record.pipelineId}
+                onChange={(event) => {
+                  const next = (pipelines.data ?? []).find(
+                    (item) => item.id === event.target.value,
+                  );
+                  setDraft({
+                    ...currentDraft,
+                    pipelineId: event.target.value,
+                    stageId: next?.stages[0]?.id ?? currentDraft.stageId,
+                  });
+                }}
+                value={currentDraft.pipelineId}
               >
                 {(pipelines.data ?? [])
                   .filter(
                     (item) =>
-                      item.archivedAt === null || item.id === record.pipelineId,
+                      item.archivedAt === null ||
+                      item.id === currentDraft.pipelineId,
                   )
                   .map((item) => (
                     <option
@@ -286,10 +275,12 @@ export const LeadDetailPage = ({ id }: { readonly id: string }) => {
             <Field label="Stage">
               <select
                 className={selectClass}
-                onChange={(event) => setStage.mutate(event.target.value)}
-                value={record.stageId}
+                onChange={(event) =>
+                  setDraft({ ...currentDraft, stageId: event.target.value })
+                }
+                value={currentDraft.stageId}
               >
-                {pipeline?.stages.map((stage) => (
+                {(draftPipeline?.stages ?? []).map((stage) => (
                   <option
                     key={stage.id}
                     value={stage.id}
