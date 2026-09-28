@@ -90,13 +90,13 @@ export const apiTokens = sqliteTable(
     prefix: text('prefix').notNull(),
     revokedAt: timestampMs('revoked_at'),
     scope: text('scope').notNull().default('intake:write'),
-    // Public tokens are safe to embed, so the value is stored and copyable.
-    // Private tokens are secrets: only the hash is stored.
+    // Browser tokens are safe to embed, so the value is stored and copyable.
+    // API tokens are secrets: only the hash is stored.
     token: text('token').unique(),
     tokenHash: text('token_hash').unique(),
-    type: text('type', { enum: ['private', 'public'] })
+    type: text('type', { enum: ['api', 'browser'] })
       .notNull()
-      .default('private'),
+      .default('api'),
     workspaceId: text('workspace_id')
       .notNull()
       .references(() => workspaces.id),

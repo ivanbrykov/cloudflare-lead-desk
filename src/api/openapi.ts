@@ -261,7 +261,7 @@ export const openApiSpecification = {
     '/v1/public/intakes/{token}': {
       post: {
         description:
-          'The browser-facing intake endpoint. The public token is safe to embed and can only create leads. CORS is enabled; no session or Authorization header is required. An optional Idempotency-Key header makes retries safe. The body is byte-limited to 65,536 bytes like the private route.',
+          'The browser-facing intake endpoint. The browser token is safe to embed and can only create leads. CORS is enabled; no session or Authorization header is required. An optional Idempotency-Key header makes retries safe. The body is byte-limited to 65,536 bytes like the API route.',
         parameters: [
           {
             in: 'path',
@@ -295,7 +295,7 @@ export const openApiSpecification = {
         },
         responses: {
           '201': { description: '{ data: { created: true } }' },
-          '401': { description: 'Missing, unknown, or revoked public token' },
+          '401': { description: 'Missing, unknown, or revoked browser token' },
           '409': { description: 'idempotency_conflict' },
           '413': { description: 'payload_too_large (over 65,536 bytes)' },
           '415': { description: 'unsupported_media_type' },
@@ -307,7 +307,7 @@ export const openApiSpecification = {
     '/v1/tokens': {
       get: {
         responses: { '200': { description: '{ data: [token] }' } },
-        summary: 'List intake tokens (prefixes only)',
+        summary: 'List intake tokens (API prefixes, browser values)',
       },
       post: {
         requestBody: {
@@ -317,7 +317,7 @@ export const openApiSpecification = {
                 properties: {
                   expiresAt: { type: 'string' },
                   name: { type: 'string' },
-                  type: { enum: ['private', 'public'], type: 'string' },
+                  type: { enum: ['api', 'browser'], type: 'string' },
                 },
                 required: ['name'],
                 type: 'object',

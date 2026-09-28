@@ -1,6 +1,6 @@
 /* Lead Desk public intake SDK — v1
  *
- * Embeds a public token in a plain HTML form:
+ * Embeds a browser token in a plain HTML form:
  *
  *   <form data-lead-desk="cld_pub_…">
  *     <input name="email" type="email" required>

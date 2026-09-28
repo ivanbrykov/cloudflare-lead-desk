@@ -6,7 +6,7 @@ A self-hosted, Cloudflare-native CRM for teams handling inbound leads. It stores
 
 - Leads, notes, custom fields, and a table work queue.
 - JSON custom fields stored on each lead, with no definition registry.
-- Email + password staff authentication (Better Auth, D1-backed sessions) and revocable private (displayed-once) plus public (embeddable) intake tokens.
+- Email + password staff authentication (Better Auth, D1-backed sessions) and revocable API (displayed-once) plus browser (embeddable) intake tokens.
 - Idempotent, atomic `POST /v1/intakes` capture for websites and other trusted systems.
 
 Companies, tasks, email sync, imports, reporting, workflows, custom objects, and multi-tenancy are deliberately not included yet.
@@ -190,7 +190,7 @@ installer prompts. Deployed configuration stays `ENVIRONMENT=production`.
 
 ## Integration API
 
-Create a **private** intake token in **Settings → Tokens**, then send an
+Create an **API** intake token in **Settings → Tokens**, then send an
 idempotent form submission. One submission creates one lead:
 
 ```sh
@@ -211,8 +211,8 @@ The interactive OpenAPI documentation is available at `/openapi`.
 
 ### Public intake (browser forms)
 
-Create a **public** token in **Settings → Tokens** and embed it in the site.
-Public tokens are safe to expose: they can only create leads through
+Create a **browser** token in **Settings → Tokens** and embed it in the site.
+Browser tokens are safe to expose: they can only create leads through
 `POST /v1/public/intakes/:token`, which answers CORS preflight so a browser can
 post directly. No session or `Authorization` header is required; an optional
 `Idempotency-Key` header makes retries safe.
@@ -241,7 +241,7 @@ soft delete is the spam cleanup.
 ### Browser SDK
 
 The CRM serves a small, dependency-free SDK at `/sdk/v1.js`. Give a form a
-`data-lead-desk` attribute with the public token and the SDK handles the submit:
+`data-lead-desk` attribute with the browser token and the SDK handles the submit:
 
 ```html
 <form data-lead-desk="cld_pub_…">

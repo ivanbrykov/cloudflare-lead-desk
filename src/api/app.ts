@@ -31,8 +31,8 @@ import {
   type Env,
   getLead,
   isBootstrapGrantAvailable,
+  isBrowserIntakeToken,
   isIntakeToken,
-  isPublicIntakeToken,
   listApiTokens,
   listLeadActivities,
   listLeads,
@@ -200,12 +200,12 @@ const createAppWithAuth = (environment: Env, getAuth: AuthForRequest) => {
   const publicIntake = new Elysia({ name: 'public-intake' }).use(cors()).post(
     '/v1/public/intakes/:token',
     async ({ body, params, request }) => {
-      const tokenRecord = await isPublicIntakeToken(environment, params.token);
+      const tokenRecord = await isBrowserIntakeToken(environment, params.token);
       if (!tokenRecord) {
         return errorResponse(
           401,
           'invalid_token',
-          'A valid public intake token is required.',
+          'A valid browser intake token is required.',
         );
       }
 
@@ -583,7 +583,7 @@ const createAppWithAuth = (environment: Env, getAuth: AuthForRequest) => {
             data: await createApiToken(environment, {
               expiresAt: parsed.data.expiresAt,
               name: parsed.data.name,
-              type: parsed.data.type ?? 'private',
+              type: parsed.data.type ?? 'api',
             }),
           },
           { status: 201 },

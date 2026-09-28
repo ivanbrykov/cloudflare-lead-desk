@@ -51,7 +51,7 @@ type Token = {
   prefix: string;
   revokedAt: null | string;
   token: null | string;
-  type: 'private' | 'public';
+  type: 'api' | 'browser';
 };
 
 const navigation = [
@@ -271,7 +271,7 @@ const CreateTokenDialog = ({
   const [formError, setFormError] = useState<null | string>(null);
   const [name, setName] = useState('');
   const [rawToken, setRawToken] = useState<null | string>(null);
-  const [tokenType, setTokenType] = useState<'private' | 'public'>('private');
+  const [tokenType, setTokenType] = useState<'api' | 'browser'>('api');
   // The parent remounts this dialog (via its key) on every open, so state is
   // always fresh: empty form, 90-day default matching the backend, no raw
   // token, and an idle create mutation.
@@ -352,8 +352,8 @@ const CreateTokenDialog = ({
       {rawToken ? (
         <div className="grid gap-4">
           <p className="text-sm text-slate-300">
-            {tokenType === 'public'
-              ? 'Public token created. It is stored, so you can copy it again from the list.'
+            {tokenType === 'browser'
+              ? 'Browser token created. It is stored, so you can copy it again from the list.'
               : 'Token created. It will not be shown again.'}
           </p>
           <code className="block break-all rounded-md border border-slate-700 bg-slate-950 p-3 font-mono text-xs text-slate-100">
@@ -402,17 +402,17 @@ const CreateTokenDialog = ({
               <select
                 onChange={(event) =>
                   setTokenType(
-                    event.target.value === 'public' ? 'public' : 'private',
+                    event.target.value === 'browser' ? 'browser' : 'api',
                   )
                 }
                 value={tokenType}
               >
-                <option value="private">Private — server integrations</option>
-                <option value="public">Public — browser forms</option>
+                <option value="api">API — server integrations</option>
+                <option value="browser">Browser — website forms</option>
               </select>
             </label>
             <p className="text-xs text-slate-500">
-              {tokenType === 'public'
+              {tokenType === 'browser'
                 ? 'Safe to embed in a website; it can only create leads.'
                 : 'Keep it secret; it can call the integration API.'}
             </p>
@@ -509,7 +509,7 @@ const TokensPage = () => {
                   >
                     <td className="px-4 py-3">
                       <p className="font-medium text-slate-100">{token.name}</p>
-                      {token.type === 'public' && token.token !== null ? (
+                      {token.type === 'browser' && token.token !== null ? (
                         <div className="mt-1 flex items-center gap-2">
                           <code
                             className="max-w-72 truncate font-mono text-xs text-slate-500"
@@ -552,12 +552,12 @@ const TokensPage = () => {
                       <span
                         className={cn(
                           'rounded px-2 py-0.5 text-xs',
-                          token.type === 'public'
+                          token.type === 'browser'
                             ? 'bg-cyan-500/15 text-cyan-300'
                             : 'bg-slate-800 text-slate-400',
                         )}
                       >
-                        {token.type === 'public' ? 'Public' : 'Private'}
+                        {token.type === 'browser' ? 'Browser' : 'API'}
                       </span>
                     </td>
                     <td className="px-4 py-3 text-slate-500">

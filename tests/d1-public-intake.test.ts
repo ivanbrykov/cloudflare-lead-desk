@@ -129,10 +129,10 @@ test('public tokens are stored for copying while private tokens stay hidden', as
   try {
     const publicToken = await createToken(fx, {
       name: 'Website',
-      type: 'public',
+      type: 'browser',
     });
     expect(String(publicToken.token)).toMatch(/^cld_pub_[0-9a-f]{64}$/u);
-    expect(publicToken.scope).toBe('public:intake');
+    expect(publicToken.scope).toBe('intake:write');
 
     const privateToken = await createToken(fx, { name: 'Server' });
     expect(String(privateToken.token)).toMatch(/^cld_[0-9a-f]{64}$/u);
@@ -145,9 +145,9 @@ test('public tokens are stored for copying while private tokens stay hidden', as
     const publicRow = rows.find((row) => row.id === publicToken.id);
     const privateRow = rows.find((row) => row.id === privateToken.id);
     expect(publicRow?.token).toBe(publicToken.token);
-    expect(publicRow?.type).toBe('public');
+    expect(publicRow?.type).toBe('browser');
     expect(privateRow?.token).toBeNull();
-    expect(privateRow?.type).toBe('private');
+    expect(privateRow?.type).toBe('api');
     expect(JSON.stringify(rows)).not.toContain('token_hash');
   } finally {
     await fx.dispose();
@@ -157,7 +157,7 @@ test('public tokens are stored for copying while private tokens stay hidden', as
 test('a public token creates a lead with provenance and no session', async () => {
   const fx = await startFixture();
   try {
-    const token = await createToken(fx, { name: 'Website', type: 'public' });
+    const token = await createToken(fx, { name: 'Website', type: 'browser' });
     const response = await fx.request(`/v1/public/intakes/${token.token}`, {
       body: {
         customFields: { form: 'pricing', plan: 'pro' },
@@ -217,7 +217,7 @@ test('a private token cannot use the public route, and revocation stops public t
 
     const publicToken = await createToken(fx, {
       name: 'Website',
-      type: 'public',
+      type: 'browser',
     });
     const revoke = await fx.request(`/v1/tokens/${publicToken.id}`, {
       method: 'DELETE',
@@ -245,7 +245,7 @@ test('a private token cannot use the public route, and revocation stops public t
 test('the public route answers CORS preflight and marks responses', async () => {
   const fx = await startFixture();
   try {
-    const token = await createToken(fx, { name: 'Website', type: 'public' });
+    const token = await createToken(fx, { name: 'Website', type: 'browser' });
     const preflight = await fx.request(`/v1/public/intakes/${token.token}`, {
       headers: {
         'Access-Control-Request-Headers': 'content-type,idempotency-key',

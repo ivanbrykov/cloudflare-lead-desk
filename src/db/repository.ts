@@ -272,9 +272,9 @@ const TOKEN_DEFAULT_TTL_MS = 90 * 86_400_000;
 
 export const createApiToken = async (
   environment: Env,
-  input: { expiresAt?: string; name: string; type: 'private' | 'public' },
+  input: { expiresAt?: string; name: string; type: 'api' | 'browser' },
 ) => {
-  const raw = randomToken(input.type === 'public' ? 'cld_pub_' : 'cld_');
+  const raw = randomToken(input.type === 'browser' ? 'cld_pub_' : 'cld_');
   const record = {
     createdAt: now(),
     expiresAt:
@@ -284,15 +284,15 @@ export const createApiToken = async (
     id: id(),
     name: input.name,
     prefix: raw.slice(0, 12),
-    scope: input.type === 'public' ? 'public:intake' : 'intake:write',
-    token: input.type === 'public' ? raw : null,
-    tokenHash: input.type === 'private' ? await hashToken(raw) : null,
+    scope: 'intake:write',
+    token: input.type === 'browser' ? raw : null,
+    tokenHash: input.type === 'api' ? await hashToken(raw) : null,
     type: input.type,
     workspaceId: DEFAULT_WORKSPACE_ID,
   };
   await getDatabase(environment).insert(apiTokens).values(record);
-  // Private tokens are shown exactly once; public tokens are stored so they
-  // can be copied into a site again. The hash never leaves the server.
+  // API tokens are shown exactly once; browser tokens are stored so they can
+  // be copied into a site again. The hash never leaves the server.
   return {
     createdAt: record.createdAt,
     expiresAt: record.expiresAt,
@@ -661,7 +661,7 @@ export const isIntakeToken = async (
     .where(
       and(
         eq(apiTokens.tokenHash, tokenHash),
-        eq(apiTokens.type, 'private'),
+        eq(apiTokens.type, 'api'),
         eq(apiTokens.scope, 'intake:write'),
         isNull(apiTokens.revokedAt),
         or(isNull(apiTokens.expiresAt), gt(apiTokens.expiresAt, now())),
@@ -681,12 +681,12 @@ export const isIntakeToken = async (
 };
 
 /**
- * A public intake token is write-only: it can create a lead through
+ * A browser intake token is write-only: it can create a lead through
  * `/v1/public/intakes/:token` and nothing else. Returns the token row
  * (id used as lead provenance) or null. The value is stored verbatim
- * because public tokens are safe to embed and copy.
+ * because browser tokens are safe to embed and copy.
  */
-export const isPublicIntakeToken = async (
+export const isBrowserIntakeToken = async (
   environment: Env,
   token: string,
 ): Promise<null | { id: string }> => {
@@ -696,7 +696,7 @@ export const isPublicIntakeToken = async (
     .where(
       and(
         eq(apiTokens.token, token),
-        eq(apiTokens.type, 'public'),
+        eq(apiTokens.type, 'browser'),
         isNull(apiTokens.revokedAt),
         or(isNull(apiTokens.expiresAt), gt(apiTokens.expiresAt, now())),
       ),
