@@ -20,6 +20,20 @@ export default defineConfig(
   ]),
   ...auto,
   {
+    // The public SDK is plain browser JavaScript without a build step.
+    files: ['public/**/*.js'],
+    languageOptions: {
+      globals: {
+        CustomEvent: 'readonly',
+        document: 'readonly',
+        fetch: 'readonly',
+        FormData: 'readonly',
+        URL: 'readonly',
+        window: 'readonly',
+      },
+    },
+  },
+  {
     // Use import-x's modern resolver API: the legacy "node" resolver fallback
     // resolves <packageDir>/node, which under pnpm loads a dependency package's
     // node/ subdirectory (e.g. lightningcss) and crashes import/no-cycle

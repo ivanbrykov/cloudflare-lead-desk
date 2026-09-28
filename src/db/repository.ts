@@ -2,31 +2,20 @@ import {
   activities,
   apiTokens,
   bootstrapState,
-  contacts,
-  customFieldDefinitions,
-  customFieldValues,
   idempotencyKeys,
-  opportunities,
-  pipelines,
+  leads,
   session,
   staffInvites,
-  stages,
   user,
 } from './schema';
 import { type RegistrationGrant } from '@/auth/registration-repository';
+import { type IntakeResponse, leadDisplayName } from '@/domain/intake';
+import { encodeKeysetCursor, type Keyset } from '@/domain/pagination';
 import {
-  type CustomFieldWrite,
-  type NormalizedFieldValue,
-} from '@/domain/custom-fields';
-import { type IntakeResponse } from '@/domain/intake';
-import { type ContactKeyset, encodeContactCursor } from '@/domain/pagination';
-import {
-  type ContactInput,
-  type CreateCustomField,
-  type CreateOpportunityInput,
-  type FieldEntity,
+  type CreateLeadInput,
   type IntakeInput,
   normalizeEmail,
+  type UpdateLeadInput,
 } from '@/domain/schemas';
 import {
   and,
@@ -58,8 +47,6 @@ export type Env = {
 };
 
 export const DEFAULT_WORKSPACE_ID = '01ARZ3NDEKTSV4RRFFQ69G5FAV';
-export const DEFAULT_PIPELINE_ID = '01ARZ3NDEKTSV4RRFFQ69G5FAW';
-export const DEFAULT_STAGE_ID = '01ARZ3NDEKTSV4RRFFQ69G5FAX';
 
 const ULID_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 
@@ -78,101 +65,7 @@ const id = (): string => {
   );
 };
 
-export type ContactRecord = {
-  createdAt: Date;
-  email: null | string;
-  firstName: null | string;
-  id: string;
-  lastName: null | string;
-  updatedAt: Date;
-};
-
-export type FieldDefinitionRecord = {
-  archivedAt: Date | null;
-  entityType: FieldEntity;
-  id: string;
-  key: string;
-  label: string;
-  options: string[];
-  required: boolean;
-  type: 'boolean' | 'date' | 'number' | 'select' | 'text';
-};
-
-export type OpportunityRecord = {
-  contact: ContactRecord;
-  createdAt: Date;
-  deletedAt: Date | null;
-  estimatedValue: null | number;
-  id: string;
-  name: string;
-  pipelineId: string;
-  source: string;
-  stageId: string;
-  updatedAt: Date;
-};
-
 const getDatabase = (environment: Env) => drizzle(environment.DB);
-
-export const getFieldDefinitions = async (
-  environment: Env,
-  entityType: FieldEntity,
-  includeArchived = false,
-): Promise<FieldDefinitionRecord[]> => {
-  const database = getDatabase(environment);
-  const predicates = [
-    eq(customFieldDefinitions.workspaceId, DEFAULT_WORKSPACE_ID),
-    eq(customFieldDefinitions.entityType, entityType),
-  ];
-  if (!includeArchived) {
-    predicates.push(isNull(customFieldDefinitions.archivedAt));
-  }
-
-  const rows = await database
-    .select()
-    .from(customFieldDefinitions)
-    .where(and(...predicates))
-    .orderBy(asc(customFieldDefinitions.label));
-
-  return rows.map((row) => ({
-    archivedAt: row.archivedAt,
-    entityType: row.entityType as FieldEntity,
-    id: row.id,
-    key: row.key,
-    label: row.label,
-    options: row.options,
-    required: row.required,
-    type: row.type as FieldDefinitionRecord['type'],
-  }));
-};
-
-/**
- * Reads expose active field definitions only. Values stored under archived
- * definitions remain in `custom_field_values` for historical export but are
- * excluded from editable payloads, so an archived value never blocks edits.
- */
-const decodeFieldValue = (row: {
-  type: string;
-  valueBoolean: null | number;
-  valueDate: null | string;
-  valueNumber: null | number;
-  valueText: null | string;
-}): unknown =>
-  // Boolean fields are stored as 0/1 in SQLite; decode by definition type
-  // so false round-trips as a real JSON boolean.
-  row.type === 'boolean'
-    ? Boolean(row.valueBoolean)
-    : row.type === 'number'
-      ? row.valueNumber
-      : row.type === 'date'
-        ? row.valueDate
-        : row.valueText;
-
-/**
- * D1 binds at most 100 parameters per statement. Each chunked field query
- * binds the entity type once plus one parameter per entity id, so ids per
- * chunk stay under that budget (99 ids + 1 type = 100 bindings).
- */
-const FIELD_VALUE_CHUNK_SIZE = 99;
 
 const escapeLike = (value: string) =>
   value.replaceAll('%', '\\%').replaceAll('_', '\\_');
@@ -181,204 +74,147 @@ const escapeLike = (value: string) =>
  * Literal substring match on first name, last name, or email; `%` and `_`
  * in the query are escaped so they never act as LIKE wildcards.
  */
-const contactSearchPredicate = (query: string) => {
-  const pattern = `%${escapeLike(query)}%`;
-  return sql`(${contacts.firstName} LIKE ${pattern} ESCAPE '\\' OR ${contacts.lastName} LIKE ${pattern} ESCAPE '\\' OR ${contacts.email} LIKE ${pattern} ESCAPE '\\')`;
-};
-
-/**
- * Batched replacement for the per-record field query: fetches custom-field
- * values for every requested entity id in chunked IN (...) queries against
- * the active definitions, with the same decode rules as single-entity
- * reads. List endpoints call this once per page instead of once per row.
- */
-export const valuesForEntities = async (
-  environment: Env,
-  entityType: FieldEntity,
-  entityIds: string[],
-): Promise<Map<string, Record<string, unknown>>> => {
-  const byEntity = new Map<string, Record<string, unknown>>();
-  const ids = [...new Set(entityIds)];
-  if (ids.length === 0) {
-    return byEntity;
-  }
-
-  const database = getDatabase(environment);
-  const chunks: string[][] = [];
-  for (let offset = 0; offset < ids.length; offset += FIELD_VALUE_CHUNK_SIZE) {
-    chunks.push(ids.slice(offset, offset + FIELD_VALUE_CHUNK_SIZE));
-  }
-
-  const pages = await Promise.all(
-    chunks.map((chunk) =>
-      database
-        .select({
-          entityId: customFieldValues.entityId,
-          key: customFieldDefinitions.key,
-          type: customFieldDefinitions.type,
-          valueBoolean: customFieldValues.valueBoolean,
-          valueDate: customFieldValues.valueDate,
-          valueNumber: customFieldValues.valueNumber,
-          valueText: customFieldValues.valueText,
-        })
-        .from(customFieldValues)
-        .innerJoin(
-          customFieldDefinitions,
-          eq(customFieldValues.fieldDefinitionId, customFieldDefinitions.id),
-        )
-        .where(
-          and(
-            eq(customFieldValues.entityType, entityType),
-            inArray(customFieldValues.entityId, chunk),
-            isNull(customFieldDefinitions.archivedAt),
-          ),
-        ),
-    ),
-  );
-  for (const rows of pages) {
-    for (const row of rows) {
-      const record = byEntity.get(row.entityId) ?? {};
-      record[row.key] = decodeFieldValue(row);
-      byEntity.set(row.entityId, record);
-    }
-  }
-
-  return byEntity;
-};
-
-const valuesForEntity = async (
-  environment: Env,
-  entityType: FieldEntity,
-  entityId: string,
-): Promise<Record<string, unknown>> =>
-  (await valuesForEntities(environment, entityType, [entityId])).get(
-    entityId,
-  ) ?? {};
-
-const upsertFieldValue = (
-  environment: Env,
-  entityType: FieldEntity,
-  entityId: string,
-  value: NormalizedFieldValue,
-  timestamp: Date,
-): D1PreparedStatement =>
-  environment.DB.prepare(
-    `INSERT INTO custom_field_values (
-        id, workspace_id, entity_type, entity_id, field_definition_id,
-        value_text, value_number, value_boolean, value_date, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(entity_type, entity_id, field_definition_id) DO UPDATE SET
-        value_text = excluded.value_text,
-        value_number = excluded.value_number,
-        value_boolean = excluded.value_boolean,
-        value_date = excluded.value_date,
-        updated_at = excluded.updated_at`,
-  ).bind(
-    id(),
-    DEFAULT_WORKSPACE_ID,
-    entityType,
-    entityId,
-    value.fieldId,
-    value.valueText,
-    value.valueNumber,
-    value.valueBoolean,
-    value.valueDate,
-    timestamp.getTime(),
-    timestamp.getTime(),
-  );
-
-const deleteFieldValue = (
-  environment: Env,
-  entityType: FieldEntity,
-  entityId: string,
-  fieldId: string,
-): D1PreparedStatement =>
-  environment.DB.prepare(
-    'DELETE FROM custom_field_values WHERE entity_type = ? AND entity_id = ? AND field_definition_id = ? AND workspace_id = ?',
-  ).bind(entityType, entityId, fieldId, DEFAULT_WORKSPACE_ID);
-
-const fieldWriteStatements = (
-  environment: Env,
-  entityType: FieldEntity,
-  entityId: string,
-  writes: CustomFieldWrite[],
-  timestamp: Date,
-): D1PreparedStatement[] =>
-  writes.flatMap((write) =>
-    write.kind === 'set'
-      ? [upsertFieldValue(environment, entityType, entityId, write, timestamp)]
-      : [deleteFieldValue(environment, entityType, entityId, write.fieldId)],
-  );
-
-export type ContactPage = {
-  contacts: Array<ContactRecord & { customFields: Record<string, unknown> }>;
+export type LeadPage = {
+  leads: LeadRecord[];
   nextCursor: null | string;
 };
 
-export type ContactPageOptions = {
-  cursor?: ContactKeyset | null;
+export type LeadPageOptions = {
+  cursor?: Keyset | null;
   limit: number;
   query?: string;
 };
 
+export type LeadRecord = {
+  createdAt: Date;
+  customFields: Record<string, unknown>;
+  deletedAt: Date | null;
+  duplicateCount: number;
+  email: null | string;
+  estimatedValue: null | number;
+  firstName: null | string;
+  id: string;
+  lastName: null | string;
+  name: string;
+  origin: null | string;
+  publicKeyId: null | string;
+  source: string;
+  updatedAt: Date;
+};
+
 /**
- * Keyset (seek) pagination over (created_at DESC, id DESC). `cursor` is the
- * decoded position of the last row of the previous page; the page window is
- * the rows strictly after that position, bounded by `limit`. One extra row
- * is fetched to detect a following page without a COUNT query.
+ * Literal substring match on the lead name, email, or first/last name; `%` and
+ * `_` in the query are escaped so they never act as LIKE wildcards.
  */
-const toContact = (row: typeof contacts.$inferSelect): ContactRecord => ({
+const leadSearchPredicate = (query: string) => {
+  const pattern = `%${escapeLike(query)}%`;
+  return sql`(${leads.name} LIKE ${pattern} ESCAPE '\\' OR ${leads.email} LIKE ${pattern} ESCAPE '\\' OR ${leads.firstName} LIKE ${pattern} ESCAPE '\\' OR ${leads.lastName} LIKE ${pattern} ESCAPE '\\')`;
+};
+
+/**
+ * How many live leads share each normalized email on the requested page. One
+ * grouped query per page; the duplicate hint is intentionally non-authoritative
+ * (no uniqueness constraint, per the leads-only design).
+ */
+const duplicateCountsForEmails = async (
+  environment: Env,
+  normalizedEmails: Array<null | string>,
+): Promise<Map<string, number>> => {
+  const emails = [
+    ...new Set(
+      normalizedEmails.filter(
+        (email): email is string => typeof email === 'string',
+      ),
+    ),
+  ];
+  if (emails.length === 0) {
+    return new Map();
+  }
+
+  const rows = await getDatabase(environment)
+    .select({ count: sql<number>`count(*)`, email: leads.normalizedEmail })
+    .from(leads)
+    .where(
+      and(
+        eq(leads.workspaceId, DEFAULT_WORKSPACE_ID),
+        isNull(leads.deletedAt),
+        inArray(leads.normalizedEmail, emails),
+      ),
+    )
+    .groupBy(leads.normalizedEmail);
+  return new Map(
+    rows
+      .filter(
+        (row): row is { count: number; email: string } => row.email !== null,
+      )
+      .map((row) => [row.email, Number(row.count)]),
+  );
+};
+
+const toLead = (
+  row: typeof leads.$inferSelect,
+  duplicateCounts: Map<string, number>,
+): LeadRecord => ({
   createdAt: row.createdAt,
+  customFields: row.customFields,
+  deletedAt: row.deletedAt,
+  duplicateCount: row.normalizedEmail
+    ? Math.max(0, (duplicateCounts.get(row.normalizedEmail) ?? 1) - 1)
+    : 0,
   email: row.email,
+  estimatedValue: row.estimatedValue,
   firstName: row.firstName,
   id: row.id,
   lastName: row.lastName,
+  name: row.name,
+  origin: row.origin,
+  publicKeyId: row.publicKeyId,
+  source: row.source,
   updatedAt: row.updatedAt,
 });
 
-export const listContacts = async (
+/**
+ * Keyset (seek) pagination over (created_at DESC, id DESC), excluding
+ * soft-deleted leads. One extra row detects a following page without a COUNT.
+ */
+export const listLeads = async (
   environment: Env,
-  options: ContactPageOptions,
-): Promise<ContactPage> => {
+  options: LeadPageOptions,
+): Promise<LeadPage> => {
   const { cursor, limit, query } = options;
-  const database = getDatabase(environment);
-  const predicates = [eq(contacts.workspaceId, DEFAULT_WORKSPACE_ID)];
+  const predicates = [
+    eq(leads.workspaceId, DEFAULT_WORKSPACE_ID),
+    isNull(leads.deletedAt),
+  ];
   if (query) {
-    predicates.push(contactSearchPredicate(query));
+    predicates.push(leadSearchPredicate(query));
   }
 
   if (cursor) {
-    // The cursor stays ISO-8601 on the wire (see domain/pagination); the
-    // stored column is Unix milliseconds.
     const cursorTime = Date.parse(cursor.createdAt);
     predicates.push(
-      sql`(${contacts.createdAt} < ${cursorTime} OR (${contacts.createdAt} = ${cursorTime} AND ${contacts.id} < ${cursor.id}))`,
+      sql`(${leads.createdAt} < ${cursorTime} OR (${leads.createdAt} = ${cursorTime} AND ${leads.id} < ${cursor.id}))`,
     );
   }
 
-  const rows = await database
+  const rows = await getDatabase(environment)
     .select()
-    .from(contacts)
+    .from(leads)
     .where(and(...predicates))
-    .orderBy(desc(contacts.createdAt), desc(contacts.id))
+    .orderBy(desc(leads.createdAt), desc(leads.id))
     .limit(limit + 1);
   const hasNextPage = rows.length > limit;
   const pageRows = hasNextPage ? rows.slice(0, limit) : rows;
-  const values = await valuesForEntities(
+  const duplicateCounts = await duplicateCountsForEmails(
     environment,
-    'contact',
-    pageRows.map((row) => row.id),
+    pageRows.map((row) => row.normalizedEmail),
   );
-  const contactsPage = pageRows.map((row) => ({
-    ...toContact(row),
-    customFields: values.get(row.id) ?? {},
-  }));
-  const last = pageRows[pageRows.length - 1];
+  const last = pageRows.at(-1);
   return {
-    contacts: contactsPage,
+    leads: pageRows.map((row) => toLead(row, duplicateCounts)),
     nextCursor:
       hasNextPage && last
-        ? encodeContactCursor({
+        ? encodeKeysetCursor({
             createdAt: last.createdAt.toISOString(),
             id: last.id,
           })
@@ -386,710 +222,43 @@ export const listContacts = async (
   };
 };
 
-export const getContact = async (
+export const getLead = async (
   environment: Env,
-  contactId: string,
-): Promise<
-  (ContactRecord & { customFields: Record<string, unknown> }) | null
-> => {
-  const database = getDatabase(environment);
-  const row = await database
-    .select()
-    .from(contacts)
-    .where(
-      and(
-        eq(contacts.id, contactId),
-        eq(contacts.workspaceId, DEFAULT_WORKSPACE_ID),
-      ),
-    )
-    .get();
-  return row
-    ? {
-        ...toContact(row),
-        customFields: await valuesForEntity(environment, 'contact', row.id),
-      }
-    : null;
-};
-
-export const createContact = async (
-  environment: Env,
-  input: ContactInput,
-  customFields: CustomFieldWrite[],
-): Promise<ContactRecord & { customFields: Record<string, unknown> }> => {
-  const timestamp = now();
-  const contactId = id();
-  const email = input.email ? normalizeEmail(input.email) : null;
-  // Core contact and custom-field values commit as one D1 batch, so a failed
-  // field write rolls back the whole create instead of orphaning a contact.
-  const statements: D1PreparedStatement[] = [
-    environment.DB.prepare(
-      'INSERT INTO contacts (id, workspace_id, email, normalized_email, first_name, last_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-    ).bind(
-      contactId,
-      DEFAULT_WORKSPACE_ID,
-      email,
-      email,
-      input.firstName ?? null,
-      input.lastName ?? null,
-      timestamp.getTime(),
-      timestamp.getTime(),
-    ),
-    ...fieldWriteStatements(
-      environment,
-      'contact',
-      contactId,
-      customFields,
-      timestamp,
-    ),
-  ];
-  await environment.DB.batch(statements);
-  return {
-    createdAt: timestamp,
-    customFields: await valuesForEntity(environment, 'contact', contactId),
-    email,
-    firstName: input.firstName ?? null,
-    id: contactId,
-    lastName: input.lastName ?? null,
-    updatedAt: timestamp,
-  };
-};
-
-export const updateContact = async (
-  environment: Env,
-  contactId: string,
-  input: ContactInput,
-  customFields: CustomFieldWrite[],
-): Promise<
-  (ContactRecord & { customFields: Record<string, unknown> }) | null
-> => {
-  const existing = await getContact(environment, contactId);
-  if (!existing) {
-    return null;
-  }
-
-  const timestamp = now();
-  const email = input.email ? normalizeEmail(input.email) : null;
-  // The core update and every field set/clear share one D1 batch, so a
-  // failed field write leaves the contact (including updatedAt) unchanged.
-  const statements: D1PreparedStatement[] = [
-    environment.DB.prepare(
-      'UPDATE contacts SET email = ?, first_name = ?, last_name = ?, normalized_email = ?, updated_at = ? WHERE id = ? AND workspace_id = ?',
-    ).bind(
-      email,
-      input.firstName ?? null,
-      input.lastName ?? null,
-      email,
-      timestamp.getTime(),
-      contactId,
-      DEFAULT_WORKSPACE_ID,
-    ),
-    ...fieldWriteStatements(
-      environment,
-      'contact',
-      contactId,
-      customFields,
-      timestamp,
-    ),
-  ];
-  await environment.DB.batch(statements);
-  return getContact(environment, contactId);
-};
-
-export const deleteContact = async (
-  environment: Env,
-  contactId: string,
-): Promise<'deleted' | 'has_opportunities' | 'not_found'> => {
-  const database = getDatabase(environment);
-  const existing = await getContact(environment, contactId);
-  if (!existing) {
-    return 'not_found';
-  }
-
-  const linkedOpportunity = await database
-    .select({ id: opportunities.id })
-    .from(opportunities)
-    .where(
-      and(
-        eq(opportunities.primaryContactId, contactId),
-        eq(opportunities.workspaceId, DEFAULT_WORKSPACE_ID),
-      ),
-    )
-    .get();
-  if (linkedOpportunity) {
-    return 'has_opportunities';
-  }
-
-  await database
-    .delete(customFieldValues)
-    .where(
-      and(
-        eq(customFieldValues.entityType, 'contact'),
-        eq(customFieldValues.entityId, contactId),
-        eq(customFieldValues.workspaceId, DEFAULT_WORKSPACE_ID),
-      ),
-    )
-    .run();
-  await database
-    .delete(contacts)
-    .where(
-      and(
-        eq(contacts.id, contactId),
-        eq(contacts.workspaceId, DEFAULT_WORKSPACE_ID),
-      ),
-    )
-    .run();
-  return 'deleted';
-};
-
-// Intake preserves the current workspace defaults rather than inventing new
-// routing: a submission without explicit pipeline/stage uses the default
-// pipeline and stage bootstrapped by the schema migration.
-export const intakePipelineId = (input: IntakeInput): string =>
-  input.opportunity.pipelineId ?? DEFAULT_PIPELINE_ID;
-export const intakeStageId = (input: IntakeInput): string =>
-  input.opportunity.stageId ?? DEFAULT_STAGE_ID;
-
-/**
- * A routing pair is valid when the stage exists in the selected pipeline and
- * both belong to the current workspace, and the pipeline is not archived.
- * Defaults are resolved by callers, so this check also covers default
- * routing: archiving the default pipeline rejects default intake.
- */
-export const isStageInActiveWorkspacePipeline = async (
-  environment: Env,
-  pipelineId: string,
-  stageId: string,
-): Promise<boolean> => {
+  leadId: string,
+): Promise<LeadRecord | null> => {
   const row = await getDatabase(environment)
-    .select({ ok: sql<number>`1` })
-    .from(stages)
-    .innerJoin(pipelines, eq(pipelines.id, stages.pipelineId))
+    .select()
+    .from(leads)
     .where(
-      and(
-        eq(stages.id, stageId),
-        eq(stages.pipelineId, pipelineId),
-        eq(stages.workspaceId, DEFAULT_WORKSPACE_ID),
-        eq(pipelines.workspaceId, DEFAULT_WORKSPACE_ID),
-        isNull(pipelines.archivedAt),
-      ),
-    )
-    .get();
-  return row !== undefined;
-};
-
-export const getOpportunity = async (
-  environment: Env,
-  opportunityId: string,
-): Promise<
-  null | (OpportunityRecord & { customFields: Record<string, unknown> })
-> => {
-  const database = getDatabase(environment);
-  const row = await database
-    .select({ contact: contacts, opportunity: opportunities })
-    .from(opportunities)
-    .innerJoin(contacts, eq(opportunities.primaryContactId, contacts.id))
-    .where(
-      and(
-        eq(opportunities.id, opportunityId),
-        eq(opportunities.workspaceId, DEFAULT_WORKSPACE_ID),
-      ),
+      and(eq(leads.workspaceId, DEFAULT_WORKSPACE_ID), eq(leads.id, leadId)),
     )
     .get();
   if (!row) {
     return null;
   }
 
-  return {
-    contact: toContact(row.contact),
-    createdAt: row.opportunity.createdAt,
-    customFields: await valuesForEntity(
-      environment,
-      'opportunity',
-      row.opportunity.id,
-    ),
-    deletedAt: row.opportunity.deletedAt,
-    estimatedValue: row.opportunity.estimatedValue,
-    id: row.opportunity.id,
-    name: row.opportunity.name,
-    pipelineId: row.opportunity.pipelineId,
-    source: row.opportunity.source,
-    stageId: row.opportunity.stageId,
-    updatedAt: row.opportunity.updatedAt,
-  };
-};
-
-export const createManualOpportunity = async (
-  environment: Env,
-  input: CreateOpportunityInput,
-  contactValues: CustomFieldWrite[],
-  opportunityValues: CustomFieldWrite[],
-  actorEmail: string,
-): Promise<
-  | 'contact_not_found'
-  | 'invalid_stage'
-  | (OpportunityRecord & { customFields: Record<string, unknown> })
-> => {
-  if (input.contactId && !(await getContact(environment, input.contactId))) {
-    return 'contact_not_found';
-  }
-
-  const pipelineId = input.pipelineId ?? DEFAULT_PIPELINE_ID;
-  const stageId = input.stageId ?? DEFAULT_STAGE_ID;
-  if (
-    !(await isStageInActiveWorkspacePipeline(environment, pipelineId, stageId))
-  ) {
-    return 'invalid_stage';
-  }
-
-  const timestamp = now();
-  const contactId = input.contactId ?? id();
-  const opportunityId = id();
-  const statements: D1PreparedStatement[] = [];
-  if (input.contact) {
-    const email = input.contact.email
-      ? normalizeEmail(input.contact.email)
-      : null;
-    statements.push(
-      environment.DB.prepare(
-        'INSERT INTO contacts (id, workspace_id, email, normalized_email, first_name, last_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-      ).bind(
-        contactId,
-        DEFAULT_WORKSPACE_ID,
-        email,
-        email,
-        input.contact.firstName ?? null,
-        input.contact.lastName ?? null,
-        timestamp.getTime(),
-        timestamp.getTime(),
-      ),
-    );
-  }
-
-  statements.push(
-    environment.DB.prepare(
-      'INSERT INTO opportunities (id, workspace_id, primary_contact_id, pipeline_id, stage_id, name, source, estimated_value, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-    ).bind(
-      opportunityId,
-      DEFAULT_WORKSPACE_ID,
-      contactId,
-      pipelineId,
-      stageId,
-      input.name,
-      input.source ?? 'manual',
-      input.estimatedValue ?? null,
-      timestamp.getTime(),
-      timestamp.getTime(),
-    ),
-    environment.DB.prepare(
-      'INSERT INTO activities (id, workspace_id, contact_id, opportunity_id, kind, body, actor_email, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-    ).bind(
-      id(),
-      DEFAULT_WORKSPACE_ID,
-      contactId,
-      opportunityId,
-      'manual_entry',
-      'Created manually',
-      actorEmail,
-      JSON.stringify({ source: input.source ?? 'manual' }),
-      timestamp.getTime(),
-    ),
-  );
-  // A manual opportunity is a creation: clear writes are impossible, and the
-  // field statements commit in the same batch as the new records.
-  statements.push(
-    ...fieldWriteStatements(
-      environment,
-      'contact',
-      contactId,
-      contactValues,
-      timestamp,
-    ),
-    ...fieldWriteStatements(
-      environment,
-      'opportunity',
-      opportunityId,
-      opportunityValues,
-      timestamp,
-    ),
-  );
-  await environment.DB.batch(statements);
-  const created = await getOpportunity(environment, opportunityId);
-  if (created === null) {
-    throw new Error(`Opportunity ${opportunityId} was not created`);
-  }
-
-  return created;
-};
-
-export const listOpportunities = async (
-  environment: Env,
-  pipelineId?: string,
-): Promise<
-  Array<OpportunityRecord & { customFields: Record<string, unknown> }>
-> => {
-  const database = getDatabase(environment);
-  const predicates = [
-    eq(opportunities.workspaceId, DEFAULT_WORKSPACE_ID),
-    isNull(opportunities.deletedAt),
-  ];
-  if (pipelineId) {
-    predicates.push(eq(opportunities.pipelineId, pipelineId));
-  }
-
-  const rows = await database
-    .select({
-      contact: contacts,
-      opportunity: opportunities,
-    })
-    .from(opportunities)
-    .innerJoin(contacts, eq(opportunities.primaryContactId, contacts.id))
-    .where(and(...predicates))
-    .orderBy(desc(opportunities.createdAt));
-
-  const values = await valuesForEntities(
-    environment,
-    'opportunity',
-    rows.map(({ opportunity }) => opportunity.id),
-  );
-  return rows.map(({ contact, opportunity }) => ({
-    contact: toContact(contact),
-    createdAt: opportunity.createdAt,
-    customFields: values.get(opportunity.id) ?? {},
-    deletedAt: opportunity.deletedAt,
-    estimatedValue: opportunity.estimatedValue,
-    id: opportunity.id,
-    name: opportunity.name,
-    pipelineId: opportunity.pipelineId,
-    source: opportunity.source,
-    stageId: opportunity.stageId,
-    updatedAt: opportunity.updatedAt,
-  }));
-};
-
-export const getPipeline = async (
-  environment: Env,
-  pipelineId: string,
-): Promise<null | typeof pipelines.$inferSelect> => {
-  const row = await getDatabase(environment)
-    .select()
-    .from(pipelines)
-    .where(
-      and(
-        eq(pipelines.id, pipelineId),
-        eq(pipelines.workspaceId, DEFAULT_WORKSPACE_ID),
-      ),
-    )
-    .get();
-  return row ?? null;
-};
-
-export const listPipelines = async (environment: Env) => {
-  const database = getDatabase(environment);
-  const pipelineRows = await database
-    .select()
-    .from(pipelines)
-    .where(eq(pipelines.workspaceId, DEFAULT_WORKSPACE_ID))
-    .orderBy(asc(pipelines.name));
-  const stageRows = await database
-    .select()
-    .from(stages)
-    .where(eq(stages.workspaceId, DEFAULT_WORKSPACE_ID))
-    .orderBy(asc(stages.position));
-  return pipelineRows.map((pipeline) => ({
-    ...pipeline,
-    stages: stageRows.filter((stage) => stage.pipelineId === pipeline.id),
-  }));
-};
-
-export const createPipeline = async (environment: Env, name: string) => {
-  const timestamp = now();
-  const pipeline = {
-    createdAt: timestamp,
-    id: id(),
-    name,
-    updatedAt: timestamp,
-    workspaceId: DEFAULT_WORKSPACE_ID,
-  };
-  await getDatabase(environment).insert(pipelines).values(pipeline);
-  return pipeline;
-};
-
-// (pipeline_id, position) is unique (stages_pipeline_position_unique).
-// Concurrent creators can read the same max and race for the same slot; the
-// loser recomputes from the committed state and retries, bounded so a
-// persistent conflict surfaces as a persistence error instead of looping.
-const STAGE_CREATE_MAX_ATTEMPTS = 10;
-
-const isStagePositionConflict = (error: unknown): boolean => {
-  const visit = (candidate: unknown): boolean => {
-    if (!(candidate instanceof Error)) {
-      return false;
-    }
-
-    if (
-      candidate.message.includes('UNIQUE constraint failed') &&
-      candidate.message.includes('stages.pipeline_id') &&
-      candidate.message.includes('stages.position')
-    ) {
-      return true;
-    }
-
-    const cause = (candidate as { cause?: unknown }).cause;
-    return cause !== undefined && cause !== candidate && visit(cause);
-  };
-
-  return visit(error);
-};
-
-export const createStage = async (
-  environment: Env,
-  pipelineId: string,
-  input: { color?: string; name: string; position?: number },
-) => {
-  for (let attempt = 1; attempt <= STAGE_CREATE_MAX_ATTEMPTS; attempt += 1) {
-    const timestamp = now();
-    const max = await getDatabase(environment)
-      .select({ position: sql<number>`max(${stages.position})` })
-      .from(stages)
-      .where(eq(stages.pipelineId, pipelineId))
-      .get();
-    const stage = {
-      color: input.color ?? 'slate',
-      createdAt: timestamp,
-      id: id(),
-      name: input.name,
-      pipelineId,
-      position: input.position ?? (max?.position ?? -1) + 1,
-      updatedAt: timestamp,
-      workspaceId: DEFAULT_WORKSPACE_ID,
-    };
-    try {
-      await getDatabase(environment).insert(stages).values(stage);
-      return stage;
-    } catch (error) {
-      // Only a computed position is retryable: an explicit colliding
-      // position (or a same-name conflict) will keep failing on recompute.
-      if (
-        input.position === undefined &&
-        isStagePositionConflict(error) &&
-        attempt < STAGE_CREATE_MAX_ATTEMPTS
-      ) {
-        continue;
-      }
-
-      throw error;
-    }
-  }
-
-  throw new Error('unreachable: stage creation exhausted its bounded attempts');
-};
-
-export const moveOpportunity = async (
-  environment: Env,
-  opportunityId: string,
-  stageId: string,
-  actorEmail: string,
-) => {
-  const opportunity = await getOpportunity(environment, opportunityId);
-  if (!opportunity || opportunity.deletedAt !== null) {
-    return null;
-  }
-
-  const stage = await getDatabase(environment)
-    .select()
-    .from(stages)
-    .where(
-      and(
-        eq(stages.id, stageId),
-        eq(stages.pipelineId, opportunity.pipelineId),
-      ),
-    )
-    .get();
-  if (!stage) {
-    return undefined;
-  }
-
-  const timestamp = now();
-  const results = await environment.DB.batch([
-    environment.DB.prepare(
-      'UPDATE opportunities SET stage_id = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL',
-    ).bind(stageId, timestamp.getTime(), opportunityId),
-    // The activity is written only while the opportunity is still active, so
-    // a concurrent soft delete cannot leave a stage-change note behind.
-    environment.DB.prepare(
-      `INSERT INTO activities (id, workspace_id, contact_id, opportunity_id, kind, body, actor_email, metadata, created_at)
-       SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
-       WHERE EXISTS (
-         SELECT 1 FROM opportunities
-         WHERE id = ? AND workspace_id = ? AND deleted_at IS NULL
-       )`,
-    ).bind(
-      id(),
-      DEFAULT_WORKSPACE_ID,
-      opportunity.contact.id,
-      opportunityId,
-      'stage_changed',
-      `Moved to ${stage.name}`,
-      actorEmail,
-      JSON.stringify({ stageId }),
-      timestamp.getTime(),
-      opportunityId,
-      DEFAULT_WORKSPACE_ID,
-    ),
+  const duplicateCounts = await duplicateCountsForEmails(environment, [
+    row.normalizedEmail,
   ]);
-  return (results[0]?.meta.changes ?? 0) > 0
-    ? getOpportunity(environment, opportunityId)
-    : null;
+  return toLead(row, duplicateCounts);
 };
 
-export const updateOpportunity = async (
-  environment: Env,
-  opportunityId: string,
-  input: { estimatedValue?: null | number; name?: string },
-): Promise<
-  null | (OpportunityRecord & { customFields: Record<string, unknown> })
-> => {
-  const existing = await getOpportunity(environment, opportunityId);
-  if (!existing || existing.deletedAt !== null) {
-    return null;
-  }
-
-  const timestamp = now();
-  const name = input.name ?? existing.name;
-  const estimatedValue =
-    input.estimatedValue === undefined
-      ? existing.estimatedValue
-      : input.estimatedValue;
-  const result = await environment.DB.prepare(
-    'UPDATE opportunities SET name = ?, estimated_value = ?, updated_at = ? WHERE id = ? AND workspace_id = ? AND deleted_at IS NULL',
-  )
-    .bind(
-      name,
-      estimatedValue,
-      timestamp.getTime(),
-      opportunityId,
-      DEFAULT_WORKSPACE_ID,
-    )
-    .run();
-  return result.meta.changes > 0
-    ? getOpportunity(environment, opportunityId)
-    : null;
-};
-
-export const softDeleteOpportunity = async (
-  environment: Env,
-  opportunityId: string,
-) => {
-  const timestamp = now();
-  const result = await getDatabase(environment)
-    .update(opportunities)
-    .set({ deletedAt: timestamp, updatedAt: timestamp })
-    .where(
-      and(
-        eq(opportunities.id, opportunityId),
-        eq(opportunities.workspaceId, DEFAULT_WORKSPACE_ID),
-        isNull(opportunities.deletedAt),
-      ),
-    )
-    .run();
-  return result.meta.changes > 0;
-};
-
-export const createActivity = async (
-  environment: Env,
-  opportunityId: string,
-  actorEmail: string,
-  kind: string,
-  body: string,
-) => {
-  const opportunity = await getOpportunity(environment, opportunityId);
-  if (!opportunity || opportunity.deletedAt !== null) {
-    return null;
-  }
-
-  const activity = {
-    actorEmail,
-    body,
-    contactId: opportunity.contact.id,
-    createdAt: now(),
-    id: id(),
-    kind,
-    metadata: {},
-    opportunityId,
-    workspaceId: DEFAULT_WORKSPACE_ID,
-  };
-  // Guard the insert itself so a concurrent soft delete cannot accept a note
-  // between the read above and the write.
-  const result = await environment.DB.prepare(
-    `INSERT INTO activities (id, workspace_id, contact_id, opportunity_id, kind, body, actor_email, metadata, created_at)
-     SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
-     WHERE EXISTS (
-       SELECT 1 FROM opportunities
-       WHERE id = ? AND workspace_id = ? AND deleted_at IS NULL
-     )`,
-  )
-    .bind(
-      activity.id,
-      activity.workspaceId,
-      activity.contactId,
-      activity.opportunityId,
-      activity.kind,
-      activity.body,
-      activity.actorEmail,
-      JSON.stringify(activity.metadata),
-      activity.createdAt.getTime(),
-      opportunityId,
-      DEFAULT_WORKSPACE_ID,
-    )
-    .run();
-  return result.meta.changes > 0 ? activity : null;
-};
-
-export const listActivities = async (environment: Env, opportunityId: string) =>
+export const listLeadActivities = async (environment: Env, leadId: string) =>
   getDatabase(environment)
     .select()
     .from(activities)
-    .where(eq(activities.opportunityId, opportunityId))
-    .orderBy(desc(activities.createdAt));
-
-export const createFieldDefinition = async (
-  environment: Env,
-  input: CreateCustomField,
-) => {
-  const timestamp = now();
-  const field = {
-    createdAt: timestamp,
-    entityType: input.entityType,
-    id: id(),
-    key: input.key,
-    label: input.label,
-    options: [...(input.options ?? [])],
-    required: input.required ?? false,
-    type: input.type,
-    updatedAt: timestamp,
-    workspaceId: DEFAULT_WORKSPACE_ID,
-  };
-  await getDatabase(environment).insert(customFieldDefinitions).values(field);
-  return field;
-};
-
-export const archiveFieldDefinition = async (
-  environment: Env,
-  fieldId: string,
-) => {
-  const timestamp = now();
-  const result = await getDatabase(environment)
-    .update(customFieldDefinitions)
-    .set({ archivedAt: timestamp, updatedAt: timestamp })
     .where(
       and(
-        eq(customFieldDefinitions.id, fieldId),
-        eq(customFieldDefinitions.workspaceId, DEFAULT_WORKSPACE_ID),
+        eq(activities.workspaceId, DEFAULT_WORKSPACE_ID),
+        eq(activities.leadId, leadId),
       ),
     )
-    .run();
-  return result.meta.changes > 0;
-};
+    .orderBy(desc(activities.createdAt));
+
+const randomToken = (prefix: string): string =>
+  `${prefix}${crypto
+    .getRandomValues(new Uint8Array(32))
+    .reduce((text, byte) => text + byte.toString(16).padStart(2, '0'), '')}`;
 
 const hashToken = async (token: string): Promise<string> => {
   const source = new TextEncoder().encode(token);
@@ -1103,29 +272,27 @@ const TOKEN_DEFAULT_TTL_MS = 90 * 86_400_000;
 
 export const createApiToken = async (
   environment: Env,
-  name: string,
-  expiresAt?: string,
+  input: { expiresAt?: string; name: string; type: 'api' | 'browser' },
 ) => {
-  const raw = `cld_${crypto
-    .getRandomValues(new Uint8Array(32))
-    .reduce((text, byte) => text + byte.toString(16).padStart(2, '0'), '')}`;
-  const tokenHash = await hashToken(raw);
+  const raw = randomToken(input.type === 'browser' ? 'cld_pub_' : 'cld_');
   const record = {
     createdAt: now(),
     expiresAt:
-      expiresAt === undefined
+      input.expiresAt === undefined
         ? new Date(Date.now() + TOKEN_DEFAULT_TTL_MS)
-        : new Date(expiresAt),
+        : new Date(input.expiresAt),
     id: id(),
-    name,
+    name: input.name,
     prefix: raw.slice(0, 12),
     scope: 'intake:write',
-    tokenHash,
+    token: input.type === 'browser' ? raw : null,
+    tokenHash: input.type === 'api' ? await hashToken(raw) : null,
+    type: input.type,
     workspaceId: DEFAULT_WORKSPACE_ID,
   };
   await getDatabase(environment).insert(apiTokens).values(record);
-  // Return only the public projection plus the raw token, which is shown
-  // exactly once. The hash and workspace id stay server-side.
+  // API tokens are shown exactly once; browser tokens are stored so they can
+  // be copied into a site again. The hash never leaves the server.
   return {
     createdAt: record.createdAt,
     expiresAt: record.expiresAt,
@@ -1135,6 +302,7 @@ export const createApiToken = async (
     revokedAt: null,
     scope: record.scope,
     token: raw,
+    type: record.type,
   };
 };
 
@@ -1149,6 +317,8 @@ export const listApiTokens = async (environment: Env) =>
       prefix: apiTokens.prefix,
       revokedAt: apiTokens.revokedAt,
       scope: apiTokens.scope,
+      token: apiTokens.token,
+      type: apiTokens.type,
     })
     .from(apiTokens)
     .where(eq(apiTokens.workspaceId, DEFAULT_WORKSPACE_ID))
@@ -1491,6 +661,7 @@ export const isIntakeToken = async (
     .where(
       and(
         eq(apiTokens.tokenHash, tokenHash),
+        eq(apiTokens.type, 'api'),
         eq(apiTokens.scope, 'intake:write'),
         isNull(apiTokens.revokedAt),
         or(isNull(apiTokens.expiresAt), gt(apiTokens.expiresAt, now())),
@@ -1507,6 +678,40 @@ export const isIntakeToken = async (
     .where(eq(apiTokens.id, record.id))
     .run();
   return true;
+};
+
+/**
+ * A browser intake token is write-only: it can create a lead through
+ * `/v1/public/intakes/:token` and nothing else. Returns the token row
+ * (id used as lead provenance) or null. The value is stored verbatim
+ * because browser tokens are safe to embed and copy.
+ */
+export const isBrowserIntakeToken = async (
+  environment: Env,
+  token: string,
+): Promise<null | { id: string }> => {
+  const record = await getDatabase(environment)
+    .select({ id: apiTokens.id })
+    .from(apiTokens)
+    .where(
+      and(
+        eq(apiTokens.token, token),
+        eq(apiTokens.type, 'browser'),
+        isNull(apiTokens.revokedAt),
+        or(isNull(apiTokens.expiresAt), gt(apiTokens.expiresAt, now())),
+      ),
+    )
+    .get();
+  if (!record) {
+    return null;
+  }
+
+  await getDatabase(environment)
+    .update(apiTokens)
+    .set({ lastUsedAt: now() })
+    .where(eq(apiTokens.id, record.id))
+    .run();
+  return record;
 };
 
 export type StoredIntakeKey = {
@@ -1593,146 +798,54 @@ export const outcomeForStoredIntakeKey = (
   }
 };
 
-export const createIntakeAtomically = async (
+export const createLeadAtomically = async (
   environment: Env,
   input: IntakeInput,
-  contactValues: CustomFieldWrite[],
-  opportunityValues: CustomFieldWrite[],
   idempotencyKey: string,
   requestHash: string,
+  provenance?: { origin: null | string; publicKeyId: null | string },
 ): Promise<IntakePersistenceOutcome> => {
-  // Raw D1 binds do not accept Date, and every use in this function is a
-  // raw statement, so work in Unix milliseconds directly.
+  // Raw D1 binds do not accept Date, so work in Unix milliseconds directly.
   const timestamp = now().getTime();
-  const opportunityId = id();
+  const leadId = id();
   const activityId = id();
-  const email = normalizeEmail(input.contact.email);
-  const pipelineId = intakePipelineId(input);
-  const stageId = intakeStageId(input);
-  const response = { created: true, opportunityId };
+  const email = normalizeEmail(input.email);
+  const response: IntakeResponse = { created: true, leadId };
   const statements: D1PreparedStatement[] = [
     environment.DB.prepare(
-      `INSERT INTO contacts (id, workspace_id, email, normalized_email, first_name, last_name, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(workspace_id, normalized_email) DO UPDATE SET
-           email = excluded.email,
-           first_name = COALESCE(excluded.first_name, contacts.first_name),
-           last_name = COALESCE(excluded.last_name, contacts.last_name),
-           updated_at = excluded.updated_at`,
+      `INSERT INTO leads (
+          id, workspace_id, email, normalized_email,
+          first_name, last_name, name, source, estimated_value, custom_fields,
+          origin, public_key_id, created_at, updated_at, deleted_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
     ).bind(
-      id(),
+      leadId,
       DEFAULT_WORKSPACE_ID,
+      input.email,
       email,
-      email,
-      input.contact.firstName ?? null,
-      input.contact.lastName ?? null,
+      input.firstName ?? null,
+      input.lastName ?? null,
+      leadDisplayName(input),
+      input.source,
+      input.estimatedValue ?? null,
+      JSON.stringify(input.customFields ?? {}),
+      provenance?.origin ?? null,
+      provenance?.publicKeyId ?? null,
       timestamp,
       timestamp,
-    ),
-    environment.DB.prepare(
-      `INSERT INTO opportunities (
-          id, workspace_id, primary_contact_id, pipeline_id, stage_id, name, source, estimated_value, created_at, updated_at
-        ) SELECT ?, ?, id, ?, ?, ?, ?, ?, ?, ?
-          FROM contacts WHERE workspace_id = ? AND normalized_email = ?`,
-    ).bind(
-      opportunityId,
-      DEFAULT_WORKSPACE_ID,
-      pipelineId,
-      stageId,
-      input.opportunity.name,
-      input.opportunity.source,
-      input.opportunity.estimatedValue ?? null,
-      timestamp,
-      timestamp,
-      DEFAULT_WORKSPACE_ID,
-      email,
     ),
     environment.DB.prepare(
       `INSERT INTO activities (
-          id, workspace_id, contact_id, opportunity_id, kind, body, metadata, created_at
-        ) SELECT ?, ?, id, ?, ?, ?, ?, ?
-          FROM contacts WHERE workspace_id = ? AND normalized_email = ?`,
+          id, workspace_id, lead_id, kind, body, metadata, created_at
+        ) VALUES (?, ?, ?, 'intake', ?, ?, ?)`,
     ).bind(
       activityId,
       DEFAULT_WORKSPACE_ID,
-      opportunityId,
-      'intake',
+      leadId,
       `Received from ${input.source}`,
       JSON.stringify({ source: input.source }),
       timestamp,
-      DEFAULT_WORKSPACE_ID,
-      email,
     ),
-  ];
-
-  // Intake is a creation: explicit nulls for optional fields are omitted by
-  // validation, so only `set` writes reach persistence here.
-  for (const value of contactValues) {
-    if (value.kind !== 'set') {
-      continue;
-    }
-
-    statements.push(
-      environment.DB.prepare(
-        `INSERT INTO custom_field_values (
-            id, workspace_id, entity_type, entity_id, field_definition_id,
-            value_text, value_number, value_boolean, value_date, created_at, updated_at
-          ) SELECT ?, ?, 'contact', id, ?, ?, ?, ?, ?, ?, ?
-          FROM contacts WHERE workspace_id = ? AND normalized_email = ?
-          ON CONFLICT(entity_type, entity_id, field_definition_id) DO UPDATE SET
-            value_text = excluded.value_text, value_number = excluded.value_number,
-            value_boolean = excluded.value_boolean, value_date = excluded.value_date,
-            updated_at = excluded.updated_at`,
-      ).bind(
-        id(),
-        DEFAULT_WORKSPACE_ID,
-        value.fieldId,
-        value.valueText,
-        value.valueNumber,
-        value.valueBoolean,
-        value.valueDate,
-        timestamp,
-        timestamp,
-        DEFAULT_WORKSPACE_ID,
-        email,
-      ),
-    );
-  }
-
-  for (const value of opportunityValues) {
-    if (value.kind !== 'set') {
-      continue;
-    }
-
-    statements.push(
-      environment.DB.prepare(
-        `INSERT INTO custom_field_values (
-            id, workspace_id, entity_type, entity_id, field_definition_id,
-            value_text, value_number, value_boolean, value_date, created_at, updated_at
-          ) VALUES (?, ?, 'opportunity', ?, ?, ?, ?, ?, ?, ?, ?)
-          ON CONFLICT(entity_type, entity_id, field_definition_id) DO UPDATE SET
-            value_text = excluded.value_text, value_number = excluded.value_number,
-            value_boolean = excluded.value_boolean, value_date = excluded.value_date,
-            updated_at = excluded.updated_at`,
-      ).bind(
-        id(),
-        DEFAULT_WORKSPACE_ID,
-        opportunityId,
-        value.fieldId,
-        value.valueText,
-        value.valueNumber,
-        value.valueBoolean,
-        value.valueDate,
-        timestamp,
-        timestamp,
-      ),
-    );
-  }
-
-  // The accepted key (with its fingerprint) commits in the same atomic batch
-  // as the domain writes: a failed batch rolls the key back as well, so a
-  // transient failure never reserves the key and the retry can still succeed.
-  statements.push(
     environment.DB.prepare(
       'INSERT INTO idempotency_keys (workspace_id, key, request_hash, response_json, created_at) VALUES (?, ?, ?, ?, ?)',
     ).bind(
@@ -1742,7 +855,7 @@ export const createIntakeAtomically = async (
       JSON.stringify(response),
       timestamp,
     ),
-  );
+  ];
 
   try {
     await environment.DB.batch(statements);
@@ -1761,4 +874,148 @@ export const createIntakeAtomically = async (
 
     throw error;
   }
+};
+
+const leadName = (parts: {
+  email: null | string;
+  firstName: null | string;
+  lastName: null | string;
+  name?: string;
+}): string => {
+  if (parts.name) {
+    return parts.name;
+  }
+
+  const person = [parts.firstName, parts.lastName]
+    .filter((part): part is string => typeof part === 'string')
+    .join(' ')
+    .trim();
+  return person || parts.email || 'New lead';
+};
+
+export const createLead = async (
+  environment: Env,
+  input: CreateLeadInput,
+): Promise<LeadRecord> => {
+  const timestamp = now();
+  const email = input.email ?? null;
+  const firstName = input.firstName ?? null;
+  const lastName = input.lastName ?? null;
+  const record: typeof leads.$inferSelect = {
+    createdAt: timestamp,
+    customFields: input.customFields ?? {},
+    deletedAt: null,
+    email,
+    estimatedValue: input.estimatedValue ?? null,
+    firstName,
+    id: id(),
+    lastName,
+    name: leadName({ email, firstName, lastName, name: input.name }),
+    normalizedEmail: email ? normalizeEmail(email) : null,
+    origin: null,
+    publicKeyId: null,
+    source: input.source ?? 'Manual entry',
+    updatedAt: timestamp,
+    workspaceId: DEFAULT_WORKSPACE_ID,
+  };
+  await getDatabase(environment).insert(leads).values(record);
+  return toLead(record, new Map());
+};
+
+export const updateLead = async (
+  environment: Env,
+  leadId: string,
+  input: UpdateLeadInput,
+): Promise<LeadRecord | null> => {
+  const patch: Partial<typeof leads.$inferInsert> = { updatedAt: now() };
+  if (input.customFields !== undefined) {
+    patch.customFields = input.customFields;
+  }
+
+  if (input.email !== undefined) {
+    patch.email = input.email;
+    patch.normalizedEmail = input.email ? normalizeEmail(input.email) : null;
+  }
+
+  if (input.estimatedValue !== undefined) {
+    patch.estimatedValue = input.estimatedValue;
+  }
+
+  if (input.firstName !== undefined) {
+    patch.firstName = input.firstName;
+  }
+
+  if (input.lastName !== undefined) {
+    patch.lastName = input.lastName;
+  }
+
+  if (input.name !== undefined) {
+    patch.name = input.name;
+  }
+
+  if (input.source !== undefined) {
+    patch.source = input.source;
+  }
+
+  const result = await getDatabase(environment)
+    .update(leads)
+    .set(patch)
+    .where(
+      and(
+        eq(leads.workspaceId, DEFAULT_WORKSPACE_ID),
+        eq(leads.id, leadId),
+        isNull(leads.deletedAt),
+      ),
+    )
+    .run();
+  if (result.meta.changes === 0) {
+    return null;
+  }
+
+  return getLead(environment, leadId);
+};
+
+export const softDeleteLeads = async (
+  environment: Env,
+  ids: readonly string[],
+): Promise<number> => {
+  const uniqueIds = [...new Set(ids)];
+  const result = await getDatabase(environment)
+    .update(leads)
+    .set({ deletedAt: now() })
+    .where(
+      and(
+        eq(leads.workspaceId, DEFAULT_WORKSPACE_ID),
+        isNull(leads.deletedAt),
+        inArray(leads.id, uniqueIds),
+      ),
+    )
+    .run();
+  return result.meta.changes;
+};
+
+export const createLeadActivity = async (
+  environment: Env,
+  leadId: string,
+  actorEmail: string,
+  kind: string,
+  body: string,
+) => {
+  const lead = await getLead(environment, leadId);
+  if (!lead) {
+    return null;
+  }
+
+  const record = {
+    actorEmail,
+    body,
+    createdAt: now(),
+    id: id(),
+    kind,
+    leadId,
+    metadata: {},
+    workspaceId: DEFAULT_WORKSPACE_ID,
+  };
+  await getDatabase(environment).insert(activities).values(record);
+  return record;
 };

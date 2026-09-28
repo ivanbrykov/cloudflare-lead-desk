@@ -21,108 +21,37 @@ export const workspaces = sqliteTable('workspaces', {
   updatedAt: timestampMs('updated_at').notNull(),
 });
 
-export const pipelines = sqliteTable(
-  'pipelines',
-  {
-    archivedAt: timestampMs('archived_at'),
-    createdAt: timestampMs('created_at').notNull(),
-    id: text('id').primaryKey(),
-    name: text('name').notNull(),
-    updatedAt: timestampMs('updated_at').notNull(),
-    workspaceId: text('workspace_id')
-      .notNull()
-      .references(() => workspaces.id),
-  },
-  (table) => [
-    uniqueIndex('pipelines_workspace_name_unique').on(
-      table.workspaceId,
-      table.name,
-    ),
-  ],
-);
-
-export const stages = sqliteTable(
-  'stages',
-  {
-    color: text('color').notNull().default('slate'),
-    createdAt: timestampMs('created_at').notNull(),
-    id: text('id').primaryKey(),
-    name: text('name').notNull(),
-    pipelineId: text('pipeline_id')
-      .notNull()
-      .references(() => pipelines.id),
-    position: integer('position').notNull(),
-    updatedAt: timestampMs('updated_at').notNull(),
-    workspaceId: text('workspace_id')
-      .notNull()
-      .references(() => workspaces.id),
-  },
-  (table) => [
-    index('stages_pipeline_position_idx').on(table.pipelineId, table.position),
-    uniqueIndex('stages_pipeline_position_unique').on(
-      table.pipelineId,
-      table.position,
-    ),
-    uniqueIndex('stages_pipeline_name_unique').on(table.pipelineId, table.name),
-  ],
-);
-
-export const contacts = sqliteTable(
-  'contacts',
+export const leads = sqliteTable(
+  'leads',
   {
     createdAt: timestampMs('created_at').notNull(),
+    customFields: text('custom_fields', { mode: 'json' })
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default(sql`'{}'`),
+    deletedAt: timestampMs('deleted_at'),
     email: text('email'),
+    estimatedValue: integer('estimated_value'),
     firstName: text('first_name'),
     id: text('id').primaryKey(),
     lastName: text('last_name'),
+    name: text('name').notNull(),
     normalizedEmail: text('normalized_email'),
+    origin: text('origin'),
+    publicKeyId: text('public_key_id'),
+    source: text('source').notNull(),
     updatedAt: timestampMs('updated_at').notNull(),
     workspaceId: text('workspace_id')
       .notNull()
       .references(() => workspaces.id),
   },
   (table) => [
-    index('contacts_workspace_created_idx').on(
-      table.workspaceId,
-      table.createdAt,
-    ),
-    uniqueIndex('contacts_workspace_email_unique').on(
+    index('leads_normalized_email_idx').on(
       table.workspaceId,
       table.normalizedEmail,
     ),
-  ],
-);
-
-export const opportunities = sqliteTable(
-  'opportunities',
-  {
-    createdAt: timestampMs('created_at').notNull(),
-    deletedAt: timestampMs('deleted_at'),
-    estimatedValue: integer('estimated_value'),
-    id: text('id').primaryKey(),
-    name: text('name').notNull(),
-    pipelineId: text('pipeline_id')
-      .notNull()
-      .references(() => pipelines.id),
-    primaryContactId: text('primary_contact_id')
-      .notNull()
-      .references(() => contacts.id),
-    source: text('source').notNull(),
-    stageId: text('stage_id')
-      .notNull()
-      .references(() => stages.id),
-    updatedAt: timestampMs('updated_at').notNull(),
-    workspaceId: text('workspace_id')
-      .notNull()
-      .references(() => workspaces.id),
-  },
-  (table) => [
-    index('opportunities_workspace_stage_idx').on(
-      table.workspaceId,
-      table.stageId,
-      table.createdAt,
-    ),
-    index('opportunities_contact_idx').on(table.primaryContactId),
+    // The flat leads list orders by createdAt, so it gets its own index.
+    index('leads_workspace_created_idx').on(table.workspaceId, table.createdAt),
   ],
 );
 
@@ -131,99 +60,22 @@ export const activities = sqliteTable(
   {
     actorEmail: text('actor_email'),
     body: text('body').notNull(),
-    contactId: text('contact_id')
-      .notNull()
-      .references(() => contacts.id),
     createdAt: timestampMs('created_at').notNull(),
     id: text('id').primaryKey(),
     kind: text('kind').notNull(),
+    leadId: text('lead_id')
+      .notNull()
+      .references(() => leads.id),
     metadata: text('metadata', { mode: 'json' })
       .$type<Record<string, unknown>>()
       .notNull()
       .default(sql`'{}'`),
-    opportunityId: text('opportunity_id').references(() => opportunities.id),
     workspaceId: text('workspace_id')
       .notNull()
       .references(() => workspaces.id),
   },
   (table) => [
-    index('activities_contact_created_idx').on(
-      table.contactId,
-      table.createdAt,
-    ),
-    index('activities_opportunity_created_idx').on(
-      table.opportunityId,
-      table.createdAt,
-    ),
-  ],
-);
-
-export const customFieldDefinitions = sqliteTable(
-  'custom_field_definitions',
-  {
-    archivedAt: timestampMs('archived_at'),
-    createdAt: timestampMs('created_at').notNull(),
-    entityType: text('entity_type', {
-      enum: ['contact', 'opportunity'],
-    }).notNull(),
-    id: text('id').primaryKey(),
-    key: text('key').notNull(),
-    label: text('label').notNull(),
-    options: text('options', { mode: 'json' })
-      .$type<string[]>()
-      .notNull()
-      .default(sql`'[]'`),
-    required: integer('required', { mode: 'boolean' }).notNull().default(false),
-    type: text('type', {
-      enum: ['text', 'number', 'boolean', 'date', 'select'],
-    }).notNull(),
-    updatedAt: timestampMs('updated_at').notNull(),
-    workspaceId: text('workspace_id')
-      .notNull()
-      .references(() => workspaces.id),
-  },
-  (table) => [
-    index('field_definitions_workspace_entity_idx').on(
-      table.workspaceId,
-      table.entityType,
-      table.archivedAt,
-    ),
-    uniqueIndex('field_definitions_workspace_entity_key_unique').on(
-      table.workspaceId,
-      table.entityType,
-      table.key,
-    ),
-  ],
-);
-
-export const customFieldValues = sqliteTable(
-  'custom_field_values',
-  {
-    createdAt: timestampMs('created_at').notNull(),
-    entityId: text('entity_id').notNull(),
-    entityType: text('entity_type', {
-      enum: ['contact', 'opportunity'],
-    }).notNull(),
-    fieldDefinitionId: text('field_definition_id')
-      .notNull()
-      .references(() => customFieldDefinitions.id),
-    id: text('id').primaryKey(),
-    updatedAt: timestampMs('updated_at').notNull(),
-    valueBoolean: integer('value_boolean'),
-    valueDate: text('value_date'),
-    valueNumber: integer('value_number'),
-    valueText: text('value_text'),
-    workspaceId: text('workspace_id')
-      .notNull()
-      .references(() => workspaces.id),
-  },
-  (table) => [
-    index('field_values_entity_idx').on(table.entityType, table.entityId),
-    uniqueIndex('field_values_entity_definition_unique').on(
-      table.entityType,
-      table.entityId,
-      table.fieldDefinitionId,
-    ),
+    index('activities_lead_created_idx').on(table.leadId, table.createdAt),
   ],
 );
 
@@ -238,7 +90,13 @@ export const apiTokens = sqliteTable(
     prefix: text('prefix').notNull(),
     revokedAt: timestampMs('revoked_at'),
     scope: text('scope').notNull().default('intake:write'),
-    tokenHash: text('token_hash').notNull().unique(),
+    // Browser tokens are safe to embed, so the value is stored and copyable.
+    // API tokens are secrets: only the hash is stored.
+    token: text('token').unique(),
+    tokenHash: text('token_hash').unique(),
+    type: text('type', { enum: ['api', 'browser'] })
+      .notNull()
+      .default('api'),
     workspaceId: text('workspace_id')
       .notNull()
       .references(() => workspaces.id),

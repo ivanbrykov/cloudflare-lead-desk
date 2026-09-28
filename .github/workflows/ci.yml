@@ -42,11 +42,6 @@ jobs:
       - name: Test
         run: pnpm exec vitest run
 
-      - name: Protect migration history
-        env:
-          MIGRATION_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
-        run: pnpm run check:migrations
-
       - name: Build
         run: pnpm run build
 

@@ -10,7 +10,11 @@ type App = ReturnType<typeof createApp>;
 // non-2xx response the renderer observes, and the UI legitimately renders
 // failure states (expired invitation, failed list fetch), so requests run on
 // the worker transport that keeps those statuses out of the page console.
-export const eden = treaty<App>(window.location.origin);
+export const eden = treaty<App>(window.location.origin, {
+  // Route Eden traffic through the worker-backed transport for the same reason
+  // `request` does: non-2xx responses otherwise land in the page console.
+  fetcher: quietFetch,
+});
 
 type ApiEnvelope<T> = { data: T };
 
@@ -23,7 +27,7 @@ export class ApiClientError extends Error {
   }
 }
 
-export const request = async <T>(
+export const requestBody = async <T>(
   path: string,
   init: RequestInit = {},
 ): Promise<T> => {
@@ -39,14 +43,24 @@ export const request = async <T>(
     return undefined as T;
   }
 
-  const payload = (await response.json()) as (ApiEnvelope<T> | T) & {
-    message?: string;
-  };
+  const payload = (await response.json()) as T & { message?: string };
   if (!response.ok) {
     throw new ApiClientError(
       response.status,
       payload.message ?? 'Request failed.',
     );
+  }
+
+  return payload;
+};
+
+export const request = async <T>(
+  path: string,
+  init: RequestInit = {},
+): Promise<T> => {
+  const payload = await requestBody<ApiEnvelope<T> | T>(path, init);
+  if (payload === undefined) {
+    return undefined as T;
   }
 
   // The Elysia API wraps successful payloads in a `{ data }` envelope. Some

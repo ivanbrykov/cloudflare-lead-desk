@@ -5,27 +5,17 @@ const NonEmptyString = Schema.String.pipe(
   Schema.minLength(1),
 );
 
-export const EmailSchema = NonEmptyString.pipe(
+export const Email = NonEmptyString.pipe(
   Schema.pattern(/^[^\s@]+@[^\s@][^\s.@]*\.[^\s@]+$/u),
 ).annotations({ description: 'A valid email address.' });
 
-export const RecordIdSchema = Schema.String.pipe(
+export const RecordId = Schema.String.pipe(
   Schema.pattern(/[0-7][\dA-HJKMNP-TV-Z]{25}/u),
   Schema.filter((value) => value.length === 26),
 ).annotations({ description: 'A ULID record identifier.' });
 
-export const FieldEntitySchema = Schema.Literal('contact', 'opportunity');
-export type FieldEntity = Schema.Schema.Type<typeof FieldEntitySchema>;
-
-export const FieldTypeSchema = Schema.Literal(
-  'text',
-  'number',
-  'boolean',
-  'date',
-  'select',
-);
-export type FieldType = Schema.Schema.Type<typeof FieldTypeSchema>;
-
+// Free-form per-lead custom fields: a JSON document with no definition
+// registry. The `Schema` suffix keeps the value distinct from its type.
 export const CustomFieldValuesSchema = Schema.Record({
   key: Schema.String,
   value: Schema.Unknown,
@@ -34,113 +24,128 @@ export type CustomFieldValues = Schema.Schema.Type<
   typeof CustomFieldValuesSchema
 >;
 
-export const ContactInputSchema = Schema.Struct({
+// Intake is the flat lead payload: one submission creates one lead. The old
+// contact + opportunity shape is gone; `customFields` is stored as a JSON
+// document on the lead with no definition registry.
+export const IntakeRequest = Schema.Struct({
   customFields: Schema.optional(CustomFieldValuesSchema),
-  email: Schema.optional(EmailSchema),
+  email: Email,
+  estimatedValue: Schema.optional(
+    Schema.Number.pipe(Schema.finite(), Schema.nonNegative()),
+  ),
   firstName: Schema.optional(NonEmptyString),
   lastName: Schema.optional(NonEmptyString),
-});
-export type ContactInput = Schema.Schema.Type<typeof ContactInputSchema>;
-
-export const OpportunityInputSchema = Schema.Struct({
-  customFields: Schema.optional(CustomFieldValuesSchema),
-  estimatedValue: Schema.optional(
-    Schema.Number.pipe(Schema.finite(), Schema.nonNegative()),
-  ),
-  name: NonEmptyString,
-  pipelineId: Schema.optional(RecordIdSchema),
-  source: Schema.optional(NonEmptyString),
-  stageId: Schema.optional(RecordIdSchema),
-});
-export type OpportunityInput = Schema.Schema.Type<
-  typeof OpportunityInputSchema
->;
-
-export const CreateOpportunitySchema = Schema.Struct({
-  contact: Schema.optional(ContactInputSchema),
-  contactId: Schema.optional(RecordIdSchema),
-  customFields: Schema.optional(CustomFieldValuesSchema),
-  estimatedValue: Schema.optional(
-    Schema.Number.pipe(Schema.finite(), Schema.nonNegative()),
-  ),
-  name: NonEmptyString,
-  pipelineId: Schema.optional(RecordIdSchema),
-  source: Schema.optional(NonEmptyString),
-  stageId: Schema.optional(RecordIdSchema),
-});
-export type CreateOpportunityInput = Schema.Schema.Type<
-  typeof CreateOpportunitySchema
->;
-
-export const IntakeInputSchema = Schema.Struct({
-  contact: Schema.Struct({
-    customFields: Schema.optional(CustomFieldValuesSchema),
-    email: EmailSchema,
-    firstName: Schema.optional(NonEmptyString),
-    lastName: Schema.optional(NonEmptyString),
-  }),
-  opportunity: Schema.Struct({
-    customFields: Schema.optional(CustomFieldValuesSchema),
-    estimatedValue: Schema.optional(
-      Schema.Number.pipe(Schema.finite(), Schema.nonNegative()),
-    ),
-    name: NonEmptyString,
-    pipelineId: Schema.optional(RecordIdSchema),
-    source: NonEmptyString,
-    stageId: Schema.optional(RecordIdSchema),
-  }),
+  name: Schema.optional(NonEmptyString),
   source: NonEmptyString,
 });
-export type IntakeInput = Schema.Schema.Type<typeof IntakeInputSchema>;
+export type IntakeInput = Schema.Schema.Type<typeof IntakeRequest>;
 
-export const CreatePipelineSchema = Schema.Struct({
+// Response contracts. Values are named `...Response` — the import site already
+// says it is a schema, so the suffix names the role instead. Derived types keep
+// plain descriptive names. Response values are in-process objects, so
+// timestamps are Date instances (`Schema.DateFromSelf`), not the ISO strings
+// the client receives.
+export const HealthResponse = Schema.Struct({ ok: Schema.Boolean });
+
+// Leads. Response contracts are the wire shape (ISO-8601 strings, JSON-encoded
+// dates) shared with the SPA; request contracts validate Elysia input through
+// Standard Schema.
+export const LeadViewResponse = Schema.Struct({
+  createdAt: Schema.String,
+  customFields: CustomFieldValuesSchema,
+  deletedAt: Schema.NullOr(Schema.String),
+  duplicateCount: Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
+  email: Schema.NullOr(Schema.String),
+  estimatedValue: Schema.NullOr(Schema.Number),
+  firstName: Schema.NullOr(Schema.String),
+  id: RecordId,
+  lastName: Schema.NullOr(Schema.String),
   name: NonEmptyString,
+  origin: Schema.NullOr(Schema.String),
+  publicKeyId: Schema.NullOr(Schema.String),
+  source: NonEmptyString,
+  updatedAt: Schema.String,
+});
+export type LeadView = Schema.Schema.Type<typeof LeadViewResponse>;
+
+export const LeadsResponse = Schema.Struct({
+  data: Schema.Array(LeadViewResponse),
+  nextCursor: Schema.NullOr(Schema.String),
+});
+export type LeadsResponseBody = Schema.Schema.Type<typeof LeadsResponse>;
+
+export const LeadActivityResponse = Schema.Struct({
+  actorEmail: Schema.NullOr(Schema.String),
+  body: NonEmptyString,
+  createdAt: Schema.String,
+  id: RecordId,
+  kind: Schema.String,
+});
+export type LeadActivity = Schema.Schema.Type<typeof LeadActivityResponse>;
+
+export const LeadActivitiesResponse = Schema.Struct({
+  data: Schema.Array(LeadActivityResponse),
 });
 
-export const CreateStageSchema = Schema.Struct({
-  color: Schema.optional(NonEmptyString),
-  name: NonEmptyString,
-  position: Schema.optional(Schema.Number.pipe(Schema.nonNegative())),
+export const ListLeadsQueryRequest = Schema.Struct({
+  cursor: Schema.optional(NonEmptyString),
+  limit: Schema.optional(
+    Schema.NumberFromString.pipe(
+      Schema.int(),
+      Schema.greaterThanOrEqualTo(1),
+      Schema.lessThanOrEqualTo(100),
+    ),
+  ),
+  query: Schema.optional(NonEmptyString),
 });
+export type ListLeadsQuery = Schema.Schema.Type<typeof ListLeadsQueryRequest>;
 
-export const MoveOpportunitySchema = Schema.Struct({
-  stageId: RecordIdSchema,
+// Lead writes. `CreateLeadRequest` covers manual/operator entry; intake has its
+// own flat `IntakeRequest` because it is the unauthenticated-token contract.
+export const CreateLeadRequest = Schema.Struct({
+  customFields: Schema.optional(CustomFieldValuesSchema),
+  email: Schema.optional(Email),
+  estimatedValue: Schema.optional(
+    Schema.Number.pipe(Schema.finite(), Schema.nonNegative()),
+  ),
+  firstName: Schema.optional(NonEmptyString),
+  lastName: Schema.optional(NonEmptyString),
+  name: Schema.optional(NonEmptyString),
+  source: Schema.optional(NonEmptyString),
 });
+export type CreateLeadInput = Schema.Schema.Type<typeof CreateLeadRequest>;
 
-export const UpdateOpportunitySchema = Schema.Struct({
+export const UpdateLeadRequest = Schema.Struct({
+  customFields: Schema.optional(CustomFieldValuesSchema),
+  email: Schema.optional(Schema.NullOr(Email)),
   estimatedValue: Schema.optional(
     Schema.NullOr(Schema.Number.pipe(Schema.finite(), Schema.nonNegative())),
   ),
+  firstName: Schema.optional(Schema.NullOr(NonEmptyString)),
+  lastName: Schema.optional(Schema.NullOr(NonEmptyString)),
   name: Schema.optional(NonEmptyString),
-}).pipe(
-  Schema.filter(
-    (value) => value.name !== undefined || value.estimatedValue !== undefined,
-  ),
-);
-export type UpdateOpportunityInput = Schema.Schema.Type<
-  typeof UpdateOpportunitySchema
+  source: Schema.optional(NonEmptyString),
+});
+export type UpdateLeadInput = Schema.Schema.Type<typeof UpdateLeadRequest>;
+
+export const BulkDeleteLeadsRequest = Schema.Struct({
+  ids: Schema.Array(RecordId).pipe(Schema.minItems(1), Schema.maxItems(100)),
+});
+export type BulkDeleteLeadsInput = Schema.Schema.Type<
+  typeof BulkDeleteLeadsRequest
 >;
 
-export const CreateActivitySchema = Schema.Struct({
+export const CreateLeadActivityRequest = Schema.Struct({
   body: NonEmptyString,
   kind: Schema.optional(Schema.Literal('note', 'contact_attempt')),
 });
-
-export const CreateCustomFieldSchema = Schema.Struct({
-  entityType: FieldEntitySchema,
-  key: NonEmptyString.pipe(Schema.pattern(/^[a-z][\d_a-z]*$/u)),
-  label: NonEmptyString,
-  options: Schema.optional(Schema.Array(NonEmptyString)),
-  required: Schema.optional(Schema.Boolean),
-  type: FieldTypeSchema,
-});
-export type CreateCustomField = Schema.Schema.Type<
-  typeof CreateCustomFieldSchema
+export type CreateLeadActivityInput = Schema.Schema.Type<
+  typeof CreateLeadActivityRequest
 >;
 
 // A future UTC ISO-8601 date (optional time, offset, or Z) for expiry
 // overrides on API tokens and staff invitations.
-const FutureIsoDateSchema = Schema.String.pipe(
+const FutureIsoDate = Schema.String.pipe(
   Schema.pattern(
     /^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:\d{2})?)?$/u,
   ),
@@ -151,56 +156,58 @@ const FutureIsoDateSchema = Schema.String.pipe(
   }),
 );
 
-export const CreateTokenSchema = Schema.Struct({
-  expiresAt: Schema.optional(FutureIsoDateSchema),
+export const CreateTokenRequest = Schema.Struct({
+  expiresAt: Schema.optional(FutureIsoDate),
   name: NonEmptyString,
+  type: Schema.optional(Schema.Literal('api', 'browser')),
 }).annotations({
-  description: 'Creates an intake token (90 days by default).',
+  description:
+    'Creates an intake token (90 days by default). Browser tokens are safe to embed in a website and can only create leads.',
 });
 
-export const CreateInviteSchema = Schema.Struct({
-  expiresAt: Schema.optional(FutureIsoDateSchema),
+export const CreateInviteRequest = Schema.Struct({
+  expiresAt: Schema.optional(FutureIsoDate),
   name: NonEmptyString,
 }).annotations({
   description: 'Creates a single-use staff invitation (7 days by default).',
 });
-export type CreateInviteInput = Schema.Schema.Type<typeof CreateInviteSchema>;
+export type CreateInviteInput = Schema.Schema.Type<typeof CreateInviteRequest>;
 
-export const ValidateInviteSchema = Schema.Struct({
+export const ValidateInviteRequest = Schema.Struct({
   token: Schema.String,
 }).annotations({
   description:
     'Checks a registration grant without consuming it. Any token is an input; only 200 vs 403 differ.',
 });
 export type ValidateInviteInput = Schema.Schema.Type<
-  typeof ValidateInviteSchema
+  typeof ValidateInviteRequest
 >;
 
-export const SetStaffDisabledSchema = Schema.Struct({
+export const SetStaffDisabledRequest = Schema.Struct({
   disabled: Schema.Boolean,
 }).annotations({
   description:
     'Enables or disables a staff account. Disabling also revokes every session of that account; re-enabling preserves the credentials but never restores old sessions.',
 });
 export type SetStaffDisabledInput = Schema.Schema.Type<
-  typeof SetStaffDisabledSchema
+  typeof SetStaffDisabledRequest
 >;
 
-export const PaginationSchema = Schema.Struct({
-  cursor: Schema.optional(RecordIdSchema),
+export const Pagination = Schema.Struct({
+  cursor: Schema.optional(RecordId),
   limit: Schema.optional(
     Schema.Number.pipe(Schema.int(), Schema.greaterThanOrEqualTo(1)),
   ),
   query: Schema.optional(NonEmptyString),
 });
 
-export const ApiErrorSchema = Schema.Struct({
+export const ApiErrorResponse = Schema.Struct({
   code: NonEmptyString,
   details: Schema.optional(Schema.Unknown),
   message: NonEmptyString,
 });
 
-export type ApiError = Schema.Schema.Type<typeof ApiErrorSchema>;
+export type ApiError = Schema.Schema.Type<typeof ApiErrorResponse>;
 
 export const normalizeEmail = (email: string): string =>
   email.trim().toLowerCase();
