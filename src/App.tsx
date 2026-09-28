@@ -207,10 +207,20 @@ const toLocalInputValue = (date: Date) =>
     .toISOString()
     .slice(0, 16);
 
-const copyToClipboard = async (value: string) => {
+const copyToClipboard = async (value: string, message = 'Copied') => {
   await navigator.clipboard.writeText(value);
-  toast.success('Token copied');
+  toast.success(message);
 };
+
+const publicIntakeSnippet = (token: string): string =>
+  [
+    `<form data-lead-desk="${token}">`,
+    '  <input name="email" type="email" required>',
+    '  <input name="name" placeholder="How can we help?">',
+    '  <button type="submit">Send</button>',
+    '</form>',
+    `<script src="${window.location.origin}/sdk/v1.js" defer></script>`,
+  ].join('\n');
 
 const localTimezoneLabel = () => {
   const offsetMinutes = -new Date().getTimezoneOffset();
@@ -510,11 +520,26 @@ const TokensPage = () => {
                           <button
                             className="text-xs font-semibold text-cyan-300 hover:text-cyan-200"
                             onClick={() => {
-                              void copyToClipboard(token.token ?? '');
+                              void copyToClipboard(
+                                token.token ?? '',
+                                'Token copied',
+                              );
                             }}
                             type="button"
                           >
                             Copy
+                          </button>
+                          <button
+                            className="text-xs font-semibold text-cyan-300 hover:text-cyan-200"
+                            onClick={() => {
+                              void copyToClipboard(
+                                publicIntakeSnippet(token.token ?? ''),
+                                'Snippet copied',
+                              );
+                            }}
+                            type="button"
+                          >
+                            Snippet
                           </button>
                         </div>
                       ) : (

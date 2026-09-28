@@ -236,8 +236,37 @@ await fetch(`https://crm.example.com/v1/public/intakes/${publicToken}`, {
 
 Leads created this way record the request `Origin` and the public key, shown on
 the lead detail. Revoking the token stops it immediately, and the global bulk
-soft delete is the spam cleanup. (A drop-in `v1.js` SDK that wires this to a
-plain HTML form is the next step.)
+soft delete is the spam cleanup.
+
+### Browser SDK
+
+The CRM serves a small, dependency-free SDK at `/sdk/v1.js`. Give a form a
+`data-lead-desk` attribute with the public token and the SDK handles the submit:
+
+```html
+<form data-lead-desk="cld_pub_…">
+  <input name="email" type="email" required>
+  <input name="name" placeholder="How can we help?">
+  <input name="plan" value="pro"> <!-- unknown names become custom fields -->
+  <button type="submit">Send</button>
+  <p data-lead-desk-status></p>
+</form>
+<script src="https://crm.example.com/sdk/v1.js" defer></script>
+```
+
+- `email`, `firstName`/`first_name`/`first-name`, `lastName`, `name`, and
+  `source` map to lead fields; every other named input lands in
+  `customFields`.
+- The endpoint origin comes from the script's own `src`, so the form can live
+  on any site. No cookies or credentials are sent.
+- Attribute overrides: `data-lead-desk-source`, `data-lead-desk-success`,
+  `data-lead-desk-error`, `data-lead-desk-reset="false"`.
+- Status text renders into `[data-lead-desk-status]`; the form also dispatches
+  `lead-desk:success` and `lead-desk:error` custom events.
+- `window.LeadDesk.submit(token, data)` posts programmatically, and
+  `window.LeadDesk.init(root)` binds forms added after load (for example after
+  client-side navigation).
+- Password-, card-, and secret-looking fields are never collected.
 
 ### Intake idempotency contract
 
