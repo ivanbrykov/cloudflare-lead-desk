@@ -326,7 +326,9 @@ test('token list exposes expiresAt and never a raw token or hash', async () => {
     expect(rows).toHaveLength(2);
     for (const row of rows) {
       expect(Object.hasOwn(row, 'expiresAt'), JSON.stringify(row)).toBe(true);
-      expect(Object.hasOwn(row, 'token')).toBe(false);
+      // The list never exposes a private token or any hash; public tokens are
+      // stored for copying and therefore appear verbatim.
+      expect(row.token).toBeNull();
       expect(Object.hasOwn(row, 'tokenHash')).toBe(false);
     }
 

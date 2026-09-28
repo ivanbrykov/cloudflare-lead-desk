@@ -61,6 +61,8 @@ export const LeadViewResponse = Schema.Struct({
   id: RecordId,
   lastName: Schema.NullOr(Schema.String),
   name: NonEmptyString,
+  origin: Schema.NullOr(Schema.String),
+  publicKeyId: Schema.NullOr(Schema.String),
   source: NonEmptyString,
   updatedAt: Schema.String,
 });
@@ -157,8 +159,10 @@ const FutureIsoDate = Schema.String.pipe(
 export const CreateTokenRequest = Schema.Struct({
   expiresAt: Schema.optional(FutureIsoDate),
   name: NonEmptyString,
+  type: Schema.optional(Schema.Literal('private', 'public')),
 }).annotations({
-  description: 'Creates an intake token (90 days by default).',
+  description:
+    'Creates an intake token (90 days by default). Public tokens are safe to embed in a website and can only create leads.',
 });
 
 export const CreateInviteRequest = Schema.Struct({

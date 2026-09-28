@@ -40,6 +40,7 @@ export const createIntakeCommand = (
   environment: Env,
   input: IntakeInput,
   idempotencyKey: string,
+  provenance?: { origin: null | string; publicKeyId: null | string },
 ) =>
   Effect.gen(function* () {
     // Request identity: a pure fingerprint of the static-schema-decoded input.
@@ -58,7 +59,13 @@ export const createIntakeCommand = (
     }
 
     return yield* persist((): Promise<IntakePersistenceOutcome> =>
-      createLeadAtomically(environment, input, idempotencyKey, requestHash),
+      createLeadAtomically(
+        environment,
+        input,
+        idempotencyKey,
+        requestHash,
+        provenance,
+      ),
     );
   });
 

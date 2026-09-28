@@ -23,6 +23,7 @@ import {
   Users,
 } from 'lucide-react';
 import { useReducer, useRef, useState } from 'react';
+import { toast } from 'sonner';
 import { Link, Route, Switch, useLocation } from 'wouter';
 
 type Invite = {
@@ -49,6 +50,8 @@ type Token = {
   name: string;
   prefix: string;
   revokedAt: null | string;
+  token: null | string;
+  type: 'private' | 'public';
 };
 
 const navigation = [
@@ -204,6 +207,11 @@ const toLocalInputValue = (date: Date) =>
     .toISOString()
     .slice(0, 16);
 
+const copyToClipboard = async (value: string) => {
+  await navigator.clipboard.writeText(value);
+  toast.success('Token copied');
+};
+
 const localTimezoneLabel = () => {
   const offsetMinutes = -new Date().getTimezoneOffset();
   const absolute = Math.abs(offsetMinutes);
@@ -253,6 +261,7 @@ const CreateTokenDialog = ({
   const [formError, setFormError] = useState<null | string>(null);
   const [name, setName] = useState('');
   const [rawToken, setRawToken] = useState<null | string>(null);
+  const [tokenType, setTokenType] = useState<'private' | 'public'>('private');
   // The parent remounts this dialog (via its key) on every open, so state is
   // always fresh: empty form, 90-day default matching the backend, no raw
   // token, and an idle create mutation.
@@ -260,7 +269,7 @@ const CreateTokenDialog = ({
   const create = useMutation({
     mutationFn: (input: { expiresAt?: string; name: string }) =>
       request<Token & { token: string }>('/v1/tokens', {
-        body: JSON.stringify(input),
+        body: JSON.stringify({ ...input, type: tokenType }),
         method: 'POST',
       }),
     onSuccess: (created) => {
@@ -333,7 +342,9 @@ const CreateTokenDialog = ({
       {rawToken ? (
         <div className="grid gap-4">
           <p className="text-sm text-slate-300">
-            Token created. It will not be shown again.
+            {tokenType === 'public'
+              ? 'Public token created. It is stored, so you can copy it again from the list.'
+              : 'Token created. It will not be shown again.'}
           </p>
           <code className="block break-all rounded-md border border-slate-700 bg-slate-950 p-3 font-mono text-xs text-slate-100">
             {rawToken}
@@ -375,6 +386,27 @@ const CreateTokenDialog = ({
               value={name}
             />
           </label>
+          <div className="grid gap-1">
+            <label className="grid gap-1 text-sm text-slate-300">
+              Token type
+              <select
+                onChange={(event) =>
+                  setTokenType(
+                    event.target.value === 'public' ? 'public' : 'private',
+                  )
+                }
+                value={tokenType}
+              >
+                <option value="private">Private — server integrations</option>
+                <option value="public">Public — browser forms</option>
+              </select>
+            </label>
+            <p className="text-xs text-slate-500">
+              {tokenType === 'public'
+                ? 'Safe to embed in a website; it can only create leads.'
+                : 'Keep it secret; it can call the integration API.'}
+            </p>
+          </div>
           <div className="grid gap-1">
             <label className="grid gap-1 text-sm text-slate-300">
               Expiration
@@ -439,7 +471,7 @@ const TokensPage = () => {
           </Button>
         }
         eyebrow="Integrations"
-        title="API tokens"
+        title="Intake tokens"
       />
       <div className="p-5 sm:p-8">
         {tokens.isPending ? (
@@ -452,6 +484,7 @@ const TokensPage = () => {
               <thead className="bg-slate-900 text-xs uppercase tracking-wider text-slate-400">
                 <tr>
                   <th className="px-4 py-3">Name</th>
+                  <th className="px-4 py-3">Type</th>
                   <th className="px-4 py-3">Created</th>
                   <th className="px-4 py-3">Expires</th>
                   <th className="px-4 py-3">Status</th>
@@ -466,9 +499,41 @@ const TokensPage = () => {
                   >
                     <td className="px-4 py-3">
                       <p className="font-medium text-slate-100">{token.name}</p>
-                      <code className="font-mono text-xs text-slate-500">
-                        {token.prefix}…
-                      </code>
+                      {token.type === 'public' && token.token !== null ? (
+                        <div className="mt-1 flex items-center gap-2">
+                          <code
+                            className="max-w-72 truncate font-mono text-xs text-slate-500"
+                            title={token.token}
+                          >
+                            {token.token}
+                          </code>
+                          <button
+                            className="text-xs font-semibold text-cyan-300 hover:text-cyan-200"
+                            onClick={() => {
+                              void copyToClipboard(token.token ?? '');
+                            }}
+                            type="button"
+                          >
+                            Copy
+                          </button>
+                        </div>
+                      ) : (
+                        <code className="font-mono text-xs text-slate-500">
+                          {token.prefix}…
+                        </code>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      <span
+                        className={cn(
+                          'rounded px-2 py-0.5 text-xs',
+                          token.type === 'public'
+                            ? 'bg-cyan-500/15 text-cyan-300'
+                            : 'bg-slate-800 text-slate-400',
+                        )}
+                      >
+                        {token.type === 'public' ? 'Public' : 'Private'}
+                      </span>
                     </td>
                     <td className="px-4 py-3 text-slate-500">
                       {new Date(token.createdAt).toLocaleDateString()}
@@ -505,7 +570,7 @@ const TokensPage = () => {
             </table>
           </div>
         ) : (
-          <p className="text-sm text-slate-400">No API tokens yet.</p>
+          <p className="text-sm text-slate-400">No intake tokens yet.</p>
         )}
         {revoke.error && (
           <div className="mt-4">

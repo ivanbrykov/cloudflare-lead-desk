@@ -258,6 +258,52 @@ export const openApiSpecification = {
         summary: 'Add a note to a lead',
       },
     },
+    '/v1/public/intakes/{token}': {
+      post: {
+        description:
+          'The browser-facing intake endpoint. The public token is safe to embed and can only create leads. CORS is enabled; no session or Authorization header is required. An optional Idempotency-Key header makes retries safe. The body is byte-limited to 65,536 bytes like the private route.',
+        parameters: [
+          {
+            in: 'path',
+            name: 'token',
+            required: true,
+            schema: { type: 'string' },
+          },
+        ],
+        requestBody: {
+          content: {
+            'application/json': {
+              schema: {
+                properties: {
+                  customFields: {
+                    additionalProperties: true,
+                    type: 'object',
+                  },
+                  email: { type: 'string' },
+                  estimatedValue: { type: 'number' },
+                  firstName: { type: 'string' },
+                  lastName: { type: 'string' },
+                  name: { type: 'string' },
+                  source: { type: 'string' },
+                },
+                required: ['email', 'source'],
+                type: 'object',
+              },
+            },
+          },
+          required: true,
+        },
+        responses: {
+          '201': { description: '{ data: { created: true } }' },
+          '401': { description: 'Missing, unknown, or revoked public token' },
+          '409': { description: 'idempotency_conflict' },
+          '413': { description: 'payload_too_large (over 65,536 bytes)' },
+          '415': { description: 'unsupported_media_type' },
+          '422': validationError,
+        },
+        summary: 'Create a lead from a public browser form',
+      },
+    },
     '/v1/tokens': {
       get: {
         responses: { '200': { description: '{ data: [token] }' } },
@@ -271,6 +317,7 @@ export const openApiSpecification = {
                 properties: {
                   expiresAt: { type: 'string' },
                   name: { type: 'string' },
+                  type: { enum: ['private', 'public'], type: 'string' },
                 },
                 required: ['name'],
                 type: 'object',

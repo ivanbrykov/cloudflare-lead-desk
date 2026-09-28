@@ -6,7 +6,7 @@ A self-hosted, Cloudflare-native CRM for teams handling inbound leads. It stores
 
 - Leads, notes, custom fields, and a table work queue.
 - JSON custom fields stored on each lead, with no definition registry.
-- Email + password staff authentication (Better Auth, D1-backed sessions) and displayed-once `intake:write` tokens.
+- Email + password staff authentication (Better Auth, D1-backed sessions) and revocable private (displayed-once) plus public (embeddable) intake tokens.
 - Idempotent, atomic `POST /v1/intakes` capture for websites and other trusted systems.
 
 Companies, tasks, email sync, imports, reporting, workflows, custom objects, and multi-tenancy are deliberately not included yet.
@@ -190,8 +190,8 @@ installer prompts. Deployed configuration stays `ENVIRONMENT=production`.
 
 ## Integration API
 
-Create an intake token in **Settings → Tokens**, then send an idempotent form
-submission. One submission creates one lead:
+Create a **private** intake token in **Settings → Tokens**, then send an
+idempotent form submission. One submission creates one lead:
 
 ```sh
 curl https://crm.example.com/v1/intakes \
@@ -208,6 +208,36 @@ curl https://crm.example.com/v1/intakes \
 ```
 
 The interactive OpenAPI documentation is available at `/openapi`.
+
+### Public intake (browser forms)
+
+Create a **public** token in **Settings → Tokens** and embed it in the site.
+Public tokens are safe to expose: they can only create leads through
+`POST /v1/public/intakes/:token`, which answers CORS preflight so a browser can
+post directly. No session or `Authorization` header is required; an optional
+`Idempotency-Key` header makes retries safe.
+
+```js
+await fetch(`https://crm.example.com/v1/public/intakes/${publicToken}`, {
+  body: JSON.stringify({
+    customFields: { form: 'pricing', plan: 'pro' },
+    email: 'alex@example.com',
+    firstName: 'Sam',
+    name: 'New service inquiry',
+    source: 'pricing_form',
+  }),
+  headers: {
+    'Content-Type': 'application/json',
+    'Idempotency-Key': crypto.randomUUID(),
+  },
+  method: 'POST',
+});
+```
+
+Leads created this way record the request `Origin` and the public key, shown on
+the lead detail. Revoking the token stops it immediately, and the global bulk
+soft delete is the spam cleanup. (A drop-in `v1.js` SDK that wires this to a
+plain HTML form is the next step.)
 
 ### Intake idempotency contract
 

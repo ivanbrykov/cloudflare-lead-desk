@@ -234,6 +234,18 @@ export const LeadDetailPage = ({ id }: { readonly id: string }) => {
             </div>
           </form>
           <dl className="mt-5 grid gap-2 text-sm">
+            {record.publicKeyId !== null && (
+              <div className="flex justify-between gap-4">
+                <dt className="text-slate-500">Intake</dt>
+                <dd className="text-right text-slate-200">Public web form</dd>
+              </div>
+            )}
+            {record.origin !== null && (
+              <div className="flex justify-between gap-4">
+                <dt className="text-slate-500">Origin</dt>
+                <dd className="text-right text-slate-200">{record.origin}</dd>
+              </div>
+            )}
             {Object.entries(record.customFields).map(([key, value]) => (
               <div
                 className="flex justify-between gap-4"

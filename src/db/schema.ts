@@ -90,7 +90,13 @@ export const apiTokens = sqliteTable(
     prefix: text('prefix').notNull(),
     revokedAt: timestampMs('revoked_at'),
     scope: text('scope').notNull().default('intake:write'),
-    tokenHash: text('token_hash').notNull().unique(),
+    // Public tokens are safe to embed, so the value is stored and copyable.
+    // Private tokens are secrets: only the hash is stored.
+    token: text('token').unique(),
+    tokenHash: text('token_hash').unique(),
+    type: text('type', { enum: ['private', 'public'] })
+      .notNull()
+      .default('private'),
     workspaceId: text('workspace_id')
       .notNull()
       .references(() => workspaces.id),

@@ -96,6 +96,8 @@ export type LeadRecord = {
   id: string;
   lastName: null | string;
   name: string;
+  origin: null | string;
+  publicKeyId: null | string;
   source: string;
   updatedAt: Date;
 };
@@ -165,6 +167,8 @@ const toLead = (
   id: row.id,
   lastName: row.lastName,
   name: row.name,
+  origin: row.origin,
+  publicKeyId: row.publicKeyId,
   source: row.source,
   updatedAt: row.updatedAt,
 });
@@ -251,8 +255,11 @@ export const listLeadActivities = async (environment: Env, leadId: string) =>
     )
     .orderBy(desc(activities.createdAt));
 
-// Intake preserves the current workspace default pipeline when a submission
-// omits one.
+const randomToken = (prefix: string): string =>
+  `${prefix}${crypto
+    .getRandomValues(new Uint8Array(32))
+    .reduce((text, byte) => text + byte.toString(16).padStart(2, '0'), '')}`;
+
 const hashToken = async (token: string): Promise<string> => {
   const source = new TextEncoder().encode(token);
   const hash = await crypto.subtle.digest('SHA-256', source);
@@ -265,29 +272,27 @@ const TOKEN_DEFAULT_TTL_MS = 90 * 86_400_000;
 
 export const createApiToken = async (
   environment: Env,
-  name: string,
-  expiresAt?: string,
+  input: { expiresAt?: string; name: string; type: 'private' | 'public' },
 ) => {
-  const raw = `cld_${crypto
-    .getRandomValues(new Uint8Array(32))
-    .reduce((text, byte) => text + byte.toString(16).padStart(2, '0'), '')}`;
-  const tokenHash = await hashToken(raw);
+  const raw = randomToken(input.type === 'public' ? 'cld_pub_' : 'cld_');
   const record = {
     createdAt: now(),
     expiresAt:
-      expiresAt === undefined
+      input.expiresAt === undefined
         ? new Date(Date.now() + TOKEN_DEFAULT_TTL_MS)
-        : new Date(expiresAt),
+        : new Date(input.expiresAt),
     id: id(),
-    name,
+    name: input.name,
     prefix: raw.slice(0, 12),
-    scope: 'intake:write',
-    tokenHash,
+    scope: input.type === 'public' ? 'public:intake' : 'intake:write',
+    token: input.type === 'public' ? raw : null,
+    tokenHash: input.type === 'private' ? await hashToken(raw) : null,
+    type: input.type,
     workspaceId: DEFAULT_WORKSPACE_ID,
   };
   await getDatabase(environment).insert(apiTokens).values(record);
-  // Return only the public projection plus the raw token, which is shown
-  // exactly once. The hash and workspace id stay server-side.
+  // Private tokens are shown exactly once; public tokens are stored so they
+  // can be copied into a site again. The hash never leaves the server.
   return {
     createdAt: record.createdAt,
     expiresAt: record.expiresAt,
@@ -297,6 +302,7 @@ export const createApiToken = async (
     revokedAt: null,
     scope: record.scope,
     token: raw,
+    type: record.type,
   };
 };
 
@@ -311,6 +317,8 @@ export const listApiTokens = async (environment: Env) =>
       prefix: apiTokens.prefix,
       revokedAt: apiTokens.revokedAt,
       scope: apiTokens.scope,
+      token: apiTokens.token,
+      type: apiTokens.type,
     })
     .from(apiTokens)
     .where(eq(apiTokens.workspaceId, DEFAULT_WORKSPACE_ID))
@@ -653,6 +661,7 @@ export const isIntakeToken = async (
     .where(
       and(
         eq(apiTokens.tokenHash, tokenHash),
+        eq(apiTokens.type, 'private'),
         eq(apiTokens.scope, 'intake:write'),
         isNull(apiTokens.revokedAt),
         or(isNull(apiTokens.expiresAt), gt(apiTokens.expiresAt, now())),
@@ -669,6 +678,40 @@ export const isIntakeToken = async (
     .where(eq(apiTokens.id, record.id))
     .run();
   return true;
+};
+
+/**
+ * A public intake token is write-only: it can create a lead through
+ * `/v1/public/intakes/:token` and nothing else. Returns the token row
+ * (id used as lead provenance) or null. The value is stored verbatim
+ * because public tokens are safe to embed and copy.
+ */
+export const isPublicIntakeToken = async (
+  environment: Env,
+  token: string,
+): Promise<null | { id: string }> => {
+  const record = await getDatabase(environment)
+    .select({ id: apiTokens.id })
+    .from(apiTokens)
+    .where(
+      and(
+        eq(apiTokens.token, token),
+        eq(apiTokens.type, 'public'),
+        isNull(apiTokens.revokedAt),
+        or(isNull(apiTokens.expiresAt), gt(apiTokens.expiresAt, now())),
+      ),
+    )
+    .get();
+  if (!record) {
+    return null;
+  }
+
+  await getDatabase(environment)
+    .update(apiTokens)
+    .set({ lastUsedAt: now() })
+    .where(eq(apiTokens.id, record.id))
+    .run();
+  return record;
 };
 
 export type StoredIntakeKey = {
@@ -760,6 +803,7 @@ export const createLeadAtomically = async (
   input: IntakeInput,
   idempotencyKey: string,
   requestHash: string,
+  provenance?: { origin: null | string; publicKeyId: null | string },
 ): Promise<IntakePersistenceOutcome> => {
   // Raw D1 binds do not accept Date, so work in Unix milliseconds directly.
   const timestamp = now().getTime();
@@ -773,7 +817,7 @@ export const createLeadAtomically = async (
           id, workspace_id, email, normalized_email,
           first_name, last_name, name, source, estimated_value, custom_fields,
           origin, public_key_id, created_at, updated_at, deleted_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, NULL)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
     ).bind(
       leadId,
       DEFAULT_WORKSPACE_ID,
@@ -785,6 +829,8 @@ export const createLeadAtomically = async (
       input.source,
       input.estimatedValue ?? null,
       JSON.stringify(input.customFields ?? {}),
+      provenance?.origin ?? null,
+      provenance?.publicKeyId ?? null,
       timestamp,
       timestamp,
     ),
