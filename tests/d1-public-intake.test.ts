@@ -255,21 +255,76 @@ test('the public route answers CORS preflight and marks responses', async () => 
       method: 'OPTIONS',
     });
     expect(preflight.status).toBeLessThan(300);
-    expect(preflight.headers.get('access-control-allow-origin')).toBe(
-      'https://ileo.test',
-    );
+    expect(preflight.headers.get('access-control-allow-origin')).toBe('*');
+    expect(
+      preflight.headers.get('access-control-allow-credentials'),
+    ).toBeNull();
     expect(preflight.headers.get('access-control-allow-methods')).toContain(
       'POST',
     );
+    expect(
+      preflight.headers.get('access-control-allow-headers')?.toLowerCase(),
+    ).toContain('idempotency-key');
 
     const post = await fx.request(`/v1/public/intakes/${token.token}`, {
       body: { email: 'cors@example.test', source: 'website_form' },
       headers: { 'Idempotency-Key': 'cors-key', Origin: 'https://ileo.test' },
     });
     expect(post.status, await post.clone().text()).toBe(201);
-    expect(post.headers.get('access-control-allow-origin')).toBe(
-      'https://ileo.test',
+    expect(post.headers.get('access-control-allow-origin')).toBe('*');
+    expect(post.headers.get('access-control-allow-credentials')).toBeNull();
+  } finally {
+    await fx.dispose();
+  }
+});
+
+test('CORS stays scoped to the public route', async () => {
+  const fx = await startFixture();
+  try {
+    const response = await fx.request('/v1/leads', {
+      headers: { Origin: 'https://evil.example' },
+      method: 'GET',
+    });
+    expect(response.headers.get('access-control-allow-origin')).toBeNull();
+    expect(response.headers.get('access-control-allow-credentials')).toBeNull();
+  } finally {
+    await fx.dispose();
+  }
+});
+
+test('browser idempotency keys cannot collide with API intake keys', async () => {
+  const fx = await startFixture();
+  try {
+    const apiToken = await createToken(fx, { name: 'Server' });
+    const browserToken = await createToken(fx, {
+      name: 'Website',
+      type: 'browser',
+    });
+
+    const api = await fx.request('/v1/intakes', {
+      body: { email: 'api@example.test', source: 'server' },
+      headers: {
+        Authorization: `Bearer ${String(apiToken.token)}`,
+        'Idempotency-Key': 'shared-key-1',
+      },
+    });
+    expect(api.status, await api.clone().text()).toBe(201);
+
+    const browser = await fx.request(
+      `/v1/public/intakes/${String(browserToken.token)}`,
+      {
+        body: { email: 'browser@example.test', source: 'website_form' },
+        headers: { 'Idempotency-Key': 'shared-key-1' },
+      },
     );
+    expect(browser.status, await browser.clone().text()).toBe(201);
+
+    const row = await fx.db
+      .prepare(
+        "SELECT count(*) AS n FROM leads WHERE email IN ('api@example.test', 'browser@example.test')",
+      )
+      .first();
+    expect(row?.n).toBe(2);
   } finally {
     await fx.dispose();
   }

@@ -21,7 +21,7 @@
     }
 
     const scripts = document.querySelectorAll('script[src*="/sdk/v1.js"]');
-    return scripts.length > 0 ? scripts.at(-1).src : '';
+    return scripts.length > 0 ? scripts[scripts.length - 1].src : '';
   })();
 
   const endpointOrigin = (() => {
@@ -107,6 +107,7 @@
       `${endpointOrigin}/v1/public/intakes/${encodeURIComponent(token)}`,
       {
         body: JSON.stringify(payload),
+        credentials: 'omit',
         headers: {
           'Content-Type': 'application/json',
           'Idempotency-Key': newIdempotencyKey(),

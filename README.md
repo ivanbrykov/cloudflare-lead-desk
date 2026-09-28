@@ -275,13 +275,13 @@ decoding; unsupported or missing media types return `415 unsupported_media_type`
 when within the limit, and oversized bodies return 413 regardless of media type.
 
 
-`POST /v1/intakes` is the only size-limited route: the raw request body is
-bounded to **65,536 actual bytes** (enforced on the streamed body, with or
+`POST /v1/intakes` and `POST /v1/public/intakes/:token` share the size limit:
+the raw request body is bounded to **65,536 actual bytes** (enforced on the streamed body, with or
 without a declared `Content-Length`) before JSON parsing. Larger bodies get
 `413 payload_too_large` and write no intake data.
 
-The limit is owned by the intake route itself, not by the Worker entry: a
-route-local Elysia `parse` hook reads the streamed body with
+The limit is owned by the intake routes themselves, not by the Worker entry:
+a route-local Elysia `parse` hook reads the streamed body with
 [`get-stream`](https://github.com/sindresorhus/get-stream)
 (`getStreamAsArrayBuffer`, `maxBuffer: 65_536` bytes), then decodes it with a
 standard `TextDecoder` and `JSON.parse`. Because the hook is attached to the

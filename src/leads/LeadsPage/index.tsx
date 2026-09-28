@@ -51,11 +51,16 @@ export const LeadsPage = () => {
   };
 
   const deleteSelected = useMutation({
-    mutationFn: () =>
-      request('/v1/leads/bulk-delete', {
-        body: JSON.stringify({ ids: selected }),
-        method: 'POST',
-      }),
+    mutationFn: async () => {
+      // Select-all can load more than the API's 100-id bulk limit, so send
+      // the selection in chunks instead of failing validation.
+      for (let index = 0; index < selected.length; index += 100) {
+        await request('/v1/leads/bulk-delete', {
+          body: JSON.stringify({ ids: selected.slice(index, index + 100) }),
+          method: 'POST',
+        });
+      }
+    },
     onSuccess: () => {
       toast.success(
         `${selected.length} ${selected.length === 1 ? 'lead' : 'leads'} deleted`,

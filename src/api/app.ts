@@ -57,7 +57,6 @@ import {
   UpdateLeadRequest,
   ValidateInviteRequest,
 } from '@/domain/schemas';
-import { cors } from '@elysiajs/cors';
 import { Effect, Either, Schema } from 'effect';
 import { Elysia } from 'elysia';
 import { CloudflareAdapter } from 'elysia/adapter/cloudflare-worker';
@@ -196,76 +195,132 @@ const requireAdmin = async (
   }
 };
 
+// The public intake route is unauthenticated and cookie-free, so it answers
+// with `*` and no credentials. Scoped here rather than through
+// @elysiajs/cors, whose onRequest hook is global and would add reflected,
+// credentialed CORS headers to staff routes as well.
+const PUBLIC_CORS_HEADERS = {
+  'Access-Control-Allow-Headers': 'Content-Type, Idempotency-Key',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Max-Age': '86400',
+} as const;
+
+const withPublicCors = (
+  response: Response | undefined,
+): Response | undefined => {
+  if (response === undefined) {
+    return undefined;
+  }
+
+  const headers = new Headers(response.headers);
+  for (const [name, value] of Object.entries(PUBLIC_CORS_HEADERS)) {
+    headers.set(name, value);
+  }
+
+  return new Response(response.body, {
+    headers,
+    status: response.status,
+    statusText: response.statusText,
+  });
+};
+
 const createAppWithAuth = (environment: Env, getAuth: AuthForRequest) => {
-  const publicIntake = new Elysia({ name: 'public-intake' }).use(cors()).post(
-    '/v1/public/intakes/:token',
-    async ({ body, params, request }) => {
-      const tokenRecord = await isBrowserIntakeToken(environment, params.token);
-      if (!tokenRecord) {
-        return errorResponse(
-          401,
-          'invalid_token',
-          'A valid browser intake token is required.',
+  const publicIntake = new Elysia({ name: 'public-intake' })
+    .options(
+      '/v1/public/intakes/:token',
+      () => new Response(null, { headers: PUBLIC_CORS_HEADERS, status: 204 }),
+    )
+    .post(
+      '/v1/public/intakes/:token',
+      async ({ body, params, request }) => {
+        const tokenRecord = await isBrowserIntakeToken(
+          environment,
+          params.token,
         );
-      }
+        if (!tokenRecord) {
+          return withPublicCors(
+            errorResponse(
+              401,
+              'invalid_token',
+              'A valid browser intake token is required.',
+            ),
+          );
+        }
 
-      const idempotencyKey =
-        request.headers.get('Idempotency-Key') ??
-        `public-${crypto.randomUUID()}`;
-      if (!isIntakeKey(idempotencyKey)) {
-        return errorResponse(
-          400,
-          'invalid_idempotency_key',
-          'Idempotency-Key must be 1-128 printable ASCII characters (no spaces).',
+        const clientKey =
+          request.headers.get('Idempotency-Key') ?? crypto.randomUUID();
+        if (!isIntakeKey(clientKey)) {
+          return withPublicCors(
+            errorResponse(
+              400,
+              'invalid_idempotency_key',
+              'Idempotency-Key must be 1-128 printable ASCII characters (no spaces).',
+            ),
+          );
+        }
+
+        // Browser keys are namespaced per token so they can never collide with
+        // keys an API integration chose for `/v1/intakes`.
+        const idempotencyKey = `browser:${tokenRecord.id}:${clientKey}`;
+
+        const parsed = await parse(IntakeRequest, body);
+        if ('error' in parsed) {
+          return withPublicCors(parsed.error);
+        }
+
+        const result = await run(
+          request,
+          createIntakeCommand(environment, parsed.data, idempotencyKey, {
+            origin: request.headers.get('Origin'),
+            publicKeyId: tokenRecord.id,
+          }),
         );
-      }
+        if ('error' in result) {
+          return withPublicCors(result.error);
+        }
 
-      const parsed = await parse(IntakeRequest, body);
-      if ('error' in parsed) {
-        return parsed.error;
-      }
+        switch (result.data.kind) {
+          case 'conflict':
+            return withPublicCors(
+              errorResponse(
+                409,
+                'idempotency_conflict',
+                'This submission was already accepted with a different payload.',
+              ),
+            );
+          case 'created':
+          case 'replayed':
+            // The public surface stays minimal: no lead id is returned.
+            return withPublicCors(
+              Response.json({ data: { created: true } }, { status: 201 }),
+            );
+          case 'legacy_unverifiable':
+            return withPublicCors(
+              errorResponse(
+                409,
+                'idempotency_legacy_unverifiable',
+                'This submission cannot be verified. Please use a new submission key.',
+              ),
+            );
+        }
 
-      const result = await run(
-        request,
-        createIntakeCommand(environment, parsed.data, idempotencyKey, {
-          origin: request.headers.get('Origin'),
-          publicKeyId: tokenRecord.id,
-        }),
-      );
-      if ('error' in result) {
-        return result.error;
-      }
-
-      switch (result.data.kind) {
-        case 'conflict':
-          return errorResponse(
-            409,
-            'idempotency_conflict',
-            'This submission was already accepted with a different payload.',
-          );
-        case 'created':
-        case 'replayed':
-          // The public surface stays minimal: no lead id is returned.
-          return Response.json({ data: { created: true } }, { status: 201 });
-        case 'legacy_unverifiable':
-          return errorResponse(
-            409,
-            'idempotency_legacy_unverifiable',
-            'This submission cannot be verified. Please use a new submission key.',
-          );
-      }
-
-      return errorResponse(
-        500,
-        'internal_error',
-        'The intake request could not be completed.',
-      );
-    },
-    {
-      error: ({ error, status }) => mapIntakeBodyError(error, status),
-      parse: parseIntakeBody,
-    },
-  );
+        return withPublicCors(
+          errorResponse(
+            500,
+            'internal_error',
+            'The intake request could not be completed.',
+          ),
+        );
+      },
+      {
+        error: ({ error }) =>
+          mapIntakeBodyError(error, (code, response) =>
+            withPublicCors(Response.json(response, { status: code })),
+          ),
+        parse: parseIntakeBody,
+      },
+    );
 
   return (
     new Elysia({
