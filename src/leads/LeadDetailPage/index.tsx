@@ -4,6 +4,7 @@ import { PageHeader } from '@/components/PageHeader';
 import { Button } from '@/components/ui/Button';
 import { Field } from '@/components/ui/Field';
 import { inputClass } from '@/components/ui/form';
+import { fieldTitle } from '@/domain/customFields';
 import { type LeadActivity, type LeadView } from '@/domain/schemas';
 import { request } from '@/lib/http';
 import { cn } from '@/lib/styles';
@@ -251,7 +252,7 @@ export const LeadDetailPage = ({ id }: { readonly id: string }) => {
                 className="flex justify-between gap-4"
                 key={key}
               >
-                <dt className="text-slate-500">{key}</dt>
+                <dt className="text-slate-500">{fieldTitle(key)}</dt>
                 <dd className="text-right text-slate-200">
                   {formatCustomValue(value)}
                 </dd>
