@@ -3,12 +3,8 @@ import { Notice } from '@/components/Notice';
 import { PageHeader } from '@/components/PageHeader';
 import { Button } from '@/components/ui/Button';
 import { Field } from '@/components/ui/Field';
-import { inputClass, selectClass } from '@/components/ui/form';
-import {
-  type LeadActivity,
-  type LeadView,
-  type PipelineView,
-} from '@/domain/schemas';
+import { inputClass } from '@/components/ui/form';
+import { type LeadActivity, type LeadView } from '@/domain/schemas';
 import { request } from '@/lib/http';
 import { cn } from '@/lib/styles';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -34,10 +30,6 @@ export const LeadDetailPage = ({ id }: { readonly id: string }) => {
     queryFn: () => request<LeadActivity[]>(`/v1/leads/${id}/activities`),
     queryKey: ['lead-activities', id],
   });
-  const pipelines = useQuery({
-    queryFn: () => request<PipelineView[]>('/v1/pipelines'),
-    queryKey: ['pipelines'],
-  });
   const [note, setNote] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [draft, setDraft] = useState<null | {
@@ -46,9 +38,7 @@ export const LeadDetailPage = ({ id }: { readonly id: string }) => {
     firstName: string;
     lastName: string;
     name: string;
-    pipelineId: string;
     source: string;
-    stageId: string;
   }>(null);
 
   const record = lead.data;
@@ -62,14 +52,9 @@ export const LeadDetailPage = ({ id }: { readonly id: string }) => {
           firstName: record.firstName ?? '',
           lastName: record.lastName ?? '',
           name: record.name,
-          pipelineId: record.pipelineId,
           source: record.source,
-          stageId: record.stageId,
         }
       : null);
-  const draftPipeline = (pipelines.data ?? []).find(
-    (item) => item.id === currentDraft?.pipelineId,
-  );
 
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: ['lead', id] });
@@ -90,9 +75,7 @@ export const LeadDetailPage = ({ id }: { readonly id: string }) => {
             : undefined,
           lastName: currentDraft ? nullable(currentDraft.lastName) : undefined,
           name: currentDraft?.name.trim() || undefined,
-          pipelineId: currentDraft?.pipelineId,
           source: currentDraft?.source.trim() || undefined,
-          stageId: currentDraft?.stageId,
         }),
         method: 'PATCH',
       }),
@@ -240,56 +223,6 @@ export const LeadDetailPage = ({ id }: { readonly id: string }) => {
                 />
               </Field>
             </div>
-            <Field label="Pipeline">
-              <select
-                className={selectClass}
-                onChange={(event) => {
-                  const next = (pipelines.data ?? []).find(
-                    (item) => item.id === event.target.value,
-                  );
-                  setDraft({
-                    ...currentDraft,
-                    pipelineId: event.target.value,
-                    stageId: next?.stages[0]?.id ?? currentDraft.stageId,
-                  });
-                }}
-                value={currentDraft.pipelineId}
-              >
-                {(pipelines.data ?? [])
-                  .filter(
-                    (item) =>
-                      item.archivedAt === null ||
-                      item.id === currentDraft.pipelineId,
-                  )
-                  .map((item) => (
-                    <option
-                      key={item.id}
-                      value={item.id}
-                    >
-                      {item.name}
-                      {item.archivedAt === null ? '' : ' (archived)'}
-                    </option>
-                  ))}
-              </select>
-            </Field>
-            <Field label="Stage">
-              <select
-                className={selectClass}
-                onChange={(event) =>
-                  setDraft({ ...currentDraft, stageId: event.target.value })
-                }
-                value={currentDraft.stageId}
-              >
-                {(draftPipeline?.stages ?? []).map((stage) => (
-                  <option
-                    key={stage.id}
-                    value={stage.id}
-                  >
-                    {stage.name}
-                  </option>
-                ))}
-              </select>
-            </Field>
             {save.error && <Notice error={save.error} />}
             <div>
               <Button

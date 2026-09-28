@@ -3,33 +3,18 @@ import {
   createLead,
   createLeadActivity,
   createLeadAtomically,
-  createPipeline,
-  createStage,
-  DEFAULT_PIPELINE_ID,
-  deleteStage,
   type Env,
   getIntakeKey,
-  getPipeline,
   type IntakePersistenceOutcome,
-  intakePipelineId,
-  isActivePipelineNameTaken,
-  moveLeads,
   outcomeForStoredIntakeKey,
-  reorderStages,
-  resolveActiveRouting,
   softDeleteLeads,
   updateLead,
-  updatePipeline,
-  updateStage,
 } from '@/db/repository';
 import { intakeRequestFingerprint } from '@/domain/intake';
 import {
   type CreateLeadInput,
   type IntakeInput,
-  type ReorderStagesInput,
   type UpdateLeadInput,
-  type UpdatePipelineInput,
-  type UpdateStageInput,
 } from '@/domain/schemas';
 import { Effect } from 'effect';
 
@@ -58,14 +43,12 @@ export const createIntakeCommand = (
 ) =>
   Effect.gen(function* () {
     // Request identity: a pure fingerprint of the static-schema-decoded input.
-    // No field-definition or pipeline lookup may influence it, so mutable
-    // workspace state can never change whether a retry is recognized.
+    // No mutable workspace lookup may influence it, so a retry is recognized
+    // regardless of later edits elsewhere.
     const requestHash = yield* Effect.tryPromise({
       catch: (cause) => new PersistenceError({ cause }),
       try: () => intakeRequestFingerprint(input),
     });
-    // Replay/conflict/legacy checks run BEFORE current pipeline validation,
-    // so an accepted submission keeps replaying after its pipeline is archived.
     const stored = yield* persist(() =>
       getIntakeKey(environment, idempotencyKey),
     );
@@ -74,29 +57,8 @@ export const createIntakeCommand = (
       return storedOutcome;
     }
 
-    // Mutable application rules apply to NEW submissions only. An omitted
-    // stage resolves to the selected pipeline's initial stage.
-    const routing = yield* persist(() =>
-      resolveActiveRouting(environment, intakePipelineId(input), input.stageId),
-    );
-    if (routing === null) {
-      return yield* Effect.fail(
-        new DomainError({
-          code: 'invalid_stage',
-          message:
-            'The selected stage must belong to the selected pipeline, both must be active in this workspace.',
-        }),
-      );
-    }
-
     return yield* persist((): Promise<IntakePersistenceOutcome> =>
-      createLeadAtomically(
-        environment,
-        input,
-        routing,
-        idempotencyKey,
-        requestHash,
-      ),
+      createLeadAtomically(environment, input, idempotencyKey, requestHash),
     );
   });
 
@@ -110,45 +72,15 @@ export const createLeadCommand = (environment: Env, input: CreateLeadInput) =>
         });
       }
     });
-    const routing = yield* persist(() =>
-      resolveActiveRouting(
-        environment,
-        input.pipelineId ?? DEFAULT_PIPELINE_ID,
-        input.stageId,
-      ),
-    );
-    if (routing === null) {
-      return yield* Effect.fail(
-        new DomainError({
-          code: 'invalid_stage',
-          message:
-            'The selected stage must belong to the selected pipeline, both must be active in this workspace.',
-        }),
-      );
-    }
 
-    return yield* persist(() =>
-      createLead(environment, {
-        ...input,
-        pipelineId: routing.pipelineId,
-        stageId: routing.stageId,
-      }),
-    );
+    return yield* persist(() => createLead(environment, input));
   });
 
 export const updateLeadCommand = (
   environment: Env,
   leadId: string,
   input: UpdateLeadInput,
-  actorEmail: null | string,
-) => persist(() => updateLead(environment, leadId, input, actorEmail));
-
-export const moveLeadsCommand = (
-  environment: Env,
-  ids: readonly string[],
-  target: { pipelineId?: string; stageId: string },
-  actorEmail: null | string,
-) => persist(() => moveLeads(environment, ids, target, actorEmail));
+) => persist(() => updateLead(environment, leadId, input));
 
 export const softDeleteLeadsCommand = (
   environment: Env,
@@ -165,92 +97,3 @@ export const createLeadActivityCommand = (
   persist(() =>
     createLeadActivity(environment, leadId, actorEmail, kind, body),
   );
-
-export const createPipelineCommand = (environment: Env, name: string) =>
-  Effect.gen(function* () {
-    const taken = yield* persist(() =>
-      isActivePipelineNameTaken(environment, name),
-    );
-    if (taken) {
-      return yield* Effect.fail(
-        new DomainError({
-          code: 'pipeline_name_taken',
-          message: 'An active pipeline with this name already exists.',
-        }),
-      );
-    }
-
-    return yield* persist(() => createPipeline(environment, name));
-  });
-
-export const updatePipelineCommand = (
-  environment: Env,
-  pipelineId: string,
-  input: UpdatePipelineInput,
-) =>
-  Effect.gen(function* () {
-    // Renaming and unarchiving both put a name into the active namespace, so
-    // either must check it against the active pipelines (excluding self).
-    if (input.name !== undefined || input.archived === false) {
-      const existing = yield* persist(() =>
-        getPipeline(environment, pipelineId),
-      );
-      if (existing === null) {
-        return yield* Effect.fail(
-          new DomainError({
-            code: 'not_found',
-            message: 'Pipeline not found.',
-          }),
-        );
-      }
-
-      const name = input.name ?? existing.name;
-      const taken = yield* persist(() =>
-        isActivePipelineNameTaken(environment, name, pipelineId),
-      );
-      if (taken) {
-        return yield* Effect.fail(
-          new DomainError({
-            code: 'pipeline_name_taken',
-            message: 'An active pipeline with this name already exists.',
-          }),
-        );
-      }
-    }
-
-    const pipeline = yield* persist(() =>
-      updatePipeline(environment, pipelineId, input),
-    );
-    if (pipeline === null) {
-      return yield* Effect.fail(
-        new DomainError({ code: 'not_found', message: 'Pipeline not found.' }),
-      );
-    }
-
-    return pipeline;
-  });
-
-export const createStageCommand = (
-  environment: Env,
-  pipelineId: string,
-  input: { color?: string; name: string },
-) => persist(() => createStage(environment, pipelineId, input));
-
-export const updateStageCommand = (
-  environment: Env,
-  pipelineId: string,
-  stageId: string,
-  input: UpdateStageInput,
-) => persist(() => updateStage(environment, pipelineId, stageId, input));
-
-export const reorderStagesCommand = (
-  environment: Env,
-  pipelineId: string,
-  input: ReorderStagesInput,
-) => persist(() => reorderStages(environment, pipelineId, input.stageIds));
-
-export const deleteStageCommand = (
-  environment: Env,
-  pipelineId: string,
-  stageId: string,
-) => persist(() => deleteStage(environment, pipelineId, stageId));

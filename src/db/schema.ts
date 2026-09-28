@@ -21,39 +21,6 @@ export const workspaces = sqliteTable('workspaces', {
   updatedAt: timestampMs('updated_at').notNull(),
 });
 
-export type StageDefinition = {
-  color: string;
-  id: string;
-  name: string;
-};
-
-export const pipelines = sqliteTable(
-  'pipelines',
-  {
-    archivedAt: timestampMs('archived_at'),
-    createdAt: timestampMs('created_at').notNull(),
-    id: text('id').primaryKey(),
-    name: text('name').notNull(),
-    // Ordered stage definitions: array order is the stage order. Leads
-    // reference a stage by id only; there is no foreign key.
-    stages: text('stages', { mode: 'json' })
-      .$type<StageDefinition[]>()
-      .notNull()
-      .default(sql`'[]'`),
-    updatedAt: timestampMs('updated_at').notNull(),
-    workspaceId: text('workspace_id')
-      .notNull()
-      .references(() => workspaces.id),
-  },
-  (table) => [
-    // Archived pipelines keep their names out of the active namespace, so
-    // archiving "Sales" allows a new active "Sales" pipeline.
-    uniqueIndex('pipelines_workspace_active_name_unique')
-      .on(table.workspaceId, table.name)
-      .where(sql`archived_at IS NULL`),
-  ],
-);
-
 export const leads = sqliteTable(
   'leads',
   {
@@ -71,12 +38,8 @@ export const leads = sqliteTable(
     name: text('name').notNull(),
     normalizedEmail: text('normalized_email'),
     origin: text('origin'),
-    pipelineId: text('pipeline_id')
-      .notNull()
-      .references(() => pipelines.id),
     publicKeyId: text('public_key_id'),
     source: text('source').notNull(),
-    stageId: text('stage_id').notNull(),
     updatedAt: timestampMs('updated_at').notNull(),
     workspaceId: text('workspace_id')
       .notNull()
@@ -87,12 +50,8 @@ export const leads = sqliteTable(
       table.workspaceId,
       table.normalizedEmail,
     ),
-    index('leads_pipeline_created_idx').on(
-      table.workspaceId,
-      table.pipelineId,
-      table.createdAt,
-    ),
-    index('leads_stage_idx').on(table.workspaceId, table.stageId),
+    // The flat leads list orders by createdAt, so it gets its own index.
+    index('leads_workspace_created_idx').on(table.workspaceId, table.createdAt),
   ],
 );
 

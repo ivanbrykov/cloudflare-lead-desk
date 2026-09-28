@@ -7,9 +7,7 @@ const leadSchema = {
     id: { type: 'string' },
     lastName: { type: ['string', 'null'] },
     name: { type: 'string' },
-    pipelineId: { type: 'string' },
     source: { type: 'string' },
-    stageId: { type: 'string' },
   },
   required: ['name', 'source'],
   type: 'object',
@@ -65,7 +63,7 @@ export const openApiSpecification = {
     '/v1/intakes': {
       post: {
         description:
-          'The secret-token integration endpoint. One submission creates one lead. Idempotency-Key makes retries safe; the raw body is byte-limited to 65,536 bytes.',
+          'The secret-token integration endpoint. One submission creates one lead. Idempotency-Key makes retries safe; the raw body is byte-limited to 65,536 bytes. Custom fields are stored as a JSON document, so each form may send its own field set.',
         requestBody: {
           content: {
             'application/json': {
@@ -80,9 +78,7 @@ export const openApiSpecification = {
                   firstName: { type: 'string' },
                   lastName: { type: 'string' },
                   name: { type: 'string' },
-                  pipelineId: { type: 'string' },
                   source: { type: 'string' },
-                  stageId: { type: 'string' },
                 },
                 required: ['email', 'source'],
                 type: 'object',
@@ -110,10 +106,8 @@ export const openApiSpecification = {
     '/v1/leads': {
       get: {
         description:
-          'Lists leads, newest first, with keyset (seek) pagination and a per-page duplicate-email hint. Optional `pipelineId`, `stageId`, and `query` filters.',
+          'Lists all live leads, newest first, with keyset (seek) pagination and a per-page duplicate-email hint. The optional `query` filter is a literal substring match on name or email.',
         parameters: [
-          { in: 'query', name: 'pipelineId', schema: { type: 'string' } },
-          { in: 'query', name: 'stageId', schema: { type: 'string' } },
           { in: 'query', name: 'query', schema: { type: 'string' } },
           { in: 'query', name: 'cursor', schema: { type: 'string' } },
           { in: 'query', name: 'limit', schema: { type: 'integer' } },
@@ -136,34 +130,6 @@ export const openApiSpecification = {
           },
         },
         summary: 'Create a lead manually',
-      },
-    },
-    '/v1/leads/bulk': {
-      patch: {
-        description:
-          'Moves leads to a stage. Without pipelineId every lead must already share one pipeline; with pipelineId the whole batch moves to that pipeline.',
-        requestBody: {
-          content: {
-            'application/json': {
-              schema: {
-                properties: {
-                  ids: { items: { type: 'string' }, type: 'array' },
-                  pipelineId: { type: 'string' },
-                  stageId: { type: 'string' },
-                },
-                required: ['ids', 'stageId'],
-                type: 'object',
-              },
-            },
-          },
-          required: true,
-        },
-        responses: {
-          '200': { description: 'Moved; each lead records a “moved” activity' },
-          '404': { description: 'not_found' },
-          '422': { description: 'invalid_stage or validation_error' },
-        },
-        summary: 'Move leads to a stage',
       },
     },
     '/v1/leads/bulk-delete': {
@@ -190,18 +156,6 @@ export const openApiSpecification = {
         summary: 'Soft-delete leads',
       },
     },
-    '/v1/leads/stage-counts': {
-      get: {
-        parameters: [
-          { in: 'query', name: 'pipelineId', schema: { type: 'string' } },
-        ],
-        responses: {
-          '200': { description: '[{ count, stageId }]' },
-          '422': validationError,
-        },
-        summary: 'Count live leads per stage',
-      },
-    },
     '/v1/leads/{id}': {
       get: {
         parameters: [
@@ -220,7 +174,7 @@ export const openApiSpecification = {
       },
       patch: {
         description:
-          'Partial update. `email`, `firstName`, and `lastName` accept `null` to clear; `customFields` replaces the JSON document. Changing `pipelineId` moves the lead, and an omitted `stageId` resolves to the target pipeline initial stage; each move is recorded as a `moved` activity.',
+          'Partial update. `email`, `firstName`, and `lastName` accept `null` to clear; `customFields` replaces the JSON document.',
         parameters: [
           {
             in: 'path',
@@ -243,9 +197,7 @@ export const openApiSpecification = {
                   firstName: { type: ['string', 'null'] },
                   lastName: { type: ['string', 'null'] },
                   name: { type: 'string' },
-                  pipelineId: { type: 'string' },
                   source: { type: 'string' },
-                  stageId: { type: 'string' },
                 },
                 type: 'object',
               },
@@ -256,7 +208,7 @@ export const openApiSpecification = {
         responses: {
           '200': { description: '{ data: lead }' },
           '404': { description: 'not_found' },
-          '422': { description: 'invalid_stage or validation_error' },
+          '422': validationError,
         },
         summary: 'Update a lead',
       },
@@ -287,7 +239,10 @@ export const openApiSpecification = {
           content: {
             'application/json': {
               schema: {
-                properties: { body: { type: 'string' } },
+                properties: {
+                  body: { type: 'string' },
+                  kind: { type: 'string' },
+                },
                 required: ['body'],
                 type: 'object',
               },
@@ -301,197 +256,6 @@ export const openApiSpecification = {
           '422': validationError,
         },
         summary: 'Add a note to a lead',
-      },
-    },
-    '/v1/pipelines': {
-      get: {
-        responses: {
-          '200': { description: '{ data: [pipeline with stages] }' },
-        },
-        summary: 'List pipelines with their stages',
-      },
-      post: {
-        description:
-          'Creates a pipeline with one initial stage ("New inquiry", blue) so it is immediately usable.',
-        requestBody: {
-          content: {
-            'application/json': {
-              schema: {
-                properties: { name: { type: 'string' } },
-                required: ['name'],
-                type: 'object',
-              },
-            },
-          },
-          required: true,
-        },
-        responses: {
-          '201': { description: '{ data: pipeline }' },
-          '422': validationError,
-        },
-        summary: 'Create a pipeline',
-      },
-    },
-    '/v1/pipelines/{id}': {
-      patch: {
-        description:
-          'Renames and/or archives a pipeline. Archiving keeps the leads and their stages; a new active pipeline may reuse an archived name.',
-        parameters: [
-          {
-            in: 'path',
-            name: 'id',
-            required: true,
-            schema: { type: 'string' },
-          },
-        ],
-        requestBody: {
-          content: {
-            'application/json': {
-              schema: {
-                properties: {
-                  archived: { type: 'boolean' },
-                  name: { type: 'string' },
-                },
-                type: 'object',
-              },
-            },
-          },
-          required: true,
-        },
-        responses: {
-          '200': { description: '{ data: pipeline }' },
-          '404': { description: 'not_found' },
-          '422': { description: 'validation_error or pipeline_name_taken' },
-        },
-        summary: 'Rename or archive a pipeline',
-      },
-    },
-    '/v1/pipelines/{id}/stages': {
-      post: {
-        parameters: [
-          {
-            in: 'path',
-            name: 'id',
-            required: true,
-            schema: { type: 'string' },
-          },
-        ],
-        requestBody: {
-          content: {
-            'application/json': {
-              schema: {
-                properties: {
-                  color: { type: 'string' },
-                  name: { type: 'string' },
-                },
-                required: ['name'],
-                type: 'object',
-              },
-            },
-          },
-          required: true,
-        },
-        responses: {
-          '201': { description: '{ data: stage }' },
-          '422': validationError,
-        },
-        summary: 'Add a stage to a pipeline',
-      },
-    },
-    '/v1/pipelines/{id}/stages/reorder': {
-      post: {
-        description:
-          'stageIds must contain exactly the pipeline stages, once each, in the new order.',
-        parameters: [
-          {
-            in: 'path',
-            name: 'id',
-            required: true,
-            schema: { type: 'string' },
-          },
-        ],
-        requestBody: {
-          content: {
-            'application/json': {
-              schema: {
-                properties: {
-                  stageIds: { items: { type: 'string' }, type: 'array' },
-                },
-                required: ['stageIds'],
-                type: 'object',
-              },
-            },
-          },
-          required: true,
-        },
-        responses: {
-          '200': { description: '{ data: pipeline }' },
-          '404': { description: 'not_found' },
-          '422': { description: 'invalid_stages or validation_error' },
-        },
-        summary: 'Reorder a pipeline’s stages',
-      },
-    },
-    '/v1/pipelines/{id}/stages/{stageId}': {
-      delete: {
-        description:
-          'Deletes an empty stage. A pipeline keeps at least one stage, and a stage with live leads returns stage_in_use with the count.',
-        parameters: [
-          {
-            in: 'path',
-            name: 'id',
-            required: true,
-            schema: { type: 'string' },
-          },
-          {
-            in: 'path',
-            name: 'stageId',
-            required: true,
-            schema: { type: 'string' },
-          },
-        ],
-        responses: {
-          '200': { description: '{ data: pipeline }' },
-          '404': { description: 'not_found' },
-          '422': { description: 'last_stage or stage_in_use' },
-        },
-        summary: 'Delete an empty stage',
-      },
-      patch: {
-        parameters: [
-          {
-            in: 'path',
-            name: 'id',
-            required: true,
-            schema: { type: 'string' },
-          },
-          {
-            in: 'path',
-            name: 'stageId',
-            required: true,
-            schema: { type: 'string' },
-          },
-        ],
-        requestBody: {
-          content: {
-            'application/json': {
-              schema: {
-                properties: {
-                  color: { type: 'string' },
-                  name: { type: 'string' },
-                },
-                type: 'object',
-              },
-            },
-          },
-          required: true,
-        },
-        responses: {
-          '200': { description: '{ data: pipeline }' },
-          '404': { description: 'not_found' },
-          '422': validationError,
-        },
-        summary: 'Rename or recolor a stage',
       },
     },
     '/v1/tokens': {

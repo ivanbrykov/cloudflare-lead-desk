@@ -4,7 +4,7 @@ A self-hosted, Cloudflare-native CRM for teams handling inbound leads. It stores
 
 ## Alpha scope
 
-- Leads, pipelines, stages, notes, and a table work queue.
+- Leads, notes, custom fields, and a table work queue.
 - JSON custom fields stored on each lead, with no definition registry.
 - Email + password staff authentication (Better Auth, D1-backed sessions) and displayed-once `intake:write` tokens.
 - Idempotent, atomic `POST /v1/intakes` capture for websites and other trusted systems.
@@ -56,7 +56,7 @@ Prerequisites: a Cloudflare account, Node.js 24.20.0 (see `.node-version`) and p
 2. Create the D1 database in your account with any name you like — it does not need to match the Worker, for example `pnpm exec wrangler d1 create lead-desk-db`. Copy the `database_id` it prints into the `d1_databases` entry in `wrangler.jsonc` (replacing the empty string) and set `database_name` to the same name you used.
 3. Set the session secret: `openssl rand -base64 32 | pnpm exec wrangler secret put BETTER_AUTH_SECRET`.
 4. Set the invite token: `openssl rand -hex 32 | pnpm exec wrangler secret put SETUP_TOKEN`. Keep it across redeployments.
-5. Deploy: `pnpm run deploy` (set `CLOUDFLARE_ACCOUNT_ID` if your wrangler login spans multiple accounts). The deploy script builds, applies the D1 migrations, and deploys. The migration also bootstraps the default workspace, pipeline, and stage rows (fixed ids, `INSERT OR IGNORE`) and makes stage positions unique per pipeline — the app itself never seeds data per request, so deleted bootstrap rows are not resurrected. Migration commands reference the `DB` binding rather than a database name, so renamed databases keep working.
+5. Deploy: `pnpm run deploy` (set `CLOUDFLARE_ACCOUNT_ID` if your wrangler login spans multiple accounts). The deploy script builds, applies the D1 migrations, and deploys. The migration also bootstraps the default workspace row (fixed id, `INSERT OR IGNORE`) — the app itself never seeds data per request, so a deleted bootstrap row is not resurrected. Migration commands reference the `DB` binding rather than a database name, so renamed databases keep working.
 
 You can also connect the repository in the dashboard under Workers → Settings → Builds, with the deploy command set to `pnpm run deploy`.
 
@@ -207,9 +207,7 @@ curl https://crm.example.com/v1/intakes \
   }'
 ```
 
-`pipelineId` and `stageId` are optional; without them a submission uses the
-seeded default pipeline and stage. The interactive OpenAPI documentation is
-available at `/openapi`.
+The interactive OpenAPI documentation is available at `/openapi`.
 
 ### Intake idempotency contract
 
@@ -252,9 +250,7 @@ the same bounded read; they never fall through to another body parser.
   are fingerprinted differently and may legitimately conflict; use one stable
   form per logical submission.
 - **Replay.** Re-sending the same logical payload returns the original `201`
-  response and IDs without updating leads or inserting history. Replays skip
-  current pipeline validation, so an accepted submission keeps replaying after
-  its pipeline is archived.
+  response and IDs without updating leads or inserting history.
 - **Conflicts.** A different payload under the same key returns
   `409 idempotency_conflict` without exposing the stored payload or hash.
   Concurrent same-key calls settle to one persisted winner; identical
@@ -265,10 +261,6 @@ the same bounded read; they never fall through to another body parser.
   before considering another submission or key. The stored row is never
   overwritten, backfilled from the new request, or deleted, and blind new-key
   retries are not a substitute for reconciliation.
-- **Routing.** The selected or default stage must belong to the selected or
-  default pipeline, both must belong to the current workspace, and archived
-  pipelines are rejected. Invalid combinations return `422 invalid_stage`
-  with no lead, activity, or idempotency writes.
 - **Atomicity.** The lead, its intake activity, and the idempotency key commit
   in one D1 transaction. A failed transaction reserves no key, so the same key
   can be retried after a transient failure.
@@ -285,7 +277,6 @@ by `id DESC`:
   ordering above. Omit it for the first page; the final page returns
   `nextCursor: null`. A missing, malformed, or tampered cursor returns
   `422 invalid_cursor`.
-- `pipelineId` and `stageId` filter to a single pipeline or stage.
 - `query` is a literal substring match on name or email (`%` and `_` match
   literally) and composes with pagination.
 - Items carry a `duplicateCount` hint: how many other live leads share the
@@ -295,21 +286,14 @@ by `id DESC`:
 
 `POST /v1/leads` creates a lead manually. At least one of `email`,
 `firstName`, or `lastName` is required (`422 lead_identity_required`), a
-non-empty `name` defaults from the person's name or email, `stageId` must
-belong to `pipelineId`, and `estimatedValue` must be a non-negative finite
-number. `PATCH /v1/leads/:id` updates one lead; `email`, `firstName`, and
-`lastName` accept `null` to clear. Setting `pipelineId` moves the lead, and an
-omitted `stageId` resolves to the target pipeline's initial stage; each move is
-recorded as a `moved` activity. Unknown or soft-deleted ids return
-`404 not_found`.
+non-empty `name` defaults from the person's name or email, and
+`estimatedValue` must be a non-negative finite number. `PATCH /v1/leads/:id`
+updates one lead; `email`, `firstName`, and `lastName` accept `null` to clear.
+Unknown or soft-deleted ids return `404 not_found`.
 
-`PATCH /v1/leads/bulk` moves up to 100 ids to one stage. Without `pipelineId`
-the selected leads must already share a pipeline; with `pipelineId` the whole
-batch moves across pipelines (targets must be active). `POST
-/v1/leads/bulk-delete` soft-deletes up to 100 ids: rows stay in D1 with
-`deletedAt` set, disappear from `GET /v1/leads` and stage counts, and keep
-their activity history. `GET /v1/leads/stage-counts` returns live lead counts
-per stage for one pipeline.
+`POST /v1/leads/bulk-delete` soft-deletes up to 100 ids: rows stay in D1 with
+`deletedAt` set, disappear from `GET /v1/leads`, and keep their activity
+history. That is the spam workflow: select rows in the table and delete them.
 
 Consistency while paging: each page is evaluated as of its own query (no
 snapshot spans pages). Pages are disjoint windows of the keyset ordering, so
@@ -325,30 +309,6 @@ it and is only visible after restarting from the first page.
 `GET /v1/leads/:id/activities` lists a lead's activity newest first;
 `POST /v1/leads/:id/activities` adds a note. Activities belong to a lead;
 there is no separate contact or opportunity record.
-
-### Pipelines and stages
-
-Pipelines own an ordered list of stages (`{ id, name, color }`); leads
-reference a stage by id. `GET /v1/pipelines` lists active and archived
-pipelines with their stages, and `POST /v1/pipelines` creates one with an
-initial "New inquiry" stage.
-
-- `PATCH /v1/pipelines/:id` renames and/or archives (`{ name?, archived? }`).
-  Archived pipelines stay listed and selectable; they just leave the active
-  name space, so a new pipeline can reuse the name. Unarchiving fails with
-  `pipeline_name_taken` if that name is active again.
-- `POST /v1/pipelines/:id/stages` appends a stage.
-- `PATCH /v1/pipelines/:id/stages/:stageId` renames and/or recolors a stage.
-- `POST /v1/pipelines/:id/stages/reorder` takes exactly the pipeline's stage
-  ids, once each, in the new order; anything else returns `invalid_stages`.
-- `DELETE /v1/pipelines/:id/stages/:stageId` deletes an empty stage: the last
-  stage is refused (`last_stage`), and a stage with live leads is refused with
-  the count (`stage_in_use`).
-
-Staff manage all of this in **Settings → Pipelines**. The Leads workbench shows
-every pipeline by default and reveals the stage filter chips once a pipeline is
-selected; bulk move targets a pipeline and stage pair.
-
 
 ## Observability
 

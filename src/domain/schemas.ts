@@ -36,52 +36,9 @@ export const IntakeRequest = Schema.Struct({
   firstName: Schema.optional(NonEmptyString),
   lastName: Schema.optional(NonEmptyString),
   name: Schema.optional(NonEmptyString),
-  pipelineId: Schema.optional(RecordId),
   source: NonEmptyString,
-  stageId: Schema.optional(RecordId),
 });
 export type IntakeInput = Schema.Schema.Type<typeof IntakeRequest>;
-
-export const CreatePipelineRequest = Schema.Struct({
-  name: NonEmptyString,
-});
-
-export const CreateStageRequest = Schema.Struct({
-  color: Schema.optional(NonEmptyString),
-  name: NonEmptyString,
-});
-
-export const UpdatePipelineRequest = Schema.Struct({
-  archived: Schema.optional(Schema.Boolean),
-  name: Schema.optional(NonEmptyString),
-}).pipe(
-  Schema.filter(
-    (value) => value.name !== undefined || value.archived !== undefined,
-  ),
-);
-export type UpdatePipelineInput = Schema.Schema.Type<
-  typeof UpdatePipelineRequest
->;
-
-export const UpdateStageRequest = Schema.Struct({
-  color: Schema.optional(NonEmptyString),
-  name: Schema.optional(NonEmptyString),
-}).pipe(
-  Schema.filter(
-    (value) => value.name !== undefined || value.color !== undefined,
-  ),
-);
-export type UpdateStageInput = Schema.Schema.Type<typeof UpdateStageRequest>;
-
-export const ReorderStagesRequest = Schema.Struct({
-  stageIds: Schema.Array(RecordId).pipe(
-    Schema.minItems(1),
-    Schema.maxItems(100),
-  ),
-});
-export type ReorderStagesInput = Schema.Schema.Type<
-  typeof ReorderStagesRequest
->;
 
 // Response contracts. Values are named `...Response` — the import site already
 // says it is a schema, so the suffix names the role instead. Derived types keep
@@ -89,28 +46,6 @@ export type ReorderStagesInput = Schema.Schema.Type<
 // timestamps are Date instances (`Schema.DateFromSelf`), not the ISO strings
 // the client receives.
 export const HealthResponse = Schema.Struct({ ok: Schema.Boolean });
-
-export const StageViewResponse = Schema.Struct({
-  color: Schema.String,
-  id: Schema.String,
-  name: Schema.String,
-});
-
-export const PipelineViewResponse = Schema.Struct({
-  archivedAt: Schema.NullOr(Schema.DateFromSelf),
-  createdAt: Schema.DateFromSelf,
-  id: Schema.String,
-  name: Schema.String,
-  stages: Schema.Array(StageViewResponse),
-  updatedAt: Schema.DateFromSelf,
-  workspaceId: Schema.String,
-});
-
-export const PipelinesResponse = Schema.Struct({
-  data: Schema.Array(PipelineViewResponse),
-});
-export type PipelineView = Schema.Schema.Type<typeof PipelineViewResponse>;
-export type StageView = Schema.Schema.Type<typeof StageViewResponse>;
 
 // Leads. Response contracts are the wire shape (ISO-8601 strings, JSON-encoded
 // dates) shared with the SPA; request contracts validate Elysia input through
@@ -126,9 +61,7 @@ export const LeadViewResponse = Schema.Struct({
   id: RecordId,
   lastName: Schema.NullOr(Schema.String),
   name: NonEmptyString,
-  pipelineId: RecordId,
   source: NonEmptyString,
-  stageId: RecordId,
   updatedAt: Schema.String,
 });
 export type LeadView = Schema.Schema.Type<typeof LeadViewResponse>;
@@ -138,18 +71,6 @@ export const LeadsResponse = Schema.Struct({
   nextCursor: Schema.NullOr(Schema.String),
 });
 export type LeadsResponseBody = Schema.Schema.Type<typeof LeadsResponse>;
-
-export const LeadStageCountResponse = Schema.Struct({
-  count: Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
-  stageId: RecordId,
-});
-
-export const LeadStageCountsResponse = Schema.Struct({
-  data: Schema.Array(LeadStageCountResponse),
-});
-export type LeadStageCountsBody = Schema.Schema.Type<
-  typeof LeadStageCountsResponse
->;
 
 export const LeadActivityResponse = Schema.Struct({
   actorEmail: Schema.NullOr(Schema.String),
@@ -173,15 +94,9 @@ export const ListLeadsQueryRequest = Schema.Struct({
       Schema.lessThanOrEqualTo(100),
     ),
   ),
-  pipelineId: Schema.optional(RecordId),
   query: Schema.optional(NonEmptyString),
-  stageId: Schema.optional(RecordId),
 });
 export type ListLeadsQuery = Schema.Schema.Type<typeof ListLeadsQueryRequest>;
-
-export const LeadStageCountsQueryRequest = Schema.Struct({
-  pipelineId: Schema.optional(RecordId),
-});
 
 // Lead writes. `CreateLeadRequest` covers manual/operator entry; intake has its
 // own flat `IntakeRequest` because it is the unauthenticated-token contract.
@@ -194,9 +109,7 @@ export const CreateLeadRequest = Schema.Struct({
   firstName: Schema.optional(NonEmptyString),
   lastName: Schema.optional(NonEmptyString),
   name: Schema.optional(NonEmptyString),
-  pipelineId: Schema.optional(RecordId),
   source: Schema.optional(NonEmptyString),
-  stageId: Schema.optional(RecordId),
 });
 export type CreateLeadInput = Schema.Schema.Type<typeof CreateLeadRequest>;
 
@@ -209,20 +122,9 @@ export const UpdateLeadRequest = Schema.Struct({
   firstName: Schema.optional(Schema.NullOr(NonEmptyString)),
   lastName: Schema.optional(Schema.NullOr(NonEmptyString)),
   name: Schema.optional(NonEmptyString),
-  pipelineId: Schema.optional(RecordId),
   source: Schema.optional(NonEmptyString),
-  stageId: Schema.optional(RecordId),
 });
 export type UpdateLeadInput = Schema.Schema.Type<typeof UpdateLeadRequest>;
-
-export const BulkMoveLeadsRequest = Schema.Struct({
-  ids: Schema.Array(RecordId).pipe(Schema.minItems(1), Schema.maxItems(100)),
-  pipelineId: Schema.optional(RecordId),
-  stageId: RecordId,
-});
-export type BulkMoveLeadsInput = Schema.Schema.Type<
-  typeof BulkMoveLeadsRequest
->;
 
 export const BulkDeleteLeadsRequest = Schema.Struct({
   ids: Schema.Array(RecordId).pipe(Schema.minItems(1), Schema.maxItems(100)),

@@ -1,4 +1,4 @@
-import { DEFAULT_PIPELINE_ID, DEFAULT_WORKSPACE_ID } from '@/db/repository';
+import { DEFAULT_WORKSPACE_ID } from '@/db/repository';
 import { build } from 'esbuild';
 import { convertV4MiniflareOptions, Miniflare } from 'miniflare';
 import { createHash } from 'node:crypto';
@@ -8,7 +8,7 @@ import { expect, test } from 'vitest';
 
 /**
  * D1-backed regression tests for the intake integrity and replay contract:
- * request fingerprints, replay/conflict/legacy handling, pipeline routing,
+ * request fingerprints, replay/conflict/legacy handling,
  * token rotation, key validation, and the bounded raw-body limit.
  *
  * Every test builds its own Miniflare + in-memory D1 fixture (migrations
@@ -66,9 +66,7 @@ type IntakePayload = {
   firstName?: string;
   lastName?: string;
   name?: string;
-  pipelineId?: string;
   source: string;
-  stageId?: string;
 };
 
 const payload = (email = 'intake-test@example.test'): IntakePayload => ({
@@ -491,135 +489,6 @@ test('distinct keys create separate leads even for the same email', async () => 
   }
 });
 
-test('invalid or foreign pipeline-stage pairs reject atomically', async () => {
-  const fx = await startFixture();
-  try {
-    const token = await fx.createToken();
-    const other = await fx.ok<{ id: string }>('/v1/pipelines', 'POST', {
-      name: 'Other',
-    });
-    const stage = await fx.ok<{ id: string }>(
-      `/v1/pipelines/${other.id}/stages`,
-      'POST',
-      { name: 'Other stage' },
-    );
-    const before = await fx.snapshot();
-
-    const mismatch = payload('mismatch@example.test');
-    mismatch.pipelineId = DEFAULT_PIPELINE_ID;
-    mismatch.stageId = stage.id;
-    expectError(
-      await fx.intake('routing-mismatch', mismatch, token.token),
-      422,
-      'invalid_stage',
-    );
-
-    const missing = payload('missing@example.test');
-    missing.pipelineId = other.id;
-    missing.stageId = '01ARZ3NDEKTSV4RRFFQ69G5FC0';
-    expectError(
-      await fx.intake('routing-missing', missing, token.token),
-      422,
-      'invalid_stage',
-    );
-
-    await fx.db
-      .prepare('UPDATE pipelines SET archived_at = ? WHERE id = ?')
-      .bind(Date.parse('2026-09-09T00:00:00.000Z'), other.id)
-      .run();
-    const archived = payload('archived@example.test');
-    archived.pipelineId = other.id;
-    archived.stageId = stage.id;
-    expectError(
-      await fx.intake('routing-archived', archived, token.token),
-      422,
-      'invalid_stage',
-    );
-
-    await fx.db
-      .prepare('UPDATE pipelines SET archived_at = ? WHERE id = ?')
-      .bind(Date.parse('2026-09-09T00:00:00.000Z'), DEFAULT_PIPELINE_ID)
-      .run();
-    expectError(
-      await fx.intake('routing-default-archived', payload(), token.token),
-      422,
-      'invalid_stage',
-    );
-
-    const foreignWorkspace = '01ARZ3NDEKTSV4RRFFQ69G5FC1';
-    await fx.db
-      .prepare(
-        'INSERT INTO workspaces (id, slug, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
-      )
-      .bind(
-        foreignWorkspace,
-        'foreign',
-        'Foreign',
-        Date.parse('2026-01-01T00:00:00.000Z'),
-        Date.parse('2026-01-01T00:00:00.000Z'),
-      )
-      .run();
-    await fx.db
-      .prepare(
-        'UPDATE pipelines SET archived_at = NULL, workspace_id = ? WHERE id = ?',
-      )
-      .bind(foreignWorkspace, other.id)
-      .run();
-    const foreign = payload('foreign@example.test');
-    foreign.pipelineId = other.id;
-    foreign.stageId = stage.id;
-    expectError(
-      await fx.intake('routing-foreign', foreign, token.token),
-      422,
-      'invalid_stage',
-    );
-
-    expect(await fx.snapshot()).toEqual(before);
-    for (const table of TABLES) {
-      expect(
-        await fx.count(table),
-        `${table} rows written by rejected intake`,
-      ).toBe(0);
-    }
-  } finally {
-    await fx.dispose();
-  }
-});
-
-test('an accepted replay survives an archived pipeline', async () => {
-  const fx = await startFixture();
-  try {
-    const token = await fx.createToken();
-    const acceptedPayload = payload('mutable@example.test');
-    const accepted = await fx.intake(
-      'mutable-key',
-      acceptedPayload,
-      token.token,
-    );
-    expect(accepted.status).toBe(201);
-
-    await fx.db
-      .prepare('UPDATE pipelines SET archived_at = ? WHERE id = ?')
-      .bind(Date.parse('2026-09-09T00:00:00.000Z'), DEFAULT_PIPELINE_ID)
-      .run();
-    const before = await fx.snapshot();
-
-    const replay = await fx.intake('mutable-key', acceptedPayload, token.token);
-    expect(replay.status, JSON.stringify(replay)).toBe(201);
-    expect(replay.json.data).toEqual(accepted.json.data);
-    expect(await fx.snapshot()).toEqual(before);
-
-    const changed = structuredClone(acceptedPayload);
-    changed.name = 'Changed';
-    const conflict = await fx.intake('mutable-key', changed, token.token);
-    expectError(conflict, 409, 'idempotency_conflict');
-    expect(JSON.stringify(conflict.json)).not.toContain('request_hash');
-    expect(await fx.snapshot()).toEqual(before);
-  } finally {
-    await fx.dispose();
-  }
-});
-
 test('a failed intake transaction reserves nothing and the same key can retry', async () => {
   const fx = await startFixture();
   try {
@@ -828,52 +697,12 @@ test('the byte limit applies to the intake route only', async () => {
   const fx = await startFixture();
   try {
     const big = 'x'.repeat(70_000);
-    const pipeline = await fx.api('/v1/pipelines', 'POST', { name: big });
-    expect(pipeline.status).toBe(201);
-
     const lead = await fx.api('/v1/leads', 'POST', {
       email: 'big@example.test',
       firstName: big,
       source: 'manual',
     });
     expect(lead.status).toBe(201);
-  } finally {
-    await fx.dispose();
-  }
-});
-
-test('intake without an explicit stage uses the selected pipeline initial stage', async () => {
-  const fx = await startFixture();
-  try {
-    const token = await fx.createToken();
-    const pipelineResponse = await fx.api('/v1/pipelines', 'POST', {
-      name: 'Intake target',
-    });
-    expect(pipelineResponse.status, JSON.stringify(pipelineResponse)).toBe(201);
-    const pipeline = pipelineResponse.json.data as {
-      id: string;
-      stages: Array<{ id: string }>;
-    };
-    const initialStage = pipeline.stages[0];
-    if (initialStage === undefined) {
-      throw new Error('expected a seeded stage');
-    }
-
-    const result = await fx.intake(
-      'pipeline-initial-stage',
-      { ...payload('pipeline-intake@example.test'), pipelineId: pipeline.id },
-      token.token,
-    );
-    expect(result.status, JSON.stringify(result)).toBe(201);
-    const leadId = (result.json.data as { leadId: string }).leadId;
-    const row = await fx.db
-      .prepare('SELECT pipeline_id, stage_id FROM leads WHERE id = ?')
-      .bind(leadId)
-      .first();
-    expect(row).toEqual({
-      pipeline_id: pipeline.id,
-      stage_id: initialStage.id,
-    });
   } finally {
     await fx.dispose();
   }

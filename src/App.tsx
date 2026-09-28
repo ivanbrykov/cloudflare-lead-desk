@@ -1,6 +1,5 @@
 import { Button } from './components/ui/Button';
 import { Dialog } from './components/ui/Dialog';
-import { type PipelineView } from './domain/schemas';
 import { LeadDetailPage } from './leads/LeadDetailPage';
 import { LeadsPage } from './leads/LeadsPage';
 import { signIn, signOut, signUp, useSession } from './lib/auth-client';
@@ -12,7 +11,6 @@ import {
   type SignUpFailure,
 } from './lib/registration-flow';
 import { cn } from './lib/styles';
-import { PipelinesPage } from './pipelines/PipelinesPage';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Copy,
@@ -23,7 +21,6 @@ import {
   PanelsTopLeft,
   Plus,
   Users,
-  Workflow,
 } from 'lucide-react';
 import { useReducer, useRef, useState } from 'react';
 import { Link, Route, Switch, useLocation } from 'wouter';
@@ -38,10 +35,6 @@ type Invite = {
   usedAt: null | string;
 };
 
-// Response type shared from the domain schema. Elysia 1.4 unwraps Standard
-// Schema request schemas for Eden but not response schemas, so responses use
-// this shared type with the existing typed fetch wrapper instead.
-type Pipeline = PipelineView;
 type StaffAccount = {
   disabledAt: null | string;
   email: string;
@@ -60,7 +53,6 @@ type Token = {
 
 const navigation = [
   { href: '/leads', icon: LayoutList, label: 'Leads' },
-  { href: '/settings/pipelines', icon: Workflow, label: 'Pipelines' },
   { href: '/settings/invites', icon: Mail, label: 'Invitations' },
   { href: '/settings/staff', icon: Users, label: 'Staff' },
   { href: '/settings/tokens', icon: KeyRound, label: 'Tokens' },
@@ -70,10 +62,6 @@ const appQuery = {
   invites: () => ({
     queryFn: () => request<Invite[]>('/v1/invites'),
     queryKey: ['invites'],
-  }),
-  pipelines: () => ({
-    queryFn: () => request<Pipeline[]>('/v1/pipelines'),
-    queryKey: ['pipelines'],
   }),
   staff: () => ({
     queryFn: () => request<StaffAccount[]>('/v1/staff'),
@@ -1233,9 +1221,6 @@ export const App = () => {
         </Route>
         <Route path="/leads">
           <LeadsPage />
-        </Route>
-        <Route path="/settings/pipelines">
-          <PipelinesPage />
         </Route>
         <Route path="/settings/tokens">
           <TokensPage />

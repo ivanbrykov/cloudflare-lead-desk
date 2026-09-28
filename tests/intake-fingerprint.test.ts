@@ -9,9 +9,7 @@ const baseInput = (overrides: Partial<IntakeInput> = {}): IntakeInput => ({
   firstName: overrides.firstName ?? ' Alex ',
   lastName: overrides.lastName,
   name: overrides.name ?? 'New inquiry',
-  pipelineId: overrides.pipelineId,
   source: overrides.source ?? 'website_form',
-  stageId: overrides.stageId,
 });
 
 describe('intake request fingerprint', () => {

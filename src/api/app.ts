@@ -5,15 +5,8 @@ import {
   createIntakeCommand,
   createLeadActivityCommand,
   createLeadCommand,
-  createPipelineCommand,
-  createStageCommand,
-  deleteStageCommand,
-  moveLeadsCommand,
-  reorderStagesCommand,
   softDeleteLeadsCommand,
   updateLeadCommand,
-  updatePipelineCommand,
-  updateStageCommand,
 } from '@/application/commands';
 import { type DomainError, type PersistenceError } from '@/application/errors';
 import {
@@ -33,7 +26,6 @@ import { handleInvitationSignUp } from '@/auth/invitation-sign-up';
 import { handleDisabledAccountSignIn } from '@/auth/sign-in-guard';
 import {
   checkStaffInviteAvailability,
-  countLeadsByStage,
   createApiToken,
   createStaffInvite,
   type Env,
@@ -43,34 +35,25 @@ import {
   listApiTokens,
   listLeadActivities,
   listLeads,
-  listPipelines,
   listStaffAccounts,
   listStaffInvites,
   revokeApiToken,
   revokeStaffInvite,
   setStaffAccountDisabled,
-  type StageOperationOutcome,
 } from '@/db/repository';
 import { isIntakeKey } from '@/domain/intake';
 import { decodeKeysetCursor, LIST_LIMIT_DEFAULT } from '@/domain/pagination';
 import {
   BulkDeleteLeadsRequest,
-  BulkMoveLeadsRequest,
   CreateInviteRequest,
   CreateLeadActivityRequest,
   CreateLeadRequest,
-  CreatePipelineRequest,
-  CreateStageRequest,
   CreateTokenRequest,
   HealthResponse,
   IntakeRequest,
-  LeadStageCountsQueryRequest,
   ListLeadsQueryRequest,
-  ReorderStagesRequest,
   SetStaffDisabledRequest,
   UpdateLeadRequest,
-  UpdatePipelineRequest,
-  UpdateStageRequest,
   ValidateInviteRequest,
 } from '@/domain/schemas';
 import { Effect, Either, Schema } from 'effect';
@@ -141,36 +124,6 @@ const run = async <A>(
         'The request could not be completed.',
       ),
     } as const;
-  }
-};
-
-const stageOutcomeResponse = (outcome: StageOperationOutcome) => {
-  switch (outcome.code) {
-    case 'invalid_stages':
-      return errorResponse(
-        422,
-        'invalid_stages',
-        'stageIds must list exactly the pipeline stages, once each, in the new order.',
-      );
-    case 'last_stage':
-      return errorResponse(
-        422,
-        'last_stage',
-        'A pipeline must keep at least one stage.',
-      );
-    case 'not_found':
-      return errorResponse(404, 'not_found', 'Pipeline or stage not found.');
-    case 'stage_in_use':
-      return errorResponse(
-        422,
-        'stage_in_use',
-        `Move the ${outcome.count} ${outcome.count === 1 ? 'lead' : 'leads'} in this stage before deleting it.`,
-        { count: outcome.count },
-      );
-    case 'updated':
-      return Response.json({ data: outcome.pipeline });
-    default:
-      throw new Error('unreachable: unknown stage outcome');
   }
 };
 
@@ -440,113 +393,6 @@ const createAppWithAuth = (environment: Env, getAuth: AuthForRequest) =>
 
       return { adminEmail: admin.email };
     })
-    .get('/v1/pipelines', async () => {
-      return { data: await listPipelines(environment) };
-    })
-    .post(
-      '/v1/pipelines',
-      async ({ body, request }) => {
-        const result = await run(
-          request,
-          createPipelineCommand(environment, body.name),
-        );
-        return 'error' in result
-          ? result.error
-          : Response.json({ data: result.data }, { status: 201 });
-      },
-      { body: Schema.standardSchemaV1(CreatePipelineRequest) },
-    )
-    .post('/v1/pipelines/:id/stages', async ({ body, params, request }) => {
-      const parsed = await parse(CreateStageRequest, body);
-      if ('error' in parsed) {
-        return parsed.error;
-      }
-
-      const result = await run(
-        request,
-        createStageCommand(environment, params.id, parsed.data),
-      );
-      if ('error' in result) {
-        return result.error;
-      }
-
-      return result.data === null
-        ? errorResponse(404, 'not_found', 'Pipeline not found.')
-        : Response.json({ data: result.data }, { status: 201 });
-    })
-    .patch(
-      '/v1/pipelines/:id',
-      async ({ body, params, request }) => {
-        const result = await run(
-          request,
-          updatePipelineCommand(environment, params.id, body),
-        );
-        return 'error' in result
-          ? result.error
-          : Response.json({ data: result.data });
-      },
-      { body: Schema.standardSchemaV1(UpdatePipelineRequest) },
-    )
-    .post(
-      '/v1/pipelines/:id/stages/reorder',
-      async ({ body, params, request }) => {
-        const parsed = await parse(ReorderStagesRequest, body);
-        if ('error' in parsed) {
-          return parsed.error;
-        }
-
-        const result = await run(
-          request,
-          reorderStagesCommand(environment, params.id, parsed.data),
-        );
-        return 'error' in result
-          ? result.error
-          : stageOutcomeResponse(result.data);
-      },
-    )
-    .patch(
-      '/v1/pipelines/:id/stages/:stageId',
-      async ({ body, params, request }) => {
-        const parsed = await parse(UpdateStageRequest, body);
-        if ('error' in parsed) {
-          return parsed.error;
-        }
-
-        const result = await run(
-          request,
-          updateStageCommand(
-            environment,
-            params.id,
-            params.stageId,
-            parsed.data,
-          ),
-        );
-        return 'error' in result
-          ? result.error
-          : stageOutcomeResponse(result.data);
-      },
-    )
-    .delete(
-      '/v1/pipelines/:id/stages/:stageId',
-      async ({ params, request }) => {
-        const result = await run(
-          request,
-          deleteStageCommand(environment, params.id, params.stageId),
-        );
-        return 'error' in result
-          ? result.error
-          : stageOutcomeResponse(result.data);
-      },
-    )
-    .get(
-      '/v1/leads/stage-counts',
-      async ({ query }) => {
-        return {
-          data: await countLeadsByStage(environment, query.pipelineId),
-        };
-      },
-      { query: Schema.standardSchemaV1(LeadStageCountsQueryRequest) },
-    )
     .get(
       '/v1/leads',
       async ({ query }) => {
@@ -565,9 +411,7 @@ const createAppWithAuth = (environment: Env, getAuth: AuthForRequest) =>
         const page = await listLeads(environment, {
           cursor,
           limit: query.limit ?? LIST_LIMIT_DEFAULT,
-          pipelineId: query.pipelineId,
           query: query.query,
-          stageId: query.stageId,
         });
         return { data: page.leads, nextCursor: page.nextCursor };
       },
@@ -582,43 +426,6 @@ const createAppWithAuth = (environment: Env, getAuth: AuthForRequest) =>
           : Response.json({ data: result.data }, { status: 201 });
       },
       { body: Schema.standardSchemaV1(CreateLeadRequest) },
-    )
-    .patch(
-      '/v1/leads/bulk',
-      async ({ adminEmail, body, request }) => {
-        const result = await run(
-          request,
-          moveLeadsCommand(
-            environment,
-            body.ids,
-            { pipelineId: body.pipelineId, stageId: body.stageId },
-            adminEmail,
-          ),
-        );
-        if ('error' in result) {
-          return result.error;
-        }
-
-        switch (result.data) {
-          case 'invalid_stage':
-            return errorResponse(
-              422,
-              'invalid_stage',
-              'The selected stage is not valid for these leads.',
-            );
-          case 'moved':
-            return { data: { moved: body.ids.length } };
-          case 'not_found':
-            return errorResponse(
-              404,
-              'not_found',
-              'One or more leads were not found.',
-            );
-        }
-
-        return undefined;
-      },
-      { body: Schema.standardSchemaV1(BulkMoveLeadsRequest) },
     )
     .post(
       '/v1/leads/bulk-delete',
@@ -635,21 +442,13 @@ const createAppWithAuth = (environment: Env, getAuth: AuthForRequest) =>
     )
     .patch(
       '/v1/leads/:id',
-      async ({ adminEmail, body, params, request }) => {
+      async ({ body, params, request }) => {
         const result = await run(
           request,
-          updateLeadCommand(environment, params.id, body, adminEmail),
+          updateLeadCommand(environment, params.id, body),
         );
         if ('error' in result) {
           return result.error;
-        }
-
-        if (result.data === 'invalid_stage') {
-          return errorResponse(
-            422,
-            'invalid_stage',
-            'The selected pipeline or stage is not valid for this lead.',
-          );
         }
 
         return result.data
