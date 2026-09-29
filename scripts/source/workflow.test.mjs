@@ -40,9 +40,9 @@ const trustedWriteScript = (workflow) => {
 const runTrustedWrite = async (
   context,
   script,
-  { changedPaths = 'lead-desk.json', remoteSha = baseSha } = {},
+  { changedPaths = 'leadscroll.json', remoteSha = baseSha } = {},
 ) => {
-  const directory = await mkdtemp(join(tmpdir(), 'lead-desk-reusable-write-'));
+  const directory = await mkdtemp(join(tmpdir(), 'leadscroll-reusable-write-'));
   context.after(async () => rm(directory, { force: true, recursive: true }));
   const binaryDirectory = join(directory, 'bin');
   await mkdir(binaryDirectory);
@@ -67,7 +67,7 @@ case "$1" in
     cat "$MOCK_ORIGINAL_CONFIG"
     ;;
   ls-tree)
-    printf '100644 blob %040d\\tlead-desk.json\\n' 2
+    printf '100644 blob %040d\\tleadscroll.json\\n' 2
     ;;
   hash-object)
     printf '%040d\\n' 3
@@ -100,7 +100,7 @@ esac
   await writeFile(
     originalConfig,
     `${JSON.stringify({
-      repository: 'ivanbrykov/cloudflare-lead-desk',
+      repository: 'leadscroll/leadscroll',
       revision: oldRevision,
     })}\n`,
   );
@@ -120,7 +120,7 @@ esac
     MOCK_ORIGINAL_CONFIG: originalConfig,
     MOCK_PUSH_MARKER: pushMarker,
     MOCK_REMOTE_SHA: remoteSha,
-    OLD_REPOSITORY: 'ivanbrykov/cloudflare-lead-desk',
+    OLD_REPOSITORY: 'leadscroll/leadscroll',
     OLD_REVISION: oldRevision,
     PATH: `${binaryDirectory}:${process.env.PATH}`,
     REPOSITORY_WRITE_TOKEN: 'fake-write-credential',
@@ -158,7 +158,7 @@ test('copied README installs the exact small caller in its own repository', asyn
   assert.match(caller, /contents: write/u);
   assert.match(
     caller,
-    /uses: ivanbrykov\/cloudflare-lead-desk\/\.github\/workflows\/cloudflare-upgrade\.yml@main/u,
+    /uses: leadscroll\/leadscroll\/\.github\/workflows\/cloudflare-upgrade\.yml@main/u,
   );
   assert.doesNotMatch(caller, /run:|secrets:|checkout@/u);
   const install = /\[install the Upgrade workflow\]\(([^)]+)\)/u.exec(readme);
@@ -174,7 +174,9 @@ test('copied README installs the exact small caller in its own repository', asyn
   );
   assert.equal(installUrl.searchParams.get('value'), caller);
   assert.match(readme, /\[the small workflow file\]\(upgrade-workflow\.yml\)/u);
-  const button = /\[!\[Upgrade Lead Desk\]\([^)]+\)\]\(([^)]+)\)/u.exec(readme);
+  const button = /\[!\[Upgrade LeadScroll\]\([^)]+\)\]\(([^)]+)\)/u.exec(
+    readme,
+  );
   assert(button);
   assert.equal(
     new URL(
@@ -262,12 +264,12 @@ test('resolver waits for exact upstream CI and rejects a failed run', async (con
     ) ?? [];
   assert(body);
   const source = body.replaceAll(/^ {10}/gmu, '');
-  const directory = await mkdtemp(join(tmpdir(), 'lead-desk-ci-gate-'));
+  const directory = await mkdtemp(join(tmpdir(), 'leadscroll-ci-gate-'));
   context.after(async () => rm(directory, { force: true, recursive: true }));
   await writeFile(
-    join(directory, 'lead-desk.json'),
+    join(directory, 'leadscroll.json'),
     `${JSON.stringify({
-      repository: 'ivanbrykov/cloudflare-lead-desk',
+      repository: 'leadscroll/leadscroll',
       revision: oldRevision,
     })}\n`,
   );
@@ -366,7 +368,7 @@ test('trusted writer rejects extra files and branch races', async (context) => {
   const script = trustedWriteScript(await readFile(reusablePath, 'utf8'));
   await context.test('extra changed path', async (subcontext) => {
     const result = await runTrustedWrite(subcontext, script, {
-      changedPaths: 'lead-desk.json\nscripts/commit.mjs',
+      changedPaths: 'leadscroll.json\nscripts/commit.mjs',
     });
     assert(result.error);
     assert.equal(result.pushed, false);

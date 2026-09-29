@@ -1,4 +1,4 @@
-# Cloudflare Lead Desk
+# Cloudflare LeadScroll
 
 A self-hosted, Cloudflare-native CRM for teams handling inbound leads. It stores data in D1, serves a React workbench from Workers, and exposes a documented API for trusted form integrations.
 
@@ -17,7 +17,7 @@ Every deployment is independent: the repo carries no account-specific values.
 
 ### Installation repository
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/ivanbrykov/cloudflare-lead-desk/tree/main/templates/cloudflare)
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/leadscroll/leadscroll/tree/main/templates/cloudflare)
 
 1. Click the button to copy only [`templates/cloudflare`](templates/cloudflare)
    into a new repository in your GitHub account and connect it to Cloudflare.
@@ -30,12 +30,12 @@ Every deployment is independent: the repo carries no account-specific values.
    `BETTER_AUTH_SECRET` and `SETUP_TOKEN`, then redeploy before using the app.
 
 Your generated repository owns only installation configuration; every build
-compiles Lead Desk from the exact full source SHA recorded in `lead-desk.json`.
+compiles LeadScroll from the exact full source SHA recorded in `leadscroll.json`.
 Ordinary rebuilds repeat the recorded revision. For manual upgrades, install
 the tiny workflow from your copied repository's
-[README](templates/cloudflare/README.md#upgrade-lead-desk) once, then use its
+[README](templates/cloudflare/README.md#upgrade-leadscroll) once, then use its
 Upgrade button. The workflow validates a candidate from upstream `main` and
-commits only the exact `lead-desk.json` source pin. Cloudflare then builds that
+commits only the exact `leadscroll.json` source pin. Cloudflare then builds that
 revision using the existing Worker and `DB` binding. The README also retains
 manual pin-edit instructions and recovery cautions.
 
@@ -53,7 +53,7 @@ After the first deploy, open the app, switch to sign-up, and create the first ac
 Prerequisites: a Cloudflare account, Node.js 24.20.0 (see `.node-version`) and pnpm 10.34.5. Install the pinned pnpm version using `npm install --global pnpm@10.34.5` if needed.
 
 1. Install dependencies: `pnpm install --frozen-lockfile`.
-2. Create the D1 database in your account with any name you like — it does not need to match the Worker, for example `pnpm exec wrangler d1 create lead-desk-db`. Copy the `database_id` it prints into the `d1_databases` entry in `wrangler.jsonc` (replacing the empty string) and set `database_name` to the same name you used.
+2. Create the D1 database in your account with any name you like — it does not need to match the Worker, for example `pnpm exec wrangler d1 create leadscroll-db`. Copy the `database_id` it prints into the `d1_databases` entry in `wrangler.jsonc` (replacing the empty string) and set `database_name` to the same name you used.
 3. Set the session secret: `openssl rand -base64 32 | pnpm exec wrangler secret put BETTER_AUTH_SECRET`.
 4. Set the invite token: `openssl rand -hex 32 | pnpm exec wrangler secret put SETUP_TOKEN`. Keep it across redeployments.
 5. Deploy: `pnpm run deploy` (set `CLOUDFLARE_ACCOUNT_ID` if your wrangler login spans multiple accounts). The deploy script builds, applies the D1 migrations, and deploys. The migration also bootstraps the default workspace row (fixed id, `INSERT OR IGNORE`) — the app itself never seeds data per request, so a deleted bootstrap row is not resurrected. Migration commands reference the `DB` binding rather than a database name, so renamed databases keep working.
@@ -195,7 +195,7 @@ idempotent form submission. One submission creates one lead:
 
 ```sh
 curl https://crm.example.com/v1/intakes \
-  -H 'Authorization: Bearer cld_…' \
+  -H 'Authorization: Bearer lsc_…' \
   -H 'Content-Type: application/json' \
   -H 'Idempotency-Key: a-stable-submission-id' \
   --data '{
@@ -241,15 +241,15 @@ soft delete is the spam cleanup.
 ### Browser SDK
 
 The CRM serves a small, dependency-free SDK at `/sdk/v1.js`. Give a form a
-`data-lead-desk` attribute with the browser token and the SDK handles the submit:
+`data-leadscroll` attribute with the browser token and the SDK handles the submit:
 
 ```html
-<form data-lead-desk="cld_pub_…">
+<form data-leadscroll="lsc_pub_…">
   <input name="email" type="email" required>
   <input name="name" placeholder="How can we help?">
   <input name="plan" value="pro"> <!-- unknown names become custom fields -->
   <button type="submit">Send</button>
-  <p data-lead-desk-status></p>
+  <p data-leadscroll-status></p>
 </form>
 <script src="https://crm.example.com/sdk/v1.js" defer></script>
 ```
@@ -259,12 +259,12 @@ The CRM serves a small, dependency-free SDK at `/sdk/v1.js`. Give a form a
   `customFields`.
 - The endpoint origin comes from the script's own `src`, so the form can live
   on any site. No cookies or credentials are sent.
-- Attribute overrides: `data-lead-desk-source`, `data-lead-desk-success`,
-  `data-lead-desk-error`, `data-lead-desk-reset="false"`.
-- Status text renders into `[data-lead-desk-status]`; the form also dispatches
-  `lead-desk:success` and `lead-desk:error` custom events.
-- `window.LeadDesk.submit(token, data)` posts programmatically, and
-  `window.LeadDesk.init(root)` binds forms added after load (for example after
+- Attribute overrides: `data-leadscroll-source`, `data-leadscroll-success`,
+  `data-leadscroll-error`, `data-leadscroll-reset="false"`.
+- Status text renders into `[data-leadscroll-status]`; the form also dispatches
+  `leadscroll:success` and `leadscroll:error` custom events.
+- `window.LeadScroll.submit(token, data)` posts programmatically, and
+  `window.LeadScroll.init(root)` binds forms added after load (for example after
   client-side navigation).
 - Password-, card-, and secret-looking fields are never collected.
 

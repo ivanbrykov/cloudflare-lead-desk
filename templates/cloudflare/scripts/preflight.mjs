@@ -3,4 +3,4 @@ import { log } from 'node:console';
 import process from 'node:process';
 
 const manifest = await checkInstallation(process.cwd());
-log(`Deploying Lead Desk source ${manifest.commit}`);
+log(`Deploying LeadScroll source ${manifest.commit}`);

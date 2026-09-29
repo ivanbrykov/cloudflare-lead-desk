@@ -1,5 +1,5 @@
 node_modules/
-.lead-desk/
+.leadscroll/
 .wrangler/
 .dev.vars
 *.log

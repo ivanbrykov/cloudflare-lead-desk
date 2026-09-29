@@ -133,9 +133,8 @@ const bundleWorker = async (): Promise<string> => {
 
 /**
  * Starts a fresh in-memory D1 fixture. With `legacy: true` an idempotency
- * row is inserted BETWEEN the first and second migration, mirroring a
- * production database that accepted intakes before the additive
- * request_hash migration existed.
+ * row with no request_hash is inserted after the baseline, mirroring a
+ * repository that accepted intakes before fingerprints existed.
  */
 const startFixture = async (
   options: { legacy?: boolean } = {},
@@ -181,18 +180,8 @@ const startFixture = async (
       }
 
       if (options.legacy && index === 0) {
-        await database
-          .prepare(
-            'INSERT INTO workspaces (id, slug, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
-          )
-          .bind(
-            DEFAULT_WORKSPACE_ID,
-            'default',
-            'Lead Desk',
-            '2026-01-01',
-            '2026-01-01',
-          )
-          .run();
+        // Inserted after the first (only) migration: the baseline already
+        // seeds the default workspace, so only the legacy row is added.
         await database
           .prepare(
             'INSERT INTO idempotency_keys (workspace_id, key, response_json, created_at) VALUES (?, ?, ?, ?)',
@@ -204,7 +193,7 @@ const startFixture = async (
               created: true,
               leadId: LEGACY_LEAD_ID,
             }),
-            '2026-01-01',
+            Date.parse('2026-01-01T00:00:00.000Z'),
           )
           .run();
       }
@@ -535,7 +524,7 @@ test('a failed intake transaction reserves nothing and the same key can retry', 
   }
 });
 
-test('a pre-fingerprint idempotency row survives the additive migration as unverifiable', async () => {
+test('a pre-fingerprint idempotency row is unverifiable and never mutated', async () => {
   const fx = await startFixture({ legacy: true });
   try {
     const token = await fx.createToken();

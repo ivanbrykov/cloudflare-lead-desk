@@ -1,5 +1,5 @@
 /**
- * Structured request logging for the Lead Desk API.
+ * Structured request logging for the LeadScroll API.
  *
  * Emits one JSON line per API request. Lines are emitted synchronously
  * before the response is returned: a Workers isolate may be suspended as

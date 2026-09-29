@@ -109,7 +109,7 @@ const Shell = ({ children }: { readonly children: React.ReactNode }) => {
           <span className="grid size-7 place-items-center rounded-md bg-cyan-400 text-slate-950">
             <PanelsTopLeft size={16} />
           </span>
-          Lead Desk
+          LeadScroll
         </Link>
         <nav className="grid grid-cols-2 gap-1 sm:flex sm:flex-wrap lg:grid lg:grid-cols-1">
           {navigation.map((item) => {
@@ -214,7 +214,7 @@ const copyToClipboard = async (value: string, message = 'Copied') => {
 
 const publicIntakeSnippet = (token: string): string =>
   [
-    `<form data-lead-desk="${token}">`,
+    `<form data-leadscroll="${token}">`,
     '  <input name="email" type="email" required>',
     '  <input name="name" placeholder="How can we help?">',
     '  <button type="submit">Send</button>',
@@ -1109,7 +1109,7 @@ const LoginPage = () => {
           <span className="grid size-7 place-items-center rounded-md bg-cyan-400 text-slate-950">
             <PanelsTopLeft size={16} />
           </span>
-          Lead Desk
+          LeadScroll
         </div>
         {mode === 'sign-in' ? (
           <form

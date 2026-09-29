@@ -131,11 +131,11 @@ test('public tokens are stored for copying while private tokens stay hidden', as
       name: 'Website',
       type: 'browser',
     });
-    expect(String(publicToken.token)).toMatch(/^cld_pub_[0-9a-f]{64}$/u);
+    expect(String(publicToken.token)).toMatch(/^lsc_pub_[0-9a-f]{64}$/u);
     expect(publicToken.scope).toBe('intake:write');
 
     const privateToken = await createToken(fx, { name: 'Server' });
-    expect(String(privateToken.token)).toMatch(/^cld_[0-9a-f]{64}$/u);
+    expect(String(privateToken.token)).toMatch(/^lsc_[0-9a-f]{64}$/u);
 
     const list = await fx.request('/v1/tokens', { method: 'GET' });
     expect(list.status).toBe(200);

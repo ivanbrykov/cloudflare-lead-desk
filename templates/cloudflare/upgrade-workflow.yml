@@ -1,4 +1,4 @@
-name: Upgrade Lead Desk
+name: Upgrade LeadScroll
 
 on:
   workflow_dispatch:
@@ -8,4 +8,4 @@ permissions:
 
 jobs:
   upgrade:
-    uses: ivanbrykov/cloudflare-lead-desk/.github/workflows/cloudflare-upgrade.yml@main
+    uses: leadscroll/leadscroll/.github/workflows/cloudflare-upgrade.yml@main

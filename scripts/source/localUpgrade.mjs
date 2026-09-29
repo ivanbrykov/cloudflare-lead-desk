@@ -6,7 +6,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 export const upgradePin = async ({ repositoryUrl, root, targetRevision }) => {
-  const path = join(root, 'lead-desk.json');
+  const path = join(root, 'leadscroll.json');
   const configuration = validateConfiguration(
     JSON.parse(await readFile(path, 'utf8')),
   );

@@ -2,7 +2,7 @@
   "cloudflare": {
     "bindings": {
       "BETTER_AUTH_SECRET": {"description": "Session signing secret. Generate once with openssl rand -base64 32 and keep it across updates."},
-      "DB": {"description": "Your persistent Lead Desk D1 database. Updates reuse this binding and its existing data."},
+      "DB": {"description": "Your persistent LeadScroll D1 database. Updates reuse this binding and its existing data."},
       "SETUP_TOKEN": {"description": "Bootstrap token for the first account. Generate with openssl rand -hex 32. Subsequent staff use invitations."}
     }
   },
@@ -11,7 +11,7 @@
     "wrangler": "4.125.0"
   },
   "engines": {"node": ">=24.20.0 <25"},
-  "name": "my-lead-desk",
+  "name": "my-leadscroll",
   "packageManager": "pnpm@10.34.5",
   "private": true,
   "scripts": {

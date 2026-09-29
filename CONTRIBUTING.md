@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for improving Cloudflare Lead Desk.
+Thanks for improving Cloudflare LeadScroll.
 
 1. Read the architecture decisions in `docs/adr`.
 2. Keep HTTP contracts in Effect Schema; do not add a second validator.

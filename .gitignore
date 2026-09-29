@@ -7,4 +7,4 @@ tsconfig.tsbuildinfo
 *.log
 
 .source-build/
-.lead-desk/
+.leadscroll/

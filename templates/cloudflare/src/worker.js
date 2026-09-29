@@ -1,1 +1,1 @@
-export { default } from '../.lead-desk/current/worker.mjs';
+export { default } from '../.leadscroll/current/worker.mjs';

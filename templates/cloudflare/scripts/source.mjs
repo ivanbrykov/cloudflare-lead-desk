@@ -2,7 +2,10 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 
 export const bootstrapRevision = '8c8f7cdede319c7ab1785a2917c8d0f73fa565ac';
-export const sourceBuildFormat = 'lead-desk-source-build';
+export const sourceBuildFormat = 'leadscroll-source-build';
+// Pins recorded before the LeadScroll rename still carry the old format
+// marker; accept them so those installs can be rebuilt and upgraded.
+const LEGACY_SOURCE_BUILD_FORMATS = new Set(['lead-desk-source-build']);
 export const checksum = (contents) =>
   createHash('sha256').update(contents).digest('hex');
 
@@ -22,7 +25,11 @@ export const validateConfiguration = (value) => {
 
 export const validateSourceManifest = (value) => {
   assert.equal(value?.schemaVersion, 1, 'Unsupported source-build manifest');
-  assert.equal(value.format, sourceBuildFormat, 'Unexpected build format');
+  assert(
+    value.format === sourceBuildFormat ||
+      LEGACY_SOURCE_BUILD_FORMATS.has(value.format),
+    'Unexpected build format',
+  );
   assert(
     typeof value.commit === 'string' && /^[a-f0-9]{40}$/u.test(value.commit),
     'Invalid source commit',

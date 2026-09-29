@@ -114,7 +114,7 @@ export const deploy = async ({
   await ensureDatabase({ root, runWrangler });
   runWrangler(['d1', 'migrations', 'apply', 'DB', '--remote'], { cwd: root });
   runWrangler(['deploy'], { cwd: root });
-  log(`Deployed Lead Desk source ${manifest.commit}`);
+  log(`Deployed LeadScroll source ${manifest.commit}`);
 };
 
 if (process.argv[1] && import.meta.filename === resolve(process.argv[1])) {

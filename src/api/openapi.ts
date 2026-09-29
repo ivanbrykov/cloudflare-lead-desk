@@ -22,7 +22,7 @@ export const openApiSpecification = {
     },
   },
   info: {
-    title: 'Cloudflare Lead Desk API',
+    title: 'Cloudflare LeadScroll API',
     version: '0.1.0-alpha.0',
   },
   openapi: '3.1.0',

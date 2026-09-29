@@ -25,7 +25,7 @@ import {
 import { join, resolve } from 'node:path';
 import process from 'node:process';
 
-const ownership = 'Lead Desk generated source installation v1\n';
+const ownership = 'LeadScroll generated source installation v1\n';
 const sensitiveEnvironmentName =
   /(?:^|_)(?:AUTH|CLOUDFLARE|PASSWORD|SECRET|TOKEN)(?:_|$)|^(?:CF_|GH_|WRANGLER_)/iu;
 
@@ -193,20 +193,20 @@ export const prepareSource = async ({
   root: installationRoot,
 }) => {
   const root = resolve(installationRoot);
-  const generated = join(root, '.lead-desk');
+  const generated = join(root, '.leadscroll');
   const marker = join(generated, '.owned');
   const info = await inspect(generated);
   if (info) {
     assert(
       info.isDirectory() && !info.isSymbolicLink(),
-      'Refusing unsafe .lead-desk directory',
+      'Refusing unsafe .leadscroll directory',
     );
     const owner = await inspect(marker);
     assert(
       owner?.isFile() &&
         !owner.isSymbolicLink() &&
         (await readFile(marker, 'utf8')) === ownership,
-      'Refusing unowned .lead-desk directory',
+      'Refusing unowned .leadscroll directory',
     );
   } else {
     await mkdir(generated);
@@ -220,7 +220,7 @@ export const prepareSource = async ({
     await rm(join(generated, 'ready.json'), { force: true });
     const selected = validateConfiguration(
       configuration ??
-        JSON.parse(await readFile(join(root, 'lead-desk.json'), 'utf8')),
+        JSON.parse(await readFile(join(root, 'leadscroll.json'), 'utf8')),
     );
     const baseline = baselineConfiguration
       ? validateConfiguration(baselineConfiguration)
@@ -342,7 +342,7 @@ export const prepareSource = async ({
       join(generated, 'ready.json'),
       `${JSON.stringify({ receiptSha256: checksum(receiptBytes) })}\n`,
     );
-    log(`Prepared Lead Desk source ${receipt.commit}`);
+    log(`Prepared LeadScroll source ${receipt.commit}`);
     return receipt;
   } finally {
     if (temporary) {

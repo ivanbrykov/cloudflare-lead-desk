@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 
-export const sourceBuildFormat = 'lead-desk-source-build';
+export const sourceBuildFormat = 'leadscroll-source-build';
 export const checksum = (contents) =>
   createHash('sha256').update(contents).digest('hex');
 
