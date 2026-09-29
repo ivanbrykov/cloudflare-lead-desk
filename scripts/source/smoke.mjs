@@ -386,7 +386,7 @@ try {
   const initialReceipt = await checkInstallation(consumer);
   assert.equal(
     initialReceipt.commit,
-    'ad31f24d22aff10c1a80447f1c2549f22e62f0e1',
+    '9dbb5c8bc02dabe3982a138b8d4b51b40602cd1c',
   );
   pass(
     'fresh consumer fetched and compiled the real reachable initial source pin',
