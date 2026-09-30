@@ -5,6 +5,7 @@ import { PageHeader } from '@/components/PageHeader';
 import { Button } from '@/components/ui/Button';
 import { Field } from '@/components/ui/Field';
 import { inputClass } from '@/components/ui/form';
+import { leadDisplayName } from '@/domain/leadDisplay';
 import { type LeadView } from '@/domain/schemas';
 import { request, requestBody } from '@/lib/http';
 import {
@@ -178,7 +179,9 @@ export const LeadsPage = () => {
                         className="font-medium text-slate-100 hover:text-cyan-300"
                         href={`/leads/${lead.id}`}
                       >
-                        {lead.name}
+                        {leadDisplayName(lead) ?? (
+                          <span className="text-slate-500">N/A</span>
+                        )}
                       </Link>
                       {lead.duplicateCount > 0 && (
                         <span

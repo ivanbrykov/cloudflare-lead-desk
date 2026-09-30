@@ -202,7 +202,6 @@ curl https://crm.example.com/v1/intakes \
     "source": "website_form",
     "email": "alex@example.com",
     "firstName": "Sam",
-    "name": "New service inquiry",
     "customFields": { "segment": "Enterprise" }
   }'
 ```
@@ -223,7 +222,6 @@ await fetch(`https://crm.example.com/v1/public/intakes/${publicToken}`, {
     customFields: { form: 'pricing', plan: 'pro' },
     email: 'alex@example.com',
     firstName: 'Sam',
-    name: 'New service inquiry',
     source: 'pricing_form',
   }),
   headers: {
@@ -254,9 +252,9 @@ The CRM serves a small, dependency-free SDK at `/sdk/v1.js`. Give a form a
 <script src="https://crm.example.com/sdk/v1.js" defer></script>
 ```
 
-- `email`, `firstName`/`first_name`/`first-name`, `lastName`, `name`, and
-  `source` map to lead fields; every other named input lands in
-  `customFields`.
+- `email`, `firstName`/`first_name`/`first-name`, `lastName`, and `source`
+  map to lead fields; every other named input — including `name` and `title` —
+  lands in `customFields`.
 - The endpoint origin comes from the script's own `src`, so the form can live
   on any site. No cookies or credentials are sent.
 - Attribute overrides: `data-leadscroll-source`, `data-leadscroll-success`,

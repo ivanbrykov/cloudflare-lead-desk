@@ -35,7 +35,6 @@ export const leads = sqliteTable(
     firstName: text('first_name'),
     id: text('id').primaryKey(),
     lastName: text('last_name'),
-    name: text('name').notNull(),
     normalizedEmail: text('normalized_email'),
     origin: text('origin'),
     publicKeyId: text('public_key_id'),

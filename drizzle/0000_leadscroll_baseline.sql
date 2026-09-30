@@ -58,7 +58,6 @@ CREATE TABLE `leads` (
 	`first_name` text,
 	`id` text PRIMARY KEY NOT NULL,
 	`last_name` text,
-	`name` text NOT NULL,
 	`normalized_email` text,
 	`origin` text,
 	`public_key_id` text,

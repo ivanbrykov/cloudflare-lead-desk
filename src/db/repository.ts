@@ -9,7 +9,7 @@ import {
   user,
 } from './schema';
 import { type RegistrationGrant } from '@/auth/registration-repository';
-import { type IntakeResponse, leadDisplayName } from '@/domain/intake';
+import { type IntakeResponse } from '@/domain/intake';
 import { encodeKeysetCursor, type Keyset } from '@/domain/pagination';
 import {
   type CreateLeadInput,
@@ -95,7 +95,6 @@ export type LeadRecord = {
   firstName: null | string;
   id: string;
   lastName: null | string;
-  name: string;
   origin: null | string;
   publicKeyId: null | string;
   source: string;
@@ -103,12 +102,12 @@ export type LeadRecord = {
 };
 
 /**
- * Literal substring match on the lead name, email, or first/last name; `%` and
- * `_` in the query are escaped so they never act as LIKE wildcards.
+ * Literal substring match on the email or first/last name; `%` and `_` in the
+ * query are escaped so they never act as LIKE wildcards.
  */
 const leadSearchPredicate = (query: string) => {
   const pattern = `%${escapeLike(query)}%`;
-  return sql`(${leads.name} LIKE ${pattern} ESCAPE '\\' OR ${leads.email} LIKE ${pattern} ESCAPE '\\' OR ${leads.firstName} LIKE ${pattern} ESCAPE '\\' OR ${leads.lastName} LIKE ${pattern} ESCAPE '\\')`;
+  return sql`(${leads.email} LIKE ${pattern} ESCAPE '\\' OR ${leads.firstName} LIKE ${pattern} ESCAPE '\\' OR ${leads.lastName} LIKE ${pattern} ESCAPE '\\')`;
 };
 
 /**
@@ -166,7 +165,6 @@ const toLead = (
   firstName: row.firstName,
   id: row.id,
   lastName: row.lastName,
-  name: row.name,
   origin: row.origin,
   publicKeyId: row.publicKeyId,
   source: row.source,
@@ -815,9 +813,9 @@ export const createLeadAtomically = async (
     environment.DB.prepare(
       `INSERT INTO leads (
           id, workspace_id, email, normalized_email,
-          first_name, last_name, name, source, estimated_value, custom_fields,
+          first_name, last_name, source, estimated_value, custom_fields,
           origin, public_key_id, created_at, updated_at, deleted_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
     ).bind(
       leadId,
       DEFAULT_WORKSPACE_ID,
@@ -825,7 +823,6 @@ export const createLeadAtomically = async (
       email,
       input.firstName ?? null,
       input.lastName ?? null,
-      leadDisplayName(input),
       input.source,
       input.estimatedValue ?? null,
       JSON.stringify(input.customFields ?? {}),
@@ -876,23 +873,6 @@ export const createLeadAtomically = async (
   }
 };
 
-const leadName = (parts: {
-  email: null | string;
-  firstName: null | string;
-  lastName: null | string;
-  name?: string;
-}): string => {
-  if (parts.name) {
-    return parts.name;
-  }
-
-  const person = [parts.firstName, parts.lastName]
-    .filter((part): part is string => typeof part === 'string')
-    .join(' ')
-    .trim();
-  return person || parts.email || 'New lead';
-};
-
 export const createLead = async (
   environment: Env,
   input: CreateLeadInput,
@@ -910,7 +890,6 @@ export const createLead = async (
     firstName,
     id: id(),
     lastName,
-    name: leadName({ email, firstName, lastName, name: input.name }),
     normalizedEmail: email ? normalizeEmail(email) : null,
     origin: null,
     publicKeyId: null,
@@ -947,10 +926,6 @@ export const updateLead = async (
 
   if (input.lastName !== undefined) {
     patch.lastName = input.lastName;
-  }
-
-  if (input.name !== undefined) {
-    patch.name = input.name;
   }
 
   if (input.source !== undefined) {

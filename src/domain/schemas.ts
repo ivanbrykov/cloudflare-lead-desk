@@ -35,7 +35,6 @@ export const IntakeRequest = Schema.Struct({
   ),
   firstName: Schema.optional(NonEmptyString),
   lastName: Schema.optional(NonEmptyString),
-  name: Schema.optional(NonEmptyString),
   source: NonEmptyString,
 });
 export type IntakeInput = Schema.Schema.Type<typeof IntakeRequest>;
@@ -60,7 +59,6 @@ export const LeadViewResponse = Schema.Struct({
   firstName: Schema.NullOr(Schema.String),
   id: RecordId,
   lastName: Schema.NullOr(Schema.String),
-  name: NonEmptyString,
   origin: Schema.NullOr(Schema.String),
   publicKeyId: Schema.NullOr(Schema.String),
   source: NonEmptyString,
@@ -110,7 +108,6 @@ export const CreateLeadRequest = Schema.Struct({
   ),
   firstName: Schema.optional(NonEmptyString),
   lastName: Schema.optional(NonEmptyString),
-  name: Schema.optional(NonEmptyString),
   source: Schema.optional(NonEmptyString),
 });
 export type CreateLeadInput = Schema.Schema.Type<typeof CreateLeadRequest>;
@@ -123,7 +120,6 @@ export const UpdateLeadRequest = Schema.Struct({
   ),
   firstName: Schema.optional(Schema.NullOr(NonEmptyString)),
   lastName: Schema.optional(Schema.NullOr(NonEmptyString)),
-  name: Schema.optional(NonEmptyString),
   source: Schema.optional(NonEmptyString),
 });
 export type UpdateLeadInput = Schema.Schema.Type<typeof UpdateLeadRequest>;

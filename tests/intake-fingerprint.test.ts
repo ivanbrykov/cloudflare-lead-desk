@@ -8,7 +8,6 @@ const baseInput = (overrides: Partial<IntakeInput> = {}): IntakeInput => ({
   estimatedValue: overrides.estimatedValue,
   firstName: overrides.firstName ?? ' Alex ',
   lastName: overrides.lastName,
-  name: overrides.name ?? 'New inquiry',
   source: overrides.source ?? 'website_form',
 });
 
@@ -18,7 +17,6 @@ describe('intake request fingerprint', () => {
     const b: IntakeInput = {
       email: 'Alex@Example.COM',
       firstName: ' Alex ',
-      name: 'New inquiry',
       source: 'website_form',
     };
     expect(await intakeRequestFingerprint(b)).toBe(
@@ -60,7 +58,7 @@ describe('intake request fingerprint', () => {
 
   test('changes to any field change the fingerprint', async () => {
     const a = baseInput();
-    const renamed = baseInput({ name: 'Changed inquiry' });
+    const renamed = baseInput({ firstName: 'Changed' });
     expect(await intakeRequestFingerprint(renamed)).not.toBe(
       await intakeRequestFingerprint(a),
     );

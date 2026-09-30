@@ -10,23 +10,6 @@ export type IntakeResponse = {
 };
 
 /**
- * Display name for a lead: the explicit name, else the person's name, else the
- * email. Every lead has a stable title for the table without requiring the
- * sender to provide one.
- */
-export const leadDisplayName = (input: IntakeInput): string => {
-  if (input.name) {
-    return input.name;
-  }
-
-  const person = [input.firstName, input.lastName]
-    .filter((part): part is string => typeof part === 'string')
-    .join(' ')
-    .trim();
-  return person || input.email;
-};
-
-/**
  * Idempotency keys: 1-128 printable ASCII characters (0x21-0x7E, no spaces).
  */
 const INTAKE_KEY_PATTERN = /^[\u0021-\u007E]{1,128}$/u;

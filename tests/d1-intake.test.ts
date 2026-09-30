@@ -65,14 +65,12 @@ type IntakePayload = {
   estimatedValue?: number;
   firstName?: string;
   lastName?: string;
-  name?: string;
   source: string;
 };
 
 const payload = (email = 'intake-test@example.test'): IntakePayload => ({
   email,
   firstName: 'Alex',
-  name: 'New inquiry',
   source: 'website_form',
 });
 
@@ -419,8 +417,8 @@ test('parallel identical retries collapse and parallel conflicting requests choo
 
     const a = payload('conflict-pair@example.test');
     const b = payload('conflict-pair@example.test');
-    a.name = 'Winner A';
-    b.name = 'Winner B';
+    a.source = 'winner_a';
+    b.source = 'winner_b';
     const pair = await Promise.all([
       fx.intake('parallel-conflict', a, token.token),
       fx.intake('parallel-conflict', b, token.token),
@@ -431,10 +429,10 @@ test('parallel identical retries collapse and parallel conflicting requests choo
     expectError(pair[loserIndex], 409, 'idempotency_conflict');
     const winnerId = (pair[winnerIndex].json.data as { leadId: string }).leadId;
     const saved = await fx.db
-      .prepare('SELECT name FROM leads WHERE id = ?')
+      .prepare('SELECT source FROM leads WHERE id = ?')
       .bind(winnerId)
       .first();
-    expect(saved?.name).toBe([a, b][winnerIndex].name);
+    expect(saved?.source).toBe([a, b][winnerIndex].source);
     expect(await fx.count('leads')).toBe(2);
     expect(await fx.count('leads')).toBe(2);
     expect(await fx.count('activities')).toBe(2);
