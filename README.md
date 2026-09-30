@@ -204,7 +204,7 @@ curl https://crm.example.com/v1/intakes \
   }'
 ```
 
-The interactive OpenAPI documentation is available at `/openapi`.
+A machine-readable OpenAPI document is planned; the routes below are the contract.
 
 ### Public intake (browser forms)
 
@@ -367,7 +367,7 @@ there is no separate contact or opportunity record.
 
 ## Observability
 
-Every API request (`/health`, `/openapi`, and `/v1/*`) emits exactly one JSON log line, written synchronously before the response is returned (a Workers isolate can be suspended once the response is sent, so logging does not rely on post-response callbacks):
+Every API request (`/health`, `/v1/*`, `/api/auth/`, and `/api/invites/`) emits exactly one JSON log line, written synchronously before the response is returned (a Workers isolate can be suspended once the response is sent, so logging does not rely on post-response callbacks):
 
 ```json
 {"event":"request","method":"GET","path":"/v1/leads","status":200,"durationMs":3.42}
@@ -409,7 +409,7 @@ pnpm run build
 
 `pnpm run check` runs the typecheck and the full test suite; the same gates (plus the build and the deploy dry-run) run in CI.
 
-The public contract is REST/OpenAPI. Elysia handles HTTP, Effect Schema is the single validation model, and Effect commands contain domain rules. See [`docs/adr`](docs/adr).
+The public contract is the REST API. Elysia handles HTTP, Effect Schema is the single validation model, and Effect commands contain domain rules. See [`docs/adr`](docs/adr).
 
 ## Licence
 
