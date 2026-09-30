@@ -40,7 +40,8 @@ export const createIntakeCommand = (
   environment: Env,
   input: IntakeInput,
   idempotencyKey: string,
-  provenance?: { origin: null | string; publicKeyId: null | string },
+  provenance?: { origin: null | string; tokenId: null | string },
+  rawPayload?: unknown,
 ) =>
   Effect.gen(function* () {
     // Request identity: a pure fingerprint of the static-schema-decoded input.
@@ -65,6 +66,7 @@ export const createIntakeCommand = (
         idempotencyKey,
         requestHash,
         provenance,
+        rawPayload,
       ),
     );
   });

@@ -142,15 +142,14 @@ const insertLead = async (
   await database
     .prepare(
       `INSERT INTO leads (
-        id, workspace_id, email, normalized_email, first_name, last_name,
-        source, estimated_value, custom_fields, origin, public_key_id,
+        id, workspace_id, email, first_name, last_name,
+        source, estimated_value, custom_fields,
         created_at, updated_at, deleted_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, '{}', NULL, NULL, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, NULL, '{}', ?, ?, ?)`,
     )
     .bind(
       lead.id,
       WORKSPACE,
-      email,
       email === null ? null : email.trim().toLowerCase(),
       lead.firstName ?? 'Test',
       lead.lastName ?? 'Lead',
@@ -199,6 +198,8 @@ test('lead list searches, excludes deleted rows, pages, and hints duplicates', a
       '01ARZ3NDEKTSV4RRFFQ69G5FB0',
       '01ARZ3NDEKTSV4RRFFQ69G5FB1',
     ]);
+    // Raw payloads stay out of list responses.
+    expect(firstPage[0]).not.toHaveProperty('rawPayload');
     expect(firstPage.map((lead) => lead['duplicateCount'])).toEqual([1, 1]);
     expect(typeof first.json.nextCursor).toBe('string');
 

@@ -221,10 +221,17 @@ export const LeadDetailPage = ({ id }: { readonly id: string }) => {
             </div>
           </form>
           <dl className="mt-5 grid gap-2 text-sm">
-            {record.publicKeyId !== null && (
+            {record.tokenId !== null && (
               <div className="flex justify-between gap-4">
                 <dt className="text-slate-500">Intake</dt>
-                <dd className="text-right text-slate-200">Public web form</dd>
+                <dd className="text-right text-slate-200">
+                  {record.tokenType === 'browser'
+                    ? 'Browser form'
+                    : record.tokenType === 'api'
+                      ? 'API integration'
+                      : 'Intake token'}
+                  {record.tokenName ? ` — ${record.tokenName}` : ''}
+                </dd>
               </div>
             )}
             {record.origin !== null && (
@@ -245,6 +252,16 @@ export const LeadDetailPage = ({ id }: { readonly id: string }) => {
               </div>
             ))}
           </dl>
+          {record.rawPayload ? (
+            <details className="mt-4 rounded-lg border border-slate-800 bg-slate-900/40 p-3">
+              <summary className="cursor-pointer text-sm text-slate-400">
+                Received payload
+              </summary>
+              <pre className="mt-2 overflow-x-auto text-xs text-slate-300">
+                {JSON.stringify(record.rawPayload, null, 2)}
+              </pre>
+            </details>
+          ) : null}
         </section>
         <section className="rounded-xl border border-slate-800 p-5">
           <h2 className="mb-4 font-semibold text-white">Activity</h2>

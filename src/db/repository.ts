@@ -96,8 +96,11 @@ export type LeadRecord = {
   id: string;
   lastName: null | string;
   origin: null | string;
-  publicKeyId: null | string;
+  rawPayload?: null | Record<string, unknown>;
   source: string;
+  tokenId: null | string;
+  tokenName?: null | string;
+  tokenType?: 'api' | 'browser' | null;
   updatedAt: Date;
 };
 
@@ -117,13 +120,11 @@ const leadSearchPredicate = (query: string) => {
  */
 const duplicateCountsForEmails = async (
   environment: Env,
-  normalizedEmails: Array<null | string>,
+  pageEmails: Array<null | string>,
 ): Promise<Map<string, number>> => {
   const emails = [
     ...new Set(
-      normalizedEmails.filter(
-        (email): email is string => typeof email === 'string',
-      ),
+      pageEmails.filter((email): email is string => typeof email === 'string'),
     ),
   ];
   if (emails.length === 0) {
@@ -131,16 +132,16 @@ const duplicateCountsForEmails = async (
   }
 
   const rows = await getDatabase(environment)
-    .select({ count: sql<number>`count(*)`, email: leads.normalizedEmail })
+    .select({ count: sql<number>`count(*)`, email: leads.email })
     .from(leads)
     .where(
       and(
         eq(leads.workspaceId, DEFAULT_WORKSPACE_ID),
         isNull(leads.deletedAt),
-        inArray(leads.normalizedEmail, emails),
+        inArray(leads.email, emails),
       ),
     )
-    .groupBy(leads.normalizedEmail);
+    .groupBy(leads.email);
   return new Map(
     rows
       .filter(
@@ -150,15 +151,25 @@ const duplicateCountsForEmails = async (
   );
 };
 
+type LeadListRow = Omit<
+  typeof leads.$inferSelect,
+  'rawPayload' | 'workspaceId'
+>;
+
 const toLead = (
-  row: typeof leads.$inferSelect,
+  row: LeadListRow,
   duplicateCounts: Map<string, number>,
+  detail: {
+    rawPayload?: null | Record<string, unknown>;
+    tokenName?: null | string;
+    tokenType?: 'api' | 'browser' | null;
+  } = {},
 ): LeadRecord => ({
   createdAt: row.createdAt,
   customFields: row.customFields,
   deletedAt: row.deletedAt,
-  duplicateCount: row.normalizedEmail
-    ? Math.max(0, (duplicateCounts.get(row.normalizedEmail) ?? 1) - 1)
+  duplicateCount: row.email
+    ? Math.max(0, (duplicateCounts.get(row.email) ?? 1) - 1)
     : 0,
   email: row.email,
   estimatedValue: row.estimatedValue,
@@ -166,9 +177,12 @@ const toLead = (
   id: row.id,
   lastName: row.lastName,
   origin: row.origin,
-  publicKeyId: row.publicKeyId,
   source: row.source,
+  tokenId: row.tokenId,
   updatedAt: row.updatedAt,
+  ...(detail.rawPayload === undefined ? {} : { rawPayload: detail.rawPayload }),
+  ...(detail.tokenName === undefined ? {} : { tokenName: detail.tokenName }),
+  ...(detail.tokenType === undefined ? {} : { tokenType: detail.tokenType }),
 });
 
 /**
@@ -196,7 +210,20 @@ export const listLeads = async (
   }
 
   const rows = await getDatabase(environment)
-    .select()
+    .select({
+      createdAt: leads.createdAt,
+      customFields: leads.customFields,
+      deletedAt: leads.deletedAt,
+      email: leads.email,
+      estimatedValue: leads.estimatedValue,
+      firstName: leads.firstName,
+      id: leads.id,
+      lastName: leads.lastName,
+      origin: leads.origin,
+      source: leads.source,
+      tokenId: leads.tokenId,
+      updatedAt: leads.updatedAt,
+    })
     .from(leads)
     .where(and(...predicates))
     .orderBy(desc(leads.createdAt), desc(leads.id))
@@ -205,7 +232,7 @@ export const listLeads = async (
   const pageRows = hasNextPage ? rows.slice(0, limit) : rows;
   const duplicateCounts = await duplicateCountsForEmails(
     environment,
-    pageRows.map((row) => row.normalizedEmail),
+    pageRows.map((row) => row.email),
   );
   const last = pageRows.at(-1);
   return {
@@ -236,9 +263,20 @@ export const getLead = async (
   }
 
   const duplicateCounts = await duplicateCountsForEmails(environment, [
-    row.normalizedEmail,
+    row.email,
   ]);
-  return toLead(row, duplicateCounts);
+  const token = row.tokenId
+    ? await getDatabase(environment)
+        .select({ name: apiTokens.name, type: apiTokens.type })
+        .from(apiTokens)
+        .where(eq(apiTokens.id, row.tokenId))
+        .get()
+    : undefined;
+  return toLead(row, duplicateCounts, {
+    rawPayload: row.rawPayload,
+    tokenName: token?.name ?? null,
+    tokenType: token?.type ?? null,
+  });
 };
 
 export const listLeadActivities = async (environment: Env, leadId: string) =>
@@ -651,10 +689,10 @@ export const setStaffAccountDisabled = async (
 export const isIntakeToken = async (
   environment: Env,
   token: string,
-): Promise<boolean> => {
+): Promise<null | { id: string }> => {
   const tokenHash = await hashToken(token);
   const record = await getDatabase(environment)
-    .select()
+    .select({ id: apiTokens.id })
     .from(apiTokens)
     .where(
       and(
@@ -667,7 +705,7 @@ export const isIntakeToken = async (
     )
     .get();
   if (!record) {
-    return false;
+    return null;
   }
 
   await getDatabase(environment)
@@ -675,7 +713,7 @@ export const isIntakeToken = async (
     .set({ lastUsedAt: now() })
     .where(eq(apiTokens.id, record.id))
     .run();
-  return true;
+  return record;
 };
 
 /**
@@ -801,7 +839,8 @@ export const createLeadAtomically = async (
   input: IntakeInput,
   idempotencyKey: string,
   requestHash: string,
-  provenance?: { origin: null | string; publicKeyId: null | string },
+  provenance?: { origin: null | string; tokenId: null | string },
+  rawPayload?: unknown,
 ): Promise<IntakePersistenceOutcome> => {
   // Raw D1 binds do not accept Date, so work in Unix milliseconds directly.
   const timestamp = now().getTime();
@@ -812,22 +851,22 @@ export const createLeadAtomically = async (
   const statements: D1PreparedStatement[] = [
     environment.DB.prepare(
       `INSERT INTO leads (
-          id, workspace_id, email, normalized_email,
-          first_name, last_name, source, estimated_value, custom_fields,
-          origin, public_key_id, created_at, updated_at, deleted_at
+          id, workspace_id, email, first_name, last_name,
+          source, estimated_value, custom_fields, raw_payload,
+          origin, token_id, created_at, updated_at, deleted_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
     ).bind(
       leadId,
       DEFAULT_WORKSPACE_ID,
-      input.email,
       email,
       input.firstName ?? null,
       input.lastName ?? null,
       input.source,
       input.estimatedValue ?? null,
       JSON.stringify(input.customFields ?? {}),
+      rawPayload === undefined ? null : JSON.stringify(rawPayload),
       provenance?.origin ?? null,
-      provenance?.publicKeyId ?? null,
+      provenance?.tokenId ?? null,
       timestamp,
       timestamp,
     ),
@@ -878,7 +917,7 @@ export const createLead = async (
   input: CreateLeadInput,
 ): Promise<LeadRecord> => {
   const timestamp = now();
-  const email = input.email ?? null;
+  const email = input.email ? normalizeEmail(input.email) : null;
   const firstName = input.firstName ?? null;
   const lastName = input.lastName ?? null;
   const record: typeof leads.$inferSelect = {
@@ -890,10 +929,10 @@ export const createLead = async (
     firstName,
     id: id(),
     lastName,
-    normalizedEmail: email ? normalizeEmail(email) : null,
     origin: null,
-    publicKeyId: null,
+    rawPayload: null,
     source: input.source ?? 'Manual entry',
+    tokenId: null,
     updatedAt: timestamp,
     workspaceId: DEFAULT_WORKSPACE_ID,
   };
@@ -912,8 +951,7 @@ export const updateLead = async (
   }
 
   if (input.email !== undefined) {
-    patch.email = input.email;
-    patch.normalizedEmail = input.email ? normalizeEmail(input.email) : null;
+    patch.email = input.email ? normalizeEmail(input.email) : null;
   }
 
   if (input.estimatedValue !== undefined) {

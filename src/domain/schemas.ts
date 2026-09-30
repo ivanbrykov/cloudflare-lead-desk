@@ -60,8 +60,11 @@ export const LeadViewResponse = Schema.Struct({
   id: RecordId,
   lastName: Schema.NullOr(Schema.String),
   origin: Schema.NullOr(Schema.String),
-  publicKeyId: Schema.NullOr(Schema.String),
+  rawPayload: Schema.optional(Schema.NullOr(CustomFieldValuesSchema)),
   source: NonEmptyString,
+  tokenId: Schema.NullOr(Schema.String),
+  tokenName: Schema.optional(Schema.NullOr(Schema.String)),
+  tokenType: Schema.optional(Schema.NullOr(Schema.Literal('api', 'browser'))),
   updatedAt: Schema.String,
 });
 export type LeadView = Schema.Schema.Type<typeof LeadViewResponse>;

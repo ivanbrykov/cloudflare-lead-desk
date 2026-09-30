@@ -7,6 +7,7 @@ const leadSchema = {
     id: { type: 'string' },
     lastName: { type: ['string', 'null'] },
     source: { type: 'string' },
+    tokenId: { type: ['string', 'null'] },
   },
   required: ['source'],
   type: 'object',

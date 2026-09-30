@@ -58,16 +58,16 @@ CREATE TABLE `leads` (
 	`first_name` text,
 	`id` text PRIMARY KEY NOT NULL,
 	`last_name` text,
-	`normalized_email` text,
 	`origin` text,
-	`public_key_id` text,
+	`raw_payload` text,
 	`source` text NOT NULL,
+	`token_id` text,
 	`updated_at` integer NOT NULL,
 	`workspace_id` text NOT NULL,
 	FOREIGN KEY (`workspace_id`) REFERENCES `workspaces`(`id`) ON UPDATE no action ON DELETE no action
 );
 --> statement-breakpoint
-CREATE INDEX `leads_normalized_email_idx` ON `leads` (`workspace_id`,`normalized_email`);--> statement-breakpoint
+CREATE INDEX `leads_email_idx` ON `leads` (`workspace_id`,`email`);--> statement-breakpoint
 CREATE INDEX `leads_workspace_created_idx` ON `leads` (`workspace_id`,`created_at`);--> statement-breakpoint
 CREATE TABLE `registration_claims` (
 	`claim_key` text NOT NULL,

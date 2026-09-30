@@ -372,6 +372,17 @@ test('same-key replay preserves the original response and writes nothing new', a
     expect(row?.request_hash).toBe(
       sha256Hex(JSON.stringify(canonical(expected))),
     );
+
+    // The stored email is normalized; the raw payload keeps the original case.
+    const storedLead = await fx.db
+      .prepare('SELECT email, raw_payload, token_id FROM leads WHERE id = ?')
+      .bind(leadId)
+      .first<{ email: string; raw_payload: string; token_id: string }>();
+    expect(storedLead?.email).toBe('replay@example.test');
+    expect(storedLead?.token_id).toBe(token.id);
+    expect(JSON.parse(String(storedLead?.raw_payload))).toMatchObject({
+      email: 'REPLAY@Example.Test',
+    });
   } finally {
     await fx.dispose();
   }
@@ -465,9 +476,9 @@ test('distinct keys create separate leads even for the same email', async () => 
     expect(await fx.count('leads')).toBe(2);
     expect(await fx.count('activities')).toBe(2);
     const stored = await fx.db
-      .prepare('SELECT normalized_email FROM leads ORDER BY created_at')
-      .all<{ normalized_email: string }>();
-    expect(stored.results?.map((row) => row.normalized_email)).toEqual([
+      .prepare('SELECT email FROM leads ORDER BY created_at')
+      .all<{ email: string }>();
+    expect(stored.results?.map((row) => row.email)).toEqual([
       'dup@example.test',
       'dup@example.test',
     ]);

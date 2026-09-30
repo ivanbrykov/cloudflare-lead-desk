@@ -271,10 +271,16 @@ const createAppWithAuth = (environment: Env, getAuth: AuthForRequest) => {
 
         const result = await run(
           request,
-          createIntakeCommand(environment, parsed.data, idempotencyKey, {
-            origin: request.headers.get('Origin'),
-            publicKeyId: tokenRecord.id,
-          }),
+          createIntakeCommand(
+            environment,
+            parsed.data,
+            idempotencyKey,
+            {
+              origin: request.headers.get('Origin'),
+              tokenId: tokenRecord.id,
+            },
+            body,
+          ),
         );
         if ('error' in result) {
           return withPublicCors(result.error);
@@ -382,7 +388,10 @@ const createAppWithAuth = (environment: Env, getAuth: AuthForRequest) => {
         '/v1/intakes',
         async ({ body, request }) => {
           const token = bearerToken(request);
-          if (!token || !(await isIntakeToken(environment, token))) {
+          const tokenRecord = token
+            ? await isIntakeToken(environment, token)
+            : null;
+          if (!tokenRecord) {
             return errorResponse(
               401,
               'unauthorized',
@@ -414,7 +423,16 @@ const createAppWithAuth = (environment: Env, getAuth: AuthForRequest) => {
 
           const result = await run(
             request,
-            createIntakeCommand(environment, parsed.data, idempotencyKey),
+            createIntakeCommand(
+              environment,
+              parsed.data,
+              idempotencyKey,
+              {
+                origin: request.headers.get('Origin'),
+                tokenId: tokenRecord.id,
+              },
+              body,
+            ),
           );
           if ('error' in result) {
             return result.error;

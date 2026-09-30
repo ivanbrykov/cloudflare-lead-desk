@@ -176,17 +176,42 @@ test('a public token creates a lead with provenance and no session', async () =>
 
     const row = await fx.db
       .prepare(
-        'SELECT custom_fields, origin, public_key_id FROM leads WHERE email = ?',
+        'SELECT custom_fields, id, origin, raw_payload, token_id FROM leads WHERE email = ?',
       )
       .bind('browser@example.test')
-      .first();
+      .first<{
+        custom_fields: string;
+        id: string;
+        origin: string;
+        raw_payload: string;
+        token_id: string;
+      }>();
     expect(row).toMatchObject({
       origin: 'https://ileo.test',
-      public_key_id: token.id,
+      token_id: token.id,
     });
     expect(JSON.parse(String(row?.custom_fields))).toEqual({
       form: 'pricing',
       plan: 'pro',
+    });
+    // The contract ignores unknown fields, but the raw payload keeps them.
+    expect(JSON.parse(String(row?.raw_payload))).toMatchObject({
+      name: 'Pricing form',
+      source: 'website_form',
+    });
+
+    const detail = await fx.request(`/v1/leads/${String(row?.id)}`, {
+      method: 'GET',
+    });
+    expect(detail.status, await detail.clone().text()).toBe(200);
+    const detailJson = (await detail.json()) as {
+      data: Record<string, unknown>;
+    };
+    expect(detailJson.data['tokenId']).toBe(token.id);
+    expect(detailJson.data['tokenType']).toBe('browser');
+    expect(detailJson.data['tokenName']).toBe('Website');
+    expect(detailJson.data['rawPayload']).toMatchObject({
+      name: 'Pricing form',
     });
 
     // The public token cannot call the private intake route.
