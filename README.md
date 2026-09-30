@@ -367,7 +367,7 @@ there is no separate contact or opportunity record.
 
 ## Observability
 
-Every API request (`/health` and `/v1/*`) emits exactly one JSON log line, written synchronously before the response is returned (a Workers isolate can be suspended once the response is sent, so logging does not rely on post-response callbacks):
+Every API request (`/health`, `/v1/*`, `/api/auth/`, and `/api/invites/`) emits exactly one JSON log line, written synchronously before the response is returned (a Workers isolate can be suspended once the response is sent, so logging does not rely on post-response callbacks):
 
 ```json
 {"event":"request","method":"GET","path":"/v1/leads","status":200,"durationMs":3.42}
