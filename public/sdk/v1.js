@@ -53,8 +53,22 @@
     source: 'source',
   };
 
-  // Definitional secrets: refused even when a marker includes them.
-  const SENSITIVE_AUTOCOMPLETE = /^(?:cc-|.*password$|one-time-code$)/iu;
+  // Definitional secrets: refused even when a marker includes them. The
+  // autocomplete attribute is a space-separated token list that may carry a
+  // section and a mode, so each token is checked individually:
+  // `billing cc-number`, `section-blue new-password webauthn`, `cc-exp`.
+  const SENSITIVE_AUTOCOMPLETE_TOKENS = new Set(['one-time-code']);
+  const isSensitiveAutocomplete = (value) =>
+    value
+      .trim()
+      .toLowerCase()
+      .split(/\s+/u)
+      .some(
+        (token) =>
+          token.startsWith('cc-') ||
+          token.endsWith('password') ||
+          SENSITIVE_AUTOCOMPLETE_TOKENS.has(token),
+      );
 
   // Convention for CSRF, method, and other framework bookkeeping fields.
   const SKIP_NAME = /^_/u;
@@ -76,7 +90,7 @@
   const isSensitive = (control) =>
     control instanceof HTMLInputElement &&
     (control.type === 'password' ||
-      SENSITIVE_AUTOCOMPLETE.test(control.autocomplete || ''));
+      isSensitiveAutocomplete(control.autocomplete || ''));
 
   const valuesOf = (control) => {
     if (control instanceof HTMLInputElement) {

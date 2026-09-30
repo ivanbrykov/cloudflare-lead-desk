@@ -108,7 +108,10 @@ try {
           '<input name="phone" value="+1 555 0100">',
           '</fieldset>',
           '<input name="password" type="password" value="hunter2" data-leadscroll-collect>',
-          '<input name="card" autocomplete="cc-number" value="4111111111111111" data-leadscroll-collect>',
+          '<input name="card" autocomplete="billing cc-number" value="4111111111111111" data-leadscroll-collect>',
+          '<input name="cardExpiry" autocomplete="section-blue cc-exp" value="12/30" data-leadscroll-collect>',
+          '<input name="newPassword" autocomplete="new-password webauthn" value="correct-horse" data-leadscroll-collect>',
+          '<input name="street" autocomplete="shipping street-address" value="1 Main St" data-leadscroll-collect>',
           '<input name="outside" value="nope">',
         ].join(''),
       ),
@@ -116,16 +119,21 @@ try {
     await submit(page);
     assert.equal(requests.length, 1);
     assert.deepEqual(requests[0].body, {
-      customFields: { phone: '+1 555 0100' },
+      customFields: { phone: '+1 555 0100', street: '1 Main St' },
       email: 'alex@example.test',
       source: 'website_form',
     });
     const serialized = JSON.stringify(requests[0].body);
     assert.ok(!serialized.includes('hunter2'));
     assert.ok(!serialized.includes('4111111111111111'));
-    assert.ok(
-      logs.some((line) => line.includes('sensitive fields are never sent')),
+    assert.ok(!serialized.includes('12/30'));
+    assert.ok(!serialized.includes('correct-horse'));
+    const refused = logs.find((line) =>
+      line.includes('sensitive fields are never sent'),
     );
+    assert.ok(refused, 'sensitive refusal warning expected');
+    assert.ok(refused.includes('cardExpiry'));
+    assert.ok(refused.includes('newPassword'));
     await page.close();
     pass(
       'ancestor marking collects; password and payment fields are refused even when marked',
