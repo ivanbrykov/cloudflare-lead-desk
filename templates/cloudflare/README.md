@@ -1,8 +1,15 @@
 # My LeadScroll installation
 
 This repository owns your Cloudflare Worker, D1 binding, runtime settings, and
-secrets. LeadScroll application code is compiled from the exact upstream commit in
-`leadscroll.json`; ordinary builds never select a newer revision.
+secrets. The shipped `leadscroll.json` selects the upstream **`main` channel**.
+Workers Builds resolves that channel in an ephemeral checkout, so the resolved
+commit (a full SHA) is used for that build and deploy but is **not committed
+back** to this repository. A later build can therefore select a newer upstream
+commit and apply its migrations to the existing D1 database.
+
+To lock the installation, commit a full 40-character upstream commit to
+`leadscroll.json`, or run the Upgrade workflow once — it commits the commit it
+resolved for you. After that, only a deliberate Upgrade advances the pin.
 
 ## First deployment
 

@@ -63,7 +63,7 @@ const evidence = {
   consumer,
   limitations: [
     'Local workerd/D1 and Wrangler dry-run only; no Cloudflare deployment or GitHub template-generation test.',
-    'The initial source fetch uses public GitHub; controlled upgrade revisions use a local standalone Git repository.',
+    'All source fetches use a local standalone Git repository; the initial install resolves the main channel through it.',
     'A local pin change does not prove that a copied repository push triggers Cloudflare Workers Builds or preserves remote Worker/D1 identity.',
   ],
   node: process.version,
@@ -359,6 +359,24 @@ try {
     ['config', 'user.email', 'leadscroll-test@example.invalid'],
     upstream,
   );
+  // main points at the initial install target; each upgrade needs a distinct
+  // descendant so the pin actually advances. The clone checks out the caller's
+  // branch, so create the local main ref the consumer resolves.
+  const initialRevision = (
+    await command('git', ['rev-parse', 'HEAD'], upstream)
+  ).trim();
+  await command(
+    'git',
+    ['branch', '--force', 'main', initialRevision],
+    upstream,
+  );
+  await writeFile(join(upstream, 'upgrade-marker.txt'), 'first revision\n');
+  await command('git', ['add', '--', 'upgrade-marker.txt'], upstream);
+  await command(
+    'git',
+    ['commit', '--quiet', '-m', 'test: first upgrade revision'],
+    upstream,
+  );
   const firstRevision = (
     await command('git', ['rev-parse', 'HEAD'], upstream)
   ).trim();
@@ -376,21 +394,27 @@ try {
   const secondRevision = (
     await command('git', ['rev-parse', 'HEAD'], upstream)
   ).trim();
-  evidence.revisions.push(firstRevision, secondRevision);
+  evidence.revisions.push(initialRevision, firstRevision, secondRevision);
   const repositoryUrl = `file://${upstream}`;
+
+  // Redirect the manifest's GitHub origin to the local upstream so the initial
+  // install resolves the main channel without touching the network.
+  environment.GIT_CONFIG_COUNT = '1';
+  environment.GIT_CONFIG_KEY_0 = `url.${repositoryUrl}.insteadOf`;
+  environment.GIT_CONFIG_VALUE_0 =
+    'https://github.com/leadscroll/leadscroll.git';
 
   await command('pnpm', ['install', '--frozen-lockfile']);
   environment.NODE_ENV = 'production';
   process.env.NODE_ENV = 'production';
   await command('pnpm', ['run', 'build']);
   const initialReceipt = await checkInstallation(consumer);
-  assert.equal(
-    initialReceipt.commit,
-    'e1b536a82fbcc331525276462b2d559fc8ab054b',
+  assert.equal(initialReceipt.commit, initialRevision);
+  const pinnedInitial = JSON.parse(
+    await readFile(join(consumer, 'leadscroll.json'), 'utf8'),
   );
-  pass(
-    'fresh consumer fetched and compiled the real reachable initial source pin',
-  );
+  assert.equal(pinnedInitial.revision, initialRevision);
+  pass('fresh consumer resolved the main channel to an exact source commit');
 
   const firstUpgrade = await upgradePin({
     repositoryUrl,
