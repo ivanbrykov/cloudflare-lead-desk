@@ -30,13 +30,12 @@ fetches, installs, builds, runtime checks, and migration checks leave D1 and tra
 configuration untouched and keep deployment blocked until a successful rebuild.
 
 The template's initial pin is commit
-`9dbb5c8bc02dabe3982a138b8d4b51b40602cd1c`, the LeadScroll rename baseline. It
+`29c4f955beea065dd80ac453d285de6026f805bf`, the LeadScroll rename baseline. It
 resets migration history to a single baseline migration, so installations pinned
 to pre-rename revisions cannot be upgraded in place: they must be reinstalled
-against a reset database. The pin advances to the rename's merge commit once it
-lands on `main`. For existing installations only, the installer retains a
-narrow adapter for historical pin `8c8f7cd...`; it consumes that commit's local
-build output and never contacts GitHub Releases.
+against a reset database. For existing installations only, the installer
+retains a narrow adapter for historical pin `8c8f7cd...`; it consumes that
+commit's local build output and never contacts GitHub Releases.
 
 ## Optional Upgrade workflow
 
