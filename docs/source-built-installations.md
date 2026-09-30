@@ -30,7 +30,7 @@ fetches, installs, builds, runtime checks, and migration checks leave D1 and tra
 configuration untouched and keep deployment blocked until a successful rebuild.
 
 The template's initial pin is commit
-`2a8f887ddcaf92019456b9bb6644e902e1bb8016`, the baseline after the lead-title removal. It
+`e1b536a82fbcc331525276462b2d559fc8ab054b`, the baseline after the lead-title removal. It
 resets migration history to a single baseline migration, so installations pinned
 to pre-rename revisions cannot be upgraded in place: they must be reinstalled
 against a reset database. For existing installations only, the installer
