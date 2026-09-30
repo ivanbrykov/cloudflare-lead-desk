@@ -312,7 +312,11 @@ export const openApiSpecification = {
             'application/json': {
               schema: {
                 properties: {
-                  expiresAt: { type: 'string' },
+                  expiresAt: {
+                    description:
+                      'Future ISO-8601 date; omit for the 90-day default, or null to never expire.',
+                    type: ['string', 'null'],
+                  },
                   name: { type: 'string' },
                   type: { enum: ['api', 'browser'], type: 'string' },
                 },

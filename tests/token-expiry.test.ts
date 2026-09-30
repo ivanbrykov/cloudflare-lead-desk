@@ -187,7 +187,7 @@ const signUp = async (fx: Fixture): Promise<string> => {
 const createToken = (
   fx: Fixture,
   cookie: string,
-  body: { expiresAt?: string; name: string },
+  body: { expiresAt?: null | string; name: string },
 ) => fx.raw('/v1/tokens', 'POST', body, { Cookie: cookie });
 
 // Seeds a hashed api_tokens row directly in D1 (legacy deployments wrote
@@ -255,6 +255,41 @@ test('token creation defaults to a finite ~90-day future expiry', async () => {
       .first<{ expires_at: number; token_hash: string }>();
     expect(row?.expires_at).toBe(Date.parse(data.expiresAt));
     expect(row?.token_hash).toBe(sha256(data.token));
+  } finally {
+    await fx.dispose();
+  }
+});
+
+test('token creation accepts null for a non-expiring token', async () => {
+  const fx = await startFixture();
+  try {
+    const cookie = await signUp(fx);
+    const created = await createToken(fx, cookie, {
+      expiresAt: null,
+      name: 'embedded-form',
+    });
+    expect(created.status, JSON.stringify(created)).toBe(201);
+    const data = created.json.data as {
+      expiresAt: null;
+      id: string;
+      token: string;
+    };
+    expect(data.expiresAt).toBeNull();
+
+    const row = await fx.db
+      .prepare('SELECT expires_at, token_hash FROM api_tokens WHERE id = ?')
+      .bind(data.id)
+      .first<{ expires_at: null | number; token_hash: string }>();
+    expect(row?.expires_at).toBeNull();
+    expect(row?.token_hash).toBe(sha256(data.token));
+
+    const accepted = await intake(
+      fx,
+      data.token,
+      'never-expiry-1',
+      'never@example.test',
+    );
+    expect(accepted.status, JSON.stringify(accepted)).toBe(201);
   } finally {
     await fx.dispose();
   }

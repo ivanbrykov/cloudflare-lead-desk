@@ -156,12 +156,12 @@ const FutureIsoDate = Schema.String.pipe(
 );
 
 export const CreateTokenRequest = Schema.Struct({
-  expiresAt: Schema.optional(FutureIsoDate),
+  expiresAt: Schema.optional(Schema.NullOr(FutureIsoDate)),
   name: NonEmptyString,
   type: Schema.optional(Schema.Literal('api', 'browser')),
 }).annotations({
   description:
-    'Creates an intake token (90 days by default). Browser tokens are safe to embed in a website and can only create leads.',
+    'Creates an intake token (90 days by default; null never expires). Browser tokens are safe to embed in a website and can only create leads.',
 });
 
 export const CreateInviteRequest = Schema.Struct({
