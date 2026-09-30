@@ -24,11 +24,32 @@ export default defineConfig(
     files: ['public/**/*.js'],
     languageOptions: {
       globals: {
+        console: 'readonly',
         CustomEvent: 'readonly',
         document: 'readonly',
         fetch: 'readonly',
         FormData: 'readonly',
+        HTMLInputElement: 'readonly',
+        HTMLSelectElement: 'readonly',
+        HTMLTextAreaElement: 'readonly',
         URL: 'readonly',
+        window: 'readonly',
+      },
+    },
+    rules: {
+      // The SDK's collection warnings are its only diagnostics channel.
+      'no-console': 0,
+    },
+  },
+  {
+    // The test file drives a real browser: page.evaluate callbacks and the
+    // fixture assertions run against DOM globals, while the harness itself is
+    // Node.
+    files: ['scripts/source/sdk.mjs'],
+    languageOptions: {
+      globals: {
+        document: 'readonly',
+        Event: 'readonly',
         window: 'readonly',
       },
     },

@@ -215,8 +215,8 @@ const copyToClipboard = async (value: string, message = 'Copied') => {
 const publicIntakeSnippet = (token: string): string =>
   [
     `<form data-leadscroll="${token}">`,
-    '  <input name="email" type="email" required>',
-    '  <input name="name" placeholder="How can we help?">',
+    '  <input name="email" type="email" data-leadscroll-collect required>',
+    '  <input name="message" data-leadscroll-collect placeholder="How can we help?">',
     '  <button type="submit">Send</button>',
     '</form>',
     `<script src="${window.location.origin}/sdk/v1.js" defer></script>`,

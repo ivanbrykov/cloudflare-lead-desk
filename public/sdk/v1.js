@@ -3,15 +3,23 @@
  * Embeds a browser token in a plain HTML form:
  *
  *   <form data-leadscroll="lsc_pub_…">
- *     <input name="email" type="email" required>
+ *     <input name="email" type="email" data-leadscroll-collect required>
+ *     <input name="company" data-leadscroll-collect>
  *     <button type="submit">Send</button>
  *   </form>
  *   <script src="https://crm.example.com/sdk/v1.js" defer></script>
  *
- * Named fields email/firstName/lastName are mapped to lead fields
- * (first_name and first-name spellings work too); every other named field is
- * sent as a custom field. The origin is taken from this script's own src, so
- * the form can live on any site. No cookies are sent.
+ * Only controls marked with data-leadscroll-collect — on the control itself or
+ * on an ancestor such as a fieldset — are sent. Unmarked named controls are
+ * never transmitted and the SDK warns in the console so a forgotten marker is
+ * visible. Fields named email/firstName/lastName/source map to lead columns
+ * (first_name and first-name spellings work too); every other marked field
+ * becomes a custom field, with repeated names collected as arrays. Password
+ * inputs and credential/payment autocomplete fields are never sent, even when
+ * marked. Names starting with an underscore are skipped by convention.
+ *
+ * The origin is taken from this script's own src, so the form can live on any
+ * site. No cookies are sent.
  */
 (() => {
   const scriptSource = (() => {
@@ -32,6 +40,8 @@
     }
   })();
 
+  const COLLECT = 'data-leadscroll-collect';
+
   const FIELD_MAP = {
     email: 'email',
     'first-name': 'firstName',
@@ -43,34 +53,146 @@
     source: 'source',
   };
 
-  // Never collect values a public form has no business sending upstream.
-  const SKIP_FIELD = /password|passwd|card|cvv|cvc|iban|secret|token/iu;
+  // Definitional secrets: refused even when a marker includes them.
+  const SENSITIVE_AUTOCOMPLETE = /^(?:cc-|.*password$|one-time-code$)/iu;
+
+  // Convention for CSRF, method, and other framework bookkeeping fields.
+  const SKIP_NAME = /^_/u;
+
+  const BUTTON_INPUTS = new Set(['button', 'file', 'image', 'reset', 'submit']);
 
   const newIdempotencyKey = () =>
     window.crypto && typeof window.crypto.randomUUID === 'function'
       ? `sdk-${window.crypto.randomUUID()}`
       : `sdk-${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
 
+  const isControl = (element) =>
+    element instanceof HTMLInputElement ||
+    element instanceof HTMLSelectElement ||
+    element instanceof HTMLTextAreaElement;
+
+  const isMarked = (control) => control.closest(`[${COLLECT}]`) !== null;
+
+  const isSensitive = (control) =>
+    control instanceof HTMLInputElement &&
+    (control.type === 'password' ||
+      SENSITIVE_AUTOCOMPLETE.test(control.autocomplete || ''));
+
+  const valuesOf = (control) => {
+    if (control instanceof HTMLInputElement) {
+      if (BUTTON_INPUTS.has(control.type)) {
+        return [];
+      }
+
+      if (control.type === 'checkbox' || control.type === 'radio') {
+        if (!control.checked) {
+          return [];
+        }
+
+        return [control.value === '' ? 'on' : control.value];
+      }
+
+      return [control.value];
+    }
+
+    if (control instanceof HTMLSelectElement) {
+      return [...control.selectedOptions].map((option) => option.value);
+    }
+
+    if (control instanceof HTMLTextAreaElement) {
+      return [control.value];
+    }
+
+    return [];
+  };
+
+  const addCustom = (customFields, key, value) => {
+    const existing = customFields[key];
+    if (existing === undefined) {
+      customFields[key] = value;
+      return;
+    }
+
+    if (Array.isArray(existing)) {
+      existing.push(value);
+      return;
+    }
+
+    customFields[key] = [existing, value];
+  };
+
+  // One warning per distinct message and form, so dynamic fields surface once.
+  const warned = new WeakMap();
+  const warnOnce = (form, key, message) => {
+    const seen = warned.get(form) ?? new Set();
+    if (seen.has(key)) {
+      return;
+    }
+
+    seen.add(key);
+    warned.set(form, seen);
+    console.warn(`LeadScroll: ${message}`);
+  };
+
   const payloadFor = (form) => {
     const payload = { customFields: {} };
-    const data = new FormData(form);
-    for (const [rawName, rawValue] of data.entries()) {
-      if (typeof rawValue !== 'string') {
+    const unmarked = new Set();
+    const refused = new Set();
+
+    for (const control of form.elements) {
+      if (!isControl(control)) {
         continue;
       }
 
-      const value = rawValue.trim();
-      const key = String(rawName).trim();
-      if (!value || !key || key.startsWith('_') || SKIP_FIELD.test(key)) {
+      const name = typeof control.name === 'string' ? control.name.trim() : '';
+      if (!name || SKIP_NAME.test(name)) {
         continue;
       }
 
-      const mapped = FIELD_MAP[key.toLowerCase()];
-      if (mapped) {
-        payload[mapped] = value;
-      } else {
-        payload.customFields[key] = value;
+      if (!isMarked(control)) {
+        unmarked.add(name);
+        continue;
       }
+
+      if (isSensitive(control)) {
+        refused.add(name);
+        continue;
+      }
+
+      for (const rawValue of valuesOf(control)) {
+        const value = rawValue.trim();
+        if (!value) {
+          continue;
+        }
+
+        const mapped = FIELD_MAP[name.toLowerCase()];
+        if (mapped) {
+          // Scalar lead fields take the first value; repeats are ignored.
+          if (!(mapped in payload)) {
+            payload[mapped] = value;
+          }
+        } else {
+          addCustom(payload.customFields, name, value);
+        }
+      }
+    }
+
+    if (unmarked.size > 0) {
+      const names = [...unmarked].join(', ');
+      warnOnce(
+        form,
+        `unmarked:${names}`,
+        `these fields are not marked for collection and were not sent: ${names}. Add ${COLLECT} to collect them.`,
+      );
+    }
+
+    if (refused.size > 0) {
+      const names = [...refused].join(', ');
+      warnOnce(
+        form,
+        `refused:${names}`,
+        `these sensitive fields are never sent, even when marked: ${names}.`,
+      );
     }
 
     if (!payload.source) {
@@ -100,7 +222,7 @@
     form.setAttribute('data-leadscroll-pending', pending ? 'true' : 'false');
   };
 
-  const send = async (token, payload) => {
+  const send = async (token, payload, idempotencyKey) => {
     const response = await fetch(
       `${endpointOrigin}/v1/public/intakes/${encodeURIComponent(token)}`,
       {
@@ -108,7 +230,7 @@
         credentials: 'omit',
         headers: {
           'Content-Type': 'application/json',
-          'Idempotency-Key': newIdempotencyKey(),
+          'Idempotency-Key': idempotencyKey ?? newIdempotencyKey(),
         },
         method: 'POST',
       },
@@ -130,21 +252,42 @@
     return body;
   };
 
+  // Per-form submission state: an unchanged payload reuses its idempotency key
+  // after a failure and clears it after success, so a lost response cannot
+  // create two leads.
+  const submissions = new WeakMap();
+
   const bind = (form) => {
     const token = form.getAttribute('data-leadscroll');
     if (!token) {
       return;
     }
 
+    // Surface collection mistakes as soon as the form is bound.
+    payloadFor(form);
+
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
+      if (form.getAttribute('data-leadscroll-pending') === 'true') {
+        return;
+      }
+
       const button = form.querySelector(
         'button[type="submit"], input[type="submit"]',
       );
       setPending(form, true, button);
       setStatus(form, '');
+
+      const payload = payloadFor(form);
+      const body = JSON.stringify(payload);
+      const previous = submissions.get(form);
+      const idempotencyKey =
+        previous && previous.body === body ? previous.key : newIdempotencyKey();
+      submissions.set(form, { body, key: idempotencyKey });
+
       try {
-        const body = await send(token, payloadFor(form));
+        const responseBody = await send(token, payload, idempotencyKey);
+        submissions.delete(form);
         setPending(form, false, button);
         setStatus(
           form,
@@ -158,10 +301,11 @@
         form.dispatchEvent(
           new CustomEvent('leadscroll:success', {
             bubbles: true,
-            detail: body,
+            detail: responseBody,
           }),
         );
       } catch (error) {
+        // Keep the key: retrying the same payload must stay idempotent.
         setPending(form, false, button);
         setStatus(
           form,
@@ -192,7 +336,8 @@
 
   window.LeadScroll = {
     init,
-    submit: (token, data) => send(token, data || {}),
+    submit: (token, data, options) =>
+      send(token, data || {}, options ? options.idempotencyKey : undefined),
     version: 'v1',
   };
 

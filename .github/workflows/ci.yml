@@ -54,6 +54,9 @@ jobs:
       - name: Install Chromium
         run: pnpm exec playwright install --with-deps chromium
 
+      - name: Browser SDK behavior tests
+        run: pnpm run test:sdk
+
       - name: Template install and persistent D1 upgrade
         run: pnpm run test:distribution
 

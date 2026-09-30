@@ -241,28 +241,38 @@ The CRM serves a small, dependency-free SDK at `/sdk/v1.js`. Give a form a
 
 ```html
 <form data-leadscroll="lsc_pub_…">
-  <input name="email" type="email" required>
-  <input name="name" placeholder="How can we help?">
-  <input name="plan" value="pro"> <!-- unknown names become custom fields -->
+  <input name="email" type="email" data-leadscroll-collect required>
+  <input name="company" data-leadscroll-collect>
+  <input name="plan" data-leadscroll-collect value="pro">
+  <input name="password" type="password"> <!-- unmarked: never sent -->
   <button type="submit">Send</button>
   <p data-leadscroll-status></p>
 </form>
 <script src="https://crm.example.com/sdk/v1.js" defer></script>
 ```
 
+- **Only marked fields are sent.** Add `data-leadscroll-collect` to each
+  control, or to an ancestor such as a `<fieldset>` to mark everything inside.
+  Unmarked named controls are never transmitted, and the SDK logs a console
+  warning listing them.
 - `email`, `firstName`/`first_name`/`first-name`, `lastName`, and `source`
-  map to lead fields; every other named input — including `name` and `title` —
-  lands in `customFields`.
+  map to lead fields; every other marked input lands in `customFields`, and
+  repeated names (checkbox groups, multi-selects) become arrays.
 - The endpoint origin comes from the script's own `src`, so the form can live
   on any site. No cookies or credentials are sent.
 - Attribute overrides: `data-leadscroll-source`, `data-leadscroll-success`,
   `data-leadscroll-error`, `data-leadscroll-reset="false"`.
 - Status text renders into `[data-leadscroll-status]`; the form also dispatches
   `leadscroll:success` and `leadscroll:error` custom events.
-- `window.LeadScroll.submit(token, data)` posts programmatically, and
-  `window.LeadScroll.init(root)` binds forms added after load (for example after
-  client-side navigation).
-- Password-, card-, and secret-looking fields are never collected.
+- `window.LeadScroll.submit(token, data, { idempotencyKey })` posts
+  programmatically, and `window.LeadScroll.init(root)` binds forms added after
+  load (for example after client-side navigation).
+- Password inputs and credential/payment autocomplete fields (`cc-*`,
+  `current-password`, `new-password`, `one-time-code`) are never sent, even when
+  marked, and names starting with `_` are skipped by convention.
+- A failed submission keeps its idempotency key: resubmitting an unchanged form
+  retries the same submission instead of creating a duplicate, and overlapping
+  submits are ignored while one is pending.
 
 ### Intake idempotency contract
 
