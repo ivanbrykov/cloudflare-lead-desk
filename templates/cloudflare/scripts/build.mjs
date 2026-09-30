@@ -359,9 +359,13 @@ export const prepareSource = async ({
       join(generated, 'ready.json'),
       `${JSON.stringify({ receiptSha256: checksum(receiptBytes) })}\n`,
     );
-    // A channel pin becomes an exact commit once it has been built, so the
-    // deploy guard and later upgrades compare SHAs rather than mutable refs.
+    // A channel pin becomes an exact commit for this checkout, so the deploy
+    // guard compares SHAs. The write is not committed back: the repository
+    // keeps the channel and a later build may resolve a newer commit.
     if (selected.revision !== revision) {
+      log(
+        `Note: leadscroll.json tracks the ${selected.revision} channel; this build used ${revision}. Commit that SHA or run Upgrade to lock it.`,
+      );
       await writeFile(
         join(root, 'leadscroll.json'),
         `${JSON.stringify({ ...selected, revision }, undefined, 2)}\n`,

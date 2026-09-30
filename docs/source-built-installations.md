@@ -12,9 +12,13 @@ workspace.
 
 `leadscroll.json` records the public upstream `owner/repository` and either a
 full 40-character commit or the `main` channel. The shipped template uses
-`main`: the first build resolves it to the commit `main` names at that moment
-and writes that commit back into the installation's `leadscroll.json`, so every
-later build, deploy, and upgrade compares exact SHAs. `pnpm run build`:
+`main`: a build resolves it to the commit `main` names at that moment and
+writes that commit into the checkout's `leadscroll.json` for the rest of that
+build and deploy. That write is **ephemeral** — Workers Builds does not commit
+it back — so as long as the repository records `main`, every later build
+re-resolves the channel and can apply newer migrations to the existing D1.
+Commit a full SHA, or run Upgrade once, to lock the installation. `pnpm run
+build`:
 
 1. Invalidates deploy readiness and acquires the owned `.leadscroll/.lock`.
 2. Initializes an isolated temporary Git checkout, fetches the recorded commit
@@ -34,8 +38,10 @@ fetches, installs, builds, runtime checks, and migration checks leave D1 and tra
 configuration untouched and keep deployment blocked until a successful rebuild.
 
 The shipped template pins the `main` channel rather than a fixed commit, so
-new installations build the current, CI-green `main` without a manual bump; the
-resolved commit is recorded in the installation at build time. The history was
+new installations build the current, CI-green `main` without a manual bump. The
+channel is resolved per build in an ephemeral checkout, not committed back, so
+an installation left on `main` keeps tracking upstream `main`; commit the
+resolved SHA or run Upgrade to freeze it. The history was
 reset to a single baseline migration, so installations pinned to pre-rename
 revisions cannot be upgraded in place: they must be reinstalled against a reset
 database. For existing installations only, the installer retains a narrow
