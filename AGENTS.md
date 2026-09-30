@@ -50,8 +50,10 @@ leaves a stale link behind after every merge.
 
 The permanent `README.md` installation link points at
 `tree/main/templates/cloudflare`. Cloudflare copies that folder but omits
-`.github/workflows`; source-pin upgrades are manual edits to the copied
-repository's `leadscroll.json`, as documented in its README. PR source previews
+`.github/workflows`; source-pin upgrades use the copied repository's
+`leadscroll.json`, which ships on the `main` channel (resolved to an exact
+commit at build time) and is advanced by the Upgrade workflow or a manual edit,
+as documented in its README. PR source previews
 still use the feature-branch folder as shown above. Do not rely on the copied
 repository containing a workflow until its owner installs the small caller from
 the copied README. The reusable implementation lives upstream.

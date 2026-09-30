@@ -10,12 +10,16 @@ workspace.
 
 ## Pinned build
 
-`leadscroll.json` records the public upstream `owner/repository` and a full
-40-character commit. `pnpm run build`:
+`leadscroll.json` records the public upstream `owner/repository` and either a
+full 40-character commit or the `main` channel. The shipped template uses
+`main`: the first build resolves it to the commit `main` names at that moment
+and writes that commit back into the installation's `leadscroll.json`, so every
+later build, deploy, and upgrade compares exact SHAs. `pnpm run build`:
 
 1. Invalidates deploy readiness and acquires the owned `.leadscroll/.lock`.
-2. Initializes an isolated temporary Git checkout, fetches exactly the recorded
-   commit, checks it out detached, and verifies `HEAD` equals the pin.
+2. Initializes an isolated temporary Git checkout, fetches the recorded commit
+   (or the `main` channel, resolving it to a commit), checks it out detached,
+   and verifies `HEAD` equals the resolved revision.
 3. Installs the fetched source's dependencies from its `pnpm-lock.yaml` with
    `pnpm install --frozen-lockfile --prod=false`, so compilation tools remain
    available even when the build environment sets `NODE_ENV=production`.
@@ -29,13 +33,14 @@ secrets. Installation files and `.dev.vars` are never copied into source. Failed
 fetches, installs, builds, runtime checks, and migration checks leave D1 and tracked
 configuration untouched and keep deployment blocked until a successful rebuild.
 
-The template's initial pin is commit
-`e1b536a82fbcc331525276462b2d559fc8ab054b`, the baseline after the lead-title removal. It
-resets migration history to a single baseline migration, so installations pinned
-to pre-rename revisions cannot be upgraded in place: they must be reinstalled
-against a reset database. For existing installations only, the installer
-retains a narrow adapter for historical pin `8c8f7cd...`; it consumes that
-commit's local build output and never contacts GitHub Releases.
+The shipped template pins the `main` channel rather than a fixed commit, so
+new installations build the current, CI-green `main` without a manual bump; the
+resolved commit is recorded in the installation at build time. The history was
+reset to a single baseline migration, so installations pinned to pre-rename
+revisions cannot be upgraded in place: they must be reinstalled against a reset
+database. For existing installations only, the installer retains a narrow
+adapter for historical pin `8c8f7cd...`; it consumes that commit's local build
+output and never contacts GitHub Releases.
 
 ## Optional Upgrade workflow
 
@@ -49,8 +54,9 @@ the file to the installation's default branch once; Cloudflare's copy does not
 install it automatically. Future clicks on the README Upgrade button open the
 installation's Actions page for a deliberate **Run workflow** click.
 
-The reusable workflow resolves the installation's default-branch SHA, old pin,
-and exact upstream `main` SHA before candidate execution. It waits up to nine
+The reusable workflow resolves the installation's default-branch SHA, the
+installed pin (a SHA, or the `main` channel resolved to the current upstream
+`main` SHA), and the exact upstream `main` SHA before candidate execution. It waits up to nine
 minutes for exact-SHA upstream push CI to pass; failure or timeout leaves the
 pin unchanged. Then it compiles and checks the candidate on a read-only runner,
 comparing migrations with the old pinned
@@ -68,9 +74,11 @@ still a live verification gate; local tests cannot establish it.
 
 ## Manual pin update
 
-An ordinary rebuild never advances the pin. The installation owner deliberately
-chooses a full upstream commit SHA from `main` after its CI has passed, backs up
-D1, and compares that candidate with the current `leadscroll.json` revision.
+The `main` channel advances only when the commit it names changes; an ordinary
+rebuild never advances a recorded SHA. To freeze an installation on a specific
+commit, the owner deliberately chooses a full upstream SHA from `main` after its
+CI has passed, backs up D1, and compares that candidate with the current
+`leadscroll.json` revision.
 Check that the old revision is an ancestor of the candidate and that every
 published `drizzle/*.sql` file is unchanged. In a separate checkout of the
 upstream source, substitute the two full SHAs in:
@@ -85,7 +93,8 @@ files, with names after the old history; modified, deleted, renamed, or reordere
 migrations are a stop condition. A clean Cloudflare build has no old generated
 receipt to compare against, so this check is required before changing the pin.
 
-Change only `revision` in the installation's `leadscroll.json`. Optionally run
+Change only `revision` in the installation's `leadscroll.json` (to a full SHA,
+or back to `main` to resume tracking). Optionally run
 `pnpm install --frozen-lockfile`, `pnpm run build`, and
 `pnpm run deploy:dry-run` in a local installation checkout before committing.
 Commit only that file to the Cloudflare-connected branch. Workers Builds uses

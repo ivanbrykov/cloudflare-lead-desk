@@ -6,6 +6,11 @@ export const sourceBuildFormat = 'leadscroll-source-build';
 export const checksum = (contents) =>
   createHash('sha256').update(contents).digest('hex');
 
+export const mainChannel = 'main';
+const sourceRevisionPattern = /^[a-f0-9]{40}$/u;
+export const isSourceRevision = (value) =>
+  typeof value === 'string' && sourceRevisionPattern.test(value);
+
 export const validateConfiguration = (value) => {
   assert(
     typeof value?.repository === 'string' &&
@@ -14,8 +19,8 @@ export const validateConfiguration = (value) => {
   );
   assert(
     typeof value.revision === 'string' &&
-      /^[a-f0-9]{40}$/u.test(value.revision),
-    'revision must be a full 40-character source commit',
+      (isSourceRevision(value.revision) || value.revision === mainChannel),
+    'revision must be a full 40-character source commit or the main channel',
   );
   return value;
 };

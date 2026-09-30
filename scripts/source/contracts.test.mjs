@@ -103,7 +103,7 @@ const databaseFixture = async (context, database = {}) => {
   return { directory, path };
 };
 
-test('source configuration requires an exact immutable revision', () => {
+test('source configuration accepts an exact commit or the main channel', () => {
   assert.deepEqual(
     validateConfiguration({
       repository: 'leadscroll/leadscroll',
@@ -111,13 +111,28 @@ test('source configuration requires an exact immutable revision', () => {
     }),
     { repository: 'leadscroll/leadscroll', revision: commit },
   );
+  assert.deepEqual(
+    validateConfiguration({
+      repository: 'leadscroll/leadscroll',
+      revision: 'main',
+    }),
+    { repository: 'leadscroll/leadscroll', revision: 'main' },
+  );
   assert.throws(
     () =>
       validateConfiguration({
         repository: 'leadscroll/leadscroll',
-        revision: 'main',
+        revision: 'develop',
       }),
-    /full 40-character source commit/u,
+    /source commit or the main channel/u,
+  );
+  assert.throws(
+    () =>
+      validateConfiguration({
+        repository: 'leadscroll/leadscroll',
+        revision: commit.slice(0, 12),
+      }),
+    /source commit or the main channel/u,
   );
 });
 
@@ -259,11 +274,11 @@ test('failed configuration validation invalidates deploy readiness', async (cont
         prepareSource({
           configuration: {
             repository: fixture.configuration.repository,
-            revision: 'main',
+            revision: 'develop',
           },
           root: fixture.directory,
         }),
-        /full 40-character source commit/u,
+        /source commit or the main channel/u,
       );
       await assert.rejects(readFile(join(fixture.generated, 'ready.json')), {
         code: 'ENOENT',

@@ -4,6 +4,7 @@ import {
   bootstrapRevision,
   checksum,
   githubRepositoryUrl,
+  isSourceRevision,
   sourceBuildFormat,
   validateConfiguration,
   validateInstallationReceipt,
@@ -67,11 +68,20 @@ const fetchRevision = ({ checkout, revision }) => {
     ],
     { cwd: checkout },
   );
-  assert.equal(
-    gitOutput(['rev-parse', 'FETCH_HEAD'], checkout).trim(),
-    revision,
-    'Fetched the wrong source commit',
+  const resolved = gitOutput(
+    ['rev-parse', 'FETCH_HEAD^{commit}'],
+    checkout,
+  ).trim();
+  assert(
+    isSourceRevision(resolved),
+    'Fetched source did not resolve to a commit',
   );
+  // A SHA pins one commit; a channel (main) resolves to the commit it names now.
+  if (isSourceRevision(revision)) {
+    assert.equal(resolved, revision, 'Fetched the wrong source commit');
+  }
+
+  return resolved;
 };
 
 const plainTree = async (directory) => {
@@ -257,14 +267,16 @@ export const prepareSource = async ({
       ],
       { cwd: checkout },
     );
-    fetchRevision({ checkout, revision: selected.revision });
-    run('git', ['checkout', '--quiet', '--detach', 'FETCH_HEAD'], {
+    const revision = fetchRevision({
+      checkout,
+      revision: selected.revision,
+    });
+    run('git', ['checkout', '--quiet', '--detach', revision], {
       cwd: checkout,
     });
-    const resolved = gitOutput(['rev-parse', 'HEAD'], checkout).trim();
     assert.equal(
-      resolved,
-      selected.revision,
+      gitOutput(['rev-parse', 'HEAD'], checkout).trim(),
+      revision,
       'Fetched the wrong source commit',
     );
 
@@ -281,7 +293,7 @@ export const prepareSource = async ({
       });
     } else {
       assert.equal(
-        selected.revision,
+        revision,
         bootstrapRevision,
         'Pinned source does not provide the required source:build contract',
       );
@@ -290,22 +302,27 @@ export const prepareSource = async ({
 
     const manifest = await validateCandidate({
       candidate,
-      revision: selected.revision,
+      revision,
     });
     await assertRuntimeConfig(root, manifest);
-    if (baseline && baseline.revision !== selected.revision) {
-      fetchRevision({ checkout, revision: baseline.revision });
-      const baselineManifest = manifestAtRevision({
+    if (baseline) {
+      const baselineRevision = fetchRevision({
         checkout,
         revision: baseline.revision,
-        runtime: {
-          compatibilityDate: manifest.compatibilityDate,
-          compatibilityFlags: manifest.compatibilityFlags,
-          format: sourceBuildFormat,
-          schemaVersion: 1,
-        },
       });
-      assertMigrationHistory(baselineManifest, manifest);
+      if (baselineRevision !== revision) {
+        const baselineManifest = manifestAtRevision({
+          checkout,
+          revision: baselineRevision,
+          runtime: {
+            compatibilityDate: manifest.compatibilityDate,
+            compatibilityFlags: manifest.compatibilityFlags,
+            format: sourceBuildFormat,
+            schemaVersion: 1,
+          },
+        });
+        assertMigrationHistory(baselineManifest, manifest);
+      }
     }
 
     if (currentInfo) {
@@ -342,6 +359,15 @@ export const prepareSource = async ({
       join(generated, 'ready.json'),
       `${JSON.stringify({ receiptSha256: checksum(receiptBytes) })}\n`,
     );
+    // A channel pin becomes an exact commit once it has been built, so the
+    // deploy guard and later upgrades compare SHAs rather than mutable refs.
+    if (selected.revision !== revision) {
+      await writeFile(
+        join(root, 'leadscroll.json'),
+        `${JSON.stringify({ ...selected, revision }, undefined, 2)}\n`,
+      );
+    }
+
     log(`Prepared LeadScroll source ${receipt.commit}`);
     return receipt;
   } finally {
