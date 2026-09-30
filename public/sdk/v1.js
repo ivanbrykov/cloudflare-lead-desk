@@ -135,23 +135,55 @@
     customFields[key] = [existing, value];
   };
 
-  // One warning per distinct message and form, so dynamic fields surface once.
+  // Developer diagnostics. Console warnings fire once per distinct skipped set
+  // and form; a bubbling `leadscroll:skipped` event carries the field names and
+  // reasons (never values) on every build, so monitoring can surface a marker
+  // that was forgotten or applied to a sensitive control.
   const warned = new WeakMap();
-  const warnOnce = (form, key, message) => {
-    const seen = warned.get(form) ?? new Set();
-    if (seen.has(key)) {
+  const reportSkipped = (form, skipped) => {
+    if (skipped.length === 0) {
       return;
     }
 
-    seen.add(key);
-    warned.set(form, seen);
-    console.warn(`LeadScroll: ${message}`);
+    const key = skipped
+      .map((entry) => `${entry.reason}:${entry.name}`)
+      .toSorted()
+      .join(',');
+    const seen = warned.get(form) ?? new Set();
+    if (!seen.has(key)) {
+      seen.add(key);
+      warned.set(form, seen);
+      const namesOf = (reason) =>
+        skipped
+          .filter((entry) => entry.reason === reason)
+          .map((entry) => entry.name)
+          .join(', ');
+      const unmarked = namesOf('unmarked');
+      const sensitive = namesOf('sensitive');
+      if (unmarked) {
+        console.warn(
+          `LeadScroll: these fields are not marked for collection and were not sent: ${unmarked}. Add ${COLLECT} to collect them.`,
+        );
+      }
+
+      if (sensitive) {
+        console.warn(
+          `LeadScroll: these fields are marked but are never sent because they are password inputs or credential/payment autocomplete fields: ${sensitive}.`,
+        );
+      }
+    }
+
+    form.dispatchEvent(
+      new CustomEvent('leadscroll:skipped', {
+        bubbles: true,
+        detail: { fields: skipped },
+      }),
+    );
   };
 
   const payloadFor = (form) => {
     const payload = { customFields: {} };
-    const unmarked = new Set();
-    const refused = new Set();
+    const skipped = new Map();
 
     for (const control of form.elements) {
       if (!isControl(control)) {
@@ -164,12 +196,12 @@
       }
 
       if (!isMarked(control)) {
-        unmarked.add(name);
+        skipped.set(`unmarked:${name}`, { name, reason: 'unmarked' });
         continue;
       }
 
       if (isSensitive(control)) {
-        refused.add(name);
+        skipped.set(`sensitive:${name}`, { name, reason: 'sensitive' });
         continue;
       }
 
@@ -191,23 +223,7 @@
       }
     }
 
-    if (unmarked.size > 0) {
-      const names = [...unmarked].join(', ');
-      warnOnce(
-        form,
-        `unmarked:${names}`,
-        `these fields are not marked for collection and were not sent: ${names}. Add ${COLLECT} to collect them.`,
-      );
-    }
-
-    if (refused.size > 0) {
-      const names = [...refused].join(', ');
-      warnOnce(
-        form,
-        `refused:${names}`,
-        `these sensitive fields are never sent, even when marked: ${names}.`,
-      );
-    }
+    reportSkipped(form, [...skipped.values()]);
 
     if (!payload.source) {
       payload.source =

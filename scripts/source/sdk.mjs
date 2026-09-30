@@ -78,6 +78,12 @@ try {
         ' data-leadscroll-source="test_form"',
       ),
     );
+    await page.evaluate(() => {
+      window.skippedEvents = [];
+      document.addEventListener('leadscroll:skipped', (event) => {
+        window.skippedEvents.push(event.detail);
+      });
+    });
     await submit(page);
     assert.equal(requests.length, 1);
     assert.deepEqual(requests[0].body, {
@@ -87,6 +93,10 @@ try {
       source: 'test_form',
     });
     assert.ok(!JSON.stringify(requests[0].body).includes('secret-value'));
+    const skipped = (await page.evaluate(() => window.skippedEvents)).at(-1);
+    assert.deepEqual(skipped, {
+      fields: [{ name: 'unmarked', reason: 'unmarked' }],
+    });
     assert.ok(
       logs.some(
         (line) =>
@@ -116,6 +126,12 @@ try {
         ].join(''),
       ),
     );
+    await page.evaluate(() => {
+      window.skippedEvents = [];
+      document.addEventListener('leadscroll:skipped', (event) => {
+        window.skippedEvents.push(event.detail);
+      });
+    });
     await submit(page);
     assert.equal(requests.length, 1);
     assert.deepEqual(requests[0].body, {
@@ -123,13 +139,24 @@ try {
       email: 'alex@example.test',
       source: 'website_form',
     });
+    const skippedFields = Object.fromEntries(
+      (await page.evaluate(() => window.skippedEvents))
+        .at(-1)
+        .fields.map((entry) => [entry.name, entry.reason]),
+    );
+    assert.equal(skippedFields.password, 'sensitive');
+    assert.equal(skippedFields.card, 'sensitive');
+    assert.equal(skippedFields.cardExpiry, 'sensitive');
+    assert.equal(skippedFields.newPassword, 'sensitive');
+    assert.equal(skippedFields.outside, 'unmarked');
+    assert.equal(skippedFields.street, undefined);
     const serialized = JSON.stringify(requests[0].body);
     assert.ok(!serialized.includes('hunter2'));
     assert.ok(!serialized.includes('4111111111111111'));
     assert.ok(!serialized.includes('12/30'));
     assert.ok(!serialized.includes('correct-horse'));
     const refused = logs.find((line) =>
-      line.includes('sensitive fields are never sent'),
+      line.includes('marked but are never sent'),
     );
     assert.ok(refused, 'sensitive refusal warning expected');
     assert.ok(refused.includes('cardExpiry'));

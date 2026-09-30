@@ -270,6 +270,10 @@ The CRM serves a small, dependency-free SDK at `/sdk/v1.js`. Give a form a
 - Password inputs and credential/payment autocomplete fields (`cc-*`,
   `current-password`, `new-password`, `one-time-code`) are never sent, even when
   marked, and names starting with `_` are skipped by convention.
+- Every skipped field is reported: the browser console gets a one-time warning
+  naming the fields, and the form dispatches a bubbling `leadscroll:skipped`
+  event whose `detail.fields` is a list of `{ name, reason }` (names only, never
+  values) — useful for surfacing a forgotten marker in monitoring.
 - A failed submission keeps its idempotency key: resubmitting an unchanged form
   retries the same submission instead of creating a duplicate, and overlapping
   submits are ignored while one is pending.
