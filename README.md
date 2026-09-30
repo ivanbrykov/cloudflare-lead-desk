@@ -130,12 +130,10 @@ with `DELETE /v1/invites/:id`.
 
 ### API tokens
 
-Intake API tokens are created in **Settings → Tokens**. A token carries a
-finite expiry that defaults to 90 days and must be in the future; `expiresAt`
-is optional but never null on new tokens. Legacy rows created before the
-expiry column existed keep a `null` `expiresAt` and are shown as
-`No expiry (legacy)` — they keep working, and revoking them is the supported
-way to retire one. A token's raw value is returned exactly once, at creation,
+Intake API tokens are created in **Settings → Tokens**. A token expires 90
+days after creation by default: pass `expiresAt` as a future ISO-8601 date to
+pick another time, or `null` to create a token that never expires (handy for a
+long-lived browser embed). A token's raw value is returned exactly once, at creation,
 inside the dialog; the list only ever shows the 12-character prefix. Revoke a
 token with `DELETE /v1/tokens/:id` or the Revoke action in the list. An
 expired or revoked token returns `401 unauthorized` on use.

@@ -308,7 +308,7 @@ const TOKEN_DEFAULT_TTL_MS = 90 * 86_400_000;
 
 export const createApiToken = async (
   environment: Env,
-  input: { expiresAt?: string; name: string; type: 'api' | 'browser' },
+  input: { expiresAt?: null | string; name: string; type: 'api' | 'browser' },
 ) => {
   const raw = randomToken(input.type === 'browser' ? 'lsc_pub_' : 'lsc_');
   const record = {
@@ -316,7 +316,9 @@ export const createApiToken = async (
     expiresAt:
       input.expiresAt === undefined
         ? new Date(Date.now() + TOKEN_DEFAULT_TTL_MS)
-        : new Date(input.expiresAt),
+        : input.expiresAt === null
+          ? null
+          : new Date(input.expiresAt),
     id: id(),
     name: input.name,
     prefix: raw.slice(0, 12),

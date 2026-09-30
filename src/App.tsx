@@ -233,13 +233,13 @@ const localTimezoneLabel = () => {
 
 const tokenStatus = (
   token: Token,
-): 'active' | 'expired' | 'legacy' | 'revoked' => {
+): 'active' | 'expired' | 'never' | 'revoked' => {
   if (token.revokedAt) {
     return 'revoked';
   }
 
   if (!token.expiresAt) {
-    return 'legacy';
+    return 'never';
   }
 
   if (new Date(token.expiresAt).getTime() <= Date.now()) {
@@ -252,7 +252,7 @@ const tokenStatus = (
 const statusTone = {
   active: 'text-emerald-300',
   expired: 'text-amber-300',
-  legacy: 'text-sky-300',
+  never: 'text-sky-300',
   revoked: 'text-rose-300',
   used: 'text-violet-300',
 } as const;
@@ -276,8 +276,9 @@ const CreateTokenDialog = ({
   // always fresh: empty form, 90-day default matching the backend, no raw
   // token, and an idle create mutation.
   const [expiration, setExpiration] = useState(defaultExpiration);
+  const [neverExpires, setNeverExpires] = useState(false);
   const create = useMutation({
-    mutationFn: (input: { expiresAt?: string; name: string }) =>
+    mutationFn: (input: { expiresAt?: null | string; name: string }) =>
       request<Token & { token: string }>('/v1/tokens', {
         body: JSON.stringify({ ...input, type: tokenType }),
         method: 'POST',
@@ -311,7 +312,8 @@ const CreateTokenDialog = ({
 
     // The input value is local wall-clock time; new Date parses it as local
     // time and toISOString converts it to the UTC ISO string the API expects.
-    const parsedExpiration = expiration ? new Date(expiration) : undefined;
+    const parsedExpiration =
+      neverExpires || !expiration ? undefined : new Date(expiration);
     if (
       parsedExpiration &&
       (!Number.isFinite(parsedExpiration.getTime()) ||
@@ -323,7 +325,7 @@ const CreateTokenDialog = ({
 
     setFormError(null);
     create.mutate({
-      expiresAt: parsedExpiration?.toISOString(),
+      expiresAt: neverExpires ? null : parsedExpiration?.toISOString(),
       name: trimmedName,
     });
   };
@@ -421,14 +423,25 @@ const CreateTokenDialog = ({
             <label className="grid gap-1 text-sm text-slate-300">
               Expiration
               <input
+                disabled={neverExpires}
                 onChange={(event) => setExpiration(event.target.value)}
                 type="datetime-local"
                 value={expiration}
               />
             </label>
-            <p className="text-xs text-slate-500">
-              Local time ({localTimezoneLabel()})
-            </p>
+            <label className="flex items-center gap-2 text-xs text-slate-400">
+              <input
+                checked={neverExpires}
+                onChange={(event) => setNeverExpires(event.target.checked)}
+                type="checkbox"
+              />
+              Never expires
+            </label>
+            {!neverExpires && (
+              <p className="text-xs text-slate-500">
+                Local time ({localTimezoneLabel()})
+              </p>
+            )}
           </div>
           {formError && <p className="text-sm text-rose-300">{formError}</p>}
           {create.error && <ErrorState error={create.error} />}
@@ -566,7 +579,7 @@ const TokensPage = () => {
                     <td className="px-4 py-3 text-slate-400">
                       {token.expiresAt
                         ? new Date(token.expiresAt).toLocaleDateString()
-                        : 'No expiry (legacy)'}
+                        : 'No expiry'}
                     </td>
                     <td
                       className={cn(
