@@ -1,5 +1,4 @@
 import { logRequest } from './logging';
-import { openApiSpecification } from './openapi';
 import { mapIntakeBodyError, parseIntakeBody } from '@/api/intake-parser';
 import {
   createIntakeCommand,
@@ -383,7 +382,6 @@ const createAppWithAuth = (environment: Env, getAuth: AuthForRequest) => {
 
         return undefined;
       })
-      .get('/openapi', () => Response.json(openApiSpecification))
       .post(
         '/v1/intakes',
         async ({ body, request }) => {
@@ -533,7 +531,7 @@ const createAppWithAuth = (environment: Env, getAuth: AuthForRequest) => {
       // Staff routes: one shared auth gate. Elysia applies lifecycle hooks to
       // routes registered after them, so every route below requires a staff
       // session; handlers read `adminEmail` from context instead of repeating
-      // the guard. Non-staff routes (auth mount, health, openapi, intakes,
+      // the guard. Non-staff routes (auth mount, health, intakes,
       // invite validation) are registered above this hook.
       .resolve(async ({ request }) => {
         const admin = await requireAdmin(request, getAuth, environment);
