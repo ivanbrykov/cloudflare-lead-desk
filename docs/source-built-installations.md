@@ -30,7 +30,7 @@ fetches, installs, builds, runtime checks, and migration checks leave D1 and tra
 configuration untouched and keep deployment blocked until a successful rebuild.
 
 The template's initial pin is commit
-`29c4f955beea065dd80ac453d285de6026f805bf`, the LeadScroll rename baseline. It
+`e1b536a82fbcc331525276462b2d559fc8ab054b`, the baseline after the lead-title removal. It
 resets migration history to a single baseline migration, so installations pinned
 to pre-rename revisions cannot be upgraded in place: they must be reinstalled
 against a reset database. For existing installations only, the installer

@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/Button';
 import { Field } from '@/components/ui/Field';
 import { inputClass } from '@/components/ui/form';
 import { fieldTitle } from '@/domain/customFields';
+import { leadDisplayName } from '@/domain/leadDisplay';
 import { type LeadActivity, type LeadView } from '@/domain/schemas';
 import { request } from '@/lib/http';
 import { cn } from '@/lib/styles';
@@ -38,7 +39,6 @@ export const LeadDetailPage = ({ id }: { readonly id: string }) => {
     estimatedValue: string;
     firstName: string;
     lastName: string;
-    name: string;
     source: string;
   }>(null);
 
@@ -52,7 +52,6 @@ export const LeadDetailPage = ({ id }: { readonly id: string }) => {
             record.estimatedValue === null ? '' : String(record.estimatedValue),
           firstName: record.firstName ?? '',
           lastName: record.lastName ?? '',
-          name: record.name,
           source: record.source,
         }
       : null);
@@ -75,7 +74,6 @@ export const LeadDetailPage = ({ id }: { readonly id: string }) => {
             ? nullable(currentDraft.firstName)
             : undefined,
           lastName: currentDraft ? nullable(currentDraft.lastName) : undefined,
-          name: currentDraft?.name.trim() || undefined,
           source: currentDraft?.source.trim() || undefined,
         }),
         method: 'PATCH',
@@ -145,7 +143,7 @@ export const LeadDetailPage = ({ id }: { readonly id: string }) => {
           </div>
         }
         eyebrow="Lead"
-        title={record.name}
+        title={leadDisplayName(record) ?? 'N/A'}
       />
       <div className="grid gap-5 p-5 sm:p-8 lg:grid-cols-2">
         <section className="rounded-xl border border-slate-800 p-5">
@@ -187,18 +185,6 @@ export const LeadDetailPage = ({ id }: { readonly id: string }) => {
                 value={currentDraft.email}
               />
             </Field>
-            <Field
-              hint="Shown as the lead name. Defaults to the person's name or email."
-              label="Title"
-            >
-              <input
-                className={inputClass}
-                onChange={(event) =>
-                  setDraft({ ...currentDraft, name: event.target.value })
-                }
-                value={currentDraft.name}
-              />
-            </Field>
             <div className="grid gap-3 sm:grid-cols-2">
               <Field label="Source">
                 <input
@@ -235,10 +221,17 @@ export const LeadDetailPage = ({ id }: { readonly id: string }) => {
             </div>
           </form>
           <dl className="mt-5 grid gap-2 text-sm">
-            {record.publicKeyId !== null && (
+            {record.tokenId !== null && (
               <div className="flex justify-between gap-4">
                 <dt className="text-slate-500">Intake</dt>
-                <dd className="text-right text-slate-200">Public web form</dd>
+                <dd className="text-right text-slate-200">
+                  {record.tokenType === 'browser'
+                    ? 'Browser form'
+                    : record.tokenType === 'api'
+                      ? 'API integration'
+                      : 'Intake token'}
+                  {record.tokenName ? ` — ${record.tokenName}` : ''}
+                </dd>
               </div>
             )}
             {record.origin !== null && (
@@ -259,6 +252,16 @@ export const LeadDetailPage = ({ id }: { readonly id: string }) => {
               </div>
             ))}
           </dl>
+          {record.rawPayload ? (
+            <details className="mt-4 rounded-lg border border-slate-800 bg-slate-900/40 p-3">
+              <summary className="cursor-pointer text-sm text-slate-400">
+                Received payload
+              </summary>
+              <pre className="mt-2 overflow-x-auto text-xs text-slate-300">
+                {JSON.stringify(record.rawPayload, null, 2)}
+              </pre>
+            </details>
+          ) : null}
         </section>
         <section className="rounded-xl border border-slate-800 p-5">
           <h2 className="mb-4 font-semibold text-white">Activity</h2>
@@ -310,7 +313,7 @@ export const LeadDetailPage = ({ id }: { readonly id: string }) => {
         </section>
       </div>
       <ConfirmDialog
-        description={`Delete "${record.name}"? This removes the lead from your workspace.`}
+        description={`Delete "${leadDisplayName(record) ?? 'this lead'}"? This removes the lead from your workspace.`}
         onConfirm={() => remove.mutate()}
         onOpenChange={setConfirmDelete}
         open={confirmDelete}

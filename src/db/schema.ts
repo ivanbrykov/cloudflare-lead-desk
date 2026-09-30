@@ -35,21 +35,19 @@ export const leads = sqliteTable(
     firstName: text('first_name'),
     id: text('id').primaryKey(),
     lastName: text('last_name'),
-    name: text('name').notNull(),
-    normalizedEmail: text('normalized_email'),
     origin: text('origin'),
-    publicKeyId: text('public_key_id'),
+    rawPayload: text('raw_payload', { mode: 'json' }).$type<
+      Record<string, unknown>
+    >(),
     source: text('source').notNull(),
+    tokenId: text('token_id'),
     updatedAt: timestampMs('updated_at').notNull(),
     workspaceId: text('workspace_id')
       .notNull()
       .references(() => workspaces.id),
   },
   (table) => [
-    index('leads_normalized_email_idx').on(
-      table.workspaceId,
-      table.normalizedEmail,
-    ),
+    index('leads_email_idx').on(table.workspaceId, table.email),
     // The flat leads list orders by createdAt, so it gets its own index.
     index('leads_workspace_created_idx').on(table.workspaceId, table.createdAt),
   ],

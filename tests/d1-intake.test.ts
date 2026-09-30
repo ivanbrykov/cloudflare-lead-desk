@@ -65,14 +65,12 @@ type IntakePayload = {
   estimatedValue?: number;
   firstName?: string;
   lastName?: string;
-  name?: string;
   source: string;
 };
 
 const payload = (email = 'intake-test@example.test'): IntakePayload => ({
   email,
   firstName: 'Alex',
-  name: 'New inquiry',
   source: 'website_form',
 });
 
@@ -374,6 +372,17 @@ test('same-key replay preserves the original response and writes nothing new', a
     expect(row?.request_hash).toBe(
       sha256Hex(JSON.stringify(canonical(expected))),
     );
+
+    // The stored email is normalized; the raw payload keeps the original case.
+    const storedLead = await fx.db
+      .prepare('SELECT email, raw_payload, token_id FROM leads WHERE id = ?')
+      .bind(leadId)
+      .first<{ email: string; raw_payload: string; token_id: string }>();
+    expect(storedLead?.email).toBe('replay@example.test');
+    expect(storedLead?.token_id).toBe(token.id);
+    expect(JSON.parse(String(storedLead?.raw_payload))).toMatchObject({
+      email: 'REPLAY@Example.Test',
+    });
   } finally {
     await fx.dispose();
   }
@@ -419,8 +428,8 @@ test('parallel identical retries collapse and parallel conflicting requests choo
 
     const a = payload('conflict-pair@example.test');
     const b = payload('conflict-pair@example.test');
-    a.name = 'Winner A';
-    b.name = 'Winner B';
+    a.source = 'winner_a';
+    b.source = 'winner_b';
     const pair = await Promise.all([
       fx.intake('parallel-conflict', a, token.token),
       fx.intake('parallel-conflict', b, token.token),
@@ -431,10 +440,10 @@ test('parallel identical retries collapse and parallel conflicting requests choo
     expectError(pair[loserIndex], 409, 'idempotency_conflict');
     const winnerId = (pair[winnerIndex].json.data as { leadId: string }).leadId;
     const saved = await fx.db
-      .prepare('SELECT name FROM leads WHERE id = ?')
+      .prepare('SELECT source FROM leads WHERE id = ?')
       .bind(winnerId)
       .first();
-    expect(saved?.name).toBe([a, b][winnerIndex].name);
+    expect(saved?.source).toBe([a, b][winnerIndex].source);
     expect(await fx.count('leads')).toBe(2);
     expect(await fx.count('leads')).toBe(2);
     expect(await fx.count('activities')).toBe(2);
@@ -467,9 +476,9 @@ test('distinct keys create separate leads even for the same email', async () => 
     expect(await fx.count('leads')).toBe(2);
     expect(await fx.count('activities')).toBe(2);
     const stored = await fx.db
-      .prepare('SELECT normalized_email FROM leads ORDER BY created_at')
-      .all<{ normalized_email: string }>();
-    expect(stored.results?.map((row) => row.normalized_email)).toEqual([
+      .prepare('SELECT email FROM leads ORDER BY created_at')
+      .all<{ email: string }>();
+    expect(stored.results?.map((row) => row.email)).toEqual([
       'dup@example.test',
       'dup@example.test',
     ]);

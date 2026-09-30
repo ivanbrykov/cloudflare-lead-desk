@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "cd070fc8-50bb-4e15-83bb-7006558c9a15",
+  "id": "df0b6818-e573-4273-9dcb-8fb6946af1c7",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "activities": {
@@ -410,20 +410,6 @@
           "notNull": false,
           "autoincrement": false
         },
-        "name": {
-          "name": "name",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "normalized_email": {
-          "name": "normalized_email",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
         "origin": {
           "name": "origin",
           "type": "text",
@@ -431,8 +417,8 @@
           "notNull": false,
           "autoincrement": false
         },
-        "public_key_id": {
-          "name": "public_key_id",
+        "raw_payload": {
+          "name": "raw_payload",
           "type": "text",
           "primaryKey": false,
           "notNull": false,
@@ -443,6 +429,13 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true,
+          "autoincrement": false
+        },
+        "token_id": {
+          "name": "token_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
           "autoincrement": false
         },
         "updated_at": {
@@ -461,11 +454,11 @@
         }
       },
       "indexes": {
-        "leads_normalized_email_idx": {
-          "name": "leads_normalized_email_idx",
+        "leads_email_idx": {
+          "name": "leads_email_idx",
           "columns": [
             "workspace_id",
-            "normalized_email"
+            "email"
           ],
           "isUnique": false
         },

@@ -7,11 +7,10 @@ describe('intake contract', () => {
     const input = await Schema.decodeUnknownPromise(IntakeRequest)({
       email: 'alex@example.com',
       firstName: 'Alex',
-      name: 'New service inquiry',
       source: 'website_form',
     });
     expect(input.email).toBe('alex@example.com');
-    expect(input.name).toContain('service');
+    expect(input.firstName).toBe('Alex');
   });
 
   test('rejects a missing source and invalid email', async () => {
@@ -32,9 +31,8 @@ describe('intake contract', () => {
   test('decodes a manual lead', async () => {
     const input = await Schema.decodeUnknownPromise(CreateLeadRequest)({
       email: 'alex@example.com',
-      name: 'New service inquiry',
       source: 'Manual entry',
     });
-    expect(input.name).toContain('service');
+    expect(input.email).toBe('alex@example.com');
   });
 });

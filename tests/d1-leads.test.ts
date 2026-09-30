@@ -132,8 +132,9 @@ const insertLead = async (
     createdAt: number;
     deletedAt?: null | number;
     email?: null | string;
+    firstName?: null | string;
     id: string;
-    name: string;
+    lastName?: null | string;
     source?: string;
   },
 ): Promise<void> => {
@@ -141,17 +142,17 @@ const insertLead = async (
   await database
     .prepare(
       `INSERT INTO leads (
-        id, workspace_id, email, normalized_email,
-        first_name, last_name, name, source, estimated_value, custom_fields,
-        origin, public_key_id, created_at, updated_at, deleted_at
-      ) VALUES (?, ?, ?, ?, 'Test', 'Lead', ?, ?, NULL, '{}', NULL, NULL, ?, ?, ?)`,
+        id, workspace_id, email, first_name, last_name,
+        source, estimated_value, custom_fields,
+        created_at, updated_at, deleted_at
+      ) VALUES (?, ?, ?, ?, ?, ?, NULL, '{}', ?, ?, ?)`,
     )
     .bind(
       lead.id,
       WORKSPACE,
-      email,
       email === null ? null : email.trim().toLowerCase(),
-      lead.name,
+      lead.firstName ?? 'Test',
+      lead.lastName ?? 'Lead',
       lead.source ?? 'website',
       lead.createdAt,
       lead.createdAt,
@@ -166,36 +167,39 @@ test('lead list searches, excludes deleted rows, pages, and hints duplicates', a
     await insertLead(fx.db, {
       createdAt: ms(1_000),
       email: 'dup@example.test',
+      firstName: 'Newest',
       id: '01ARZ3NDEKTSV4RRFFQ69G5FB0',
-      name: 'Newest',
     });
     await insertLead(fx.db, {
       createdAt: ms(2_000),
       email: 'dup@example.test',
+      firstName: 'Middle',
       id: '01ARZ3NDEKTSV4RRFFQ69G5FB1',
-      name: 'Middle Acme',
+      lastName: 'Acme',
     });
     await insertLead(fx.db, {
       createdAt: ms(3_000),
       email: 'unique@example.test',
+      firstName: 'Oldest',
       id: '01ARZ3NDEKTSV4RRFFQ69G5FB2',
-      name: 'Oldest',
     });
     await insertLead(fx.db, {
       createdAt: ms(4_000),
       deletedAt: ms(3_500),
       email: 'deleted@example.test',
+      firstName: 'Deleted',
       id: '01ARZ3NDEKTSV4RRFFQ69G5FB3',
-      name: 'Deleted',
     });
 
     const first = await fx.api('/v1/leads?limit=2');
     expect(first.status, JSON.stringify(first)).toBe(200);
     const firstPage = first.json.data as Array<Record<string, unknown>>;
-    expect(firstPage.map((lead) => lead['name'])).toEqual([
-      'Newest',
-      'Middle Acme',
+    expect(firstPage.map((lead) => lead['id'])).toEqual([
+      '01ARZ3NDEKTSV4RRFFQ69G5FB0',
+      '01ARZ3NDEKTSV4RRFFQ69G5FB1',
     ]);
+    // Raw payloads stay out of list responses.
+    expect(firstPage[0]).not.toHaveProperty('rawPayload');
     expect(firstPage.map((lead) => lead['duplicateCount'])).toEqual([1, 1]);
     expect(typeof first.json.nextCursor).toBe('string');
 
@@ -204,18 +208,22 @@ test('lead list searches, excludes deleted rows, pages, and hints duplicates', a
     expect(second.status, JSON.stringify(second)).toBe(200);
     expect(
       (second.json.data as Array<Record<string, unknown>>).map(
-        (lead) => lead['name'],
+        (lead) => lead['id'],
       ),
-    ).toEqual(['Oldest']);
+    ).toEqual(['01ARZ3NDEKTSV4RRFFQ69G5FB2']);
     expect(second.json.nextCursor).toBeNull();
 
     const search = await fx.api('/v1/leads?query=Acme');
     expect(search.status, JSON.stringify(search)).toBe(200);
-    expect(search.json.data).toHaveLength(1);
+    expect(
+      (search.json.data as Array<Record<string, unknown>>).map(
+        (lead) => lead['id'],
+      ),
+    ).toEqual(['01ARZ3NDEKTSV4RRFFQ69G5FB1']);
 
     const detail = await fx.api('/v1/leads/01ARZ3NDEKTSV4RRFFQ69G5FB2');
     expect(detail.status, JSON.stringify(detail)).toBe(200);
-    expect((detail.json.data as Record<string, unknown>)['name']).toBe(
+    expect((detail.json.data as Record<string, unknown>)['firstName']).toBe(
       'Oldest',
     );
 
@@ -261,24 +269,25 @@ test('leads can be created, updated, deleted, and annotated', async () => {
     const created = await fx.api('/v1/leads', 'POST', {
       email: 'manual@example.test',
       firstName: 'Manual',
-      name: 'Manual lead',
       source: 'Manual entry',
     });
     expect(created.status, JSON.stringify(created)).toBe(201);
-    const lead = created.json.data as { id: string; name: string };
-    expect(lead.name).toBe('Manual lead');
+    const lead = created.json.data as { firstName: string; id: string };
+    expect(lead.firstName).toBe('Manual');
 
     // Identity is required for a manual lead.
-    const invalid = await fx.api('/v1/leads', 'POST', { name: 'No identity' });
+    const invalid = await fx.api('/v1/leads', 'POST', {});
     expect(invalid.status).toBe(422);
     expect(invalid.json).toMatchObject({ code: 'lead_identity_required' });
 
     const updated = await fx.api(`/v1/leads/${lead.id}`, 'PATCH', {
       estimatedValue: 2_500,
-      name: 'Renamed lead',
+      lastName: 'Renamed',
     });
     expect(updated.status, JSON.stringify(updated)).toBe(200);
-    expect((updated.json.data as { name: string }).name).toBe('Renamed lead');
+    expect((updated.json.data as { lastName: string }).lastName).toBe(
+      'Renamed',
+    );
 
     const activity = await fx.api(`/v1/leads/${lead.id}/activities`, 'POST', {
       body: 'Called them',
@@ -307,7 +316,7 @@ test('equal createdAt ties order by id DESC and page without gaps', async () => 
   try {
     const fixed = ms(5_000);
     for (const name of ['alpha', 'beta', 'delta', 'gamma', 'zeta']) {
-      await insertLead(fx.db, { createdAt: fixed, id: name, name });
+      await insertLead(fx.db, { createdAt: fixed, id: name });
     }
 
     const page1 = await fx.api('/v1/leads?limit=2');

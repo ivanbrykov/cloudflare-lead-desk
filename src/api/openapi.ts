@@ -6,10 +6,10 @@ const leadSchema = {
     firstName: { type: ['string', 'null'] },
     id: { type: 'string' },
     lastName: { type: ['string', 'null'] },
-    name: { type: 'string' },
     source: { type: 'string' },
+    tokenId: { type: ['string', 'null'] },
   },
-  required: ['name', 'source'],
+  required: ['source'],
   type: 'object',
 } as const;
 
@@ -77,7 +77,6 @@ export const openApiSpecification = {
                   estimatedValue: { type: 'number' },
                   firstName: { type: 'string' },
                   lastName: { type: 'string' },
-                  name: { type: 'string' },
                   source: { type: 'string' },
                 },
                 required: ['email', 'source'],
@@ -106,7 +105,7 @@ export const openApiSpecification = {
     '/v1/leads': {
       get: {
         description:
-          'Lists all live leads, newest first, with keyset (seek) pagination and a per-page duplicate-email hint. The optional `query` filter is a literal substring match on name or email.',
+          'Lists all live leads, newest first, with keyset (seek) pagination and a per-page duplicate-email hint. The optional `query` filter is a literal substring match on the email, first name, or last name.',
         parameters: [
           { in: 'query', name: 'query', schema: { type: 'string' } },
           { in: 'query', name: 'cursor', schema: { type: 'string' } },
@@ -196,7 +195,6 @@ export const openApiSpecification = {
                   estimatedValue: { type: ['number', 'null'] },
                   firstName: { type: ['string', 'null'] },
                   lastName: { type: ['string', 'null'] },
-                  name: { type: 'string' },
                   source: { type: 'string' },
                 },
                 type: 'object',
@@ -283,7 +281,6 @@ export const openApiSpecification = {
                   estimatedValue: { type: 'number' },
                   firstName: { type: 'string' },
                   lastName: { type: 'string' },
-                  name: { type: 'string' },
                   source: { type: 'string' },
                 },
                 required: ['email', 'source'],

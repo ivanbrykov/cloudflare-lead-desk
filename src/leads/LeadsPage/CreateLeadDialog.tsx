@@ -19,7 +19,6 @@ export const CreateLeadDialog = ({
     estimatedValue: '',
     firstName: '',
     lastName: '',
-    name: '',
     source: 'Website',
   });
   const create = useMutation({
@@ -33,7 +32,6 @@ export const CreateLeadDialog = ({
               : Number(values.estimatedValue),
           firstName: values.firstName.trim() || undefined,
           lastName: values.lastName.trim() || undefined,
-          name: values.name.trim() || undefined,
           source: values.source.trim() || undefined,
         }),
         method: 'POST',
@@ -86,19 +84,6 @@ export const CreateLeadDialog = ({
             }
             type="email"
             value={values.email}
-          />
-        </Field>
-        <Field
-          hint="Shown as the lead name. Defaults to the person's name or email."
-          label="Title"
-        >
-          <input
-            className={inputClass}
-            onChange={(event) =>
-              setValues({ ...values, name: event.target.value })
-            }
-            placeholder="New service inquiry"
-            value={values.name}
           />
         </Field>
         <div className="grid gap-3 sm:grid-cols-2">

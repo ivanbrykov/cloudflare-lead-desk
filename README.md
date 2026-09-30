@@ -202,7 +202,6 @@ curl https://crm.example.com/v1/intakes \
     "source": "website_form",
     "email": "alex@example.com",
     "firstName": "Sam",
-    "name": "New service inquiry",
     "customFields": { "segment": "Enterprise" }
   }'
 ```
@@ -223,7 +222,6 @@ await fetch(`https://crm.example.com/v1/public/intakes/${publicToken}`, {
     customFields: { form: 'pricing', plan: 'pro' },
     email: 'alex@example.com',
     firstName: 'Sam',
-    name: 'New service inquiry',
     source: 'pricing_form',
   }),
   headers: {
@@ -254,9 +252,9 @@ The CRM serves a small, dependency-free SDK at `/sdk/v1.js`. Give a form a
 <script src="https://crm.example.com/sdk/v1.js" defer></script>
 ```
 
-- `email`, `firstName`/`first_name`/`first-name`, `lastName`, `name`, and
-  `source` map to lead fields; every other named input lands in
-  `customFields`.
+- `email`, `firstName`/`first_name`/`first-name`, `lastName`, and `source`
+  map to lead fields; every other named input — including `name` and `title` —
+  lands in `customFields`.
 - The endpoint origin comes from the script's own `src`, so the form can live
   on any site. No cookies or credentials are sent.
 - Attribute overrides: `data-leadscroll-source`, `data-leadscroll-success`,
@@ -336,17 +334,17 @@ by `id DESC`:
   ordering above. Omit it for the first page; the final page returns
   `nextCursor: null`. A missing, malformed, or tampered cursor returns
   `422 invalid_cursor`.
-- `query` is a literal substring match on name or email (`%` and `_` match
-  literally) and composes with pagination.
+- `query` is a literal substring match on first name, last name, or email
+  (`%` and `_` match literally) and composes with pagination.
 - Items carry a `duplicateCount` hint: how many other live leads share the
   normalized email, computed for the whole page in one grouped query.
 - Custom fields live in each lead's `customFields` JSON document; there is no
   definition registry, so any key the sender supplies is stored as-is.
 
 `POST /v1/leads` creates a lead manually. At least one of `email`,
-`firstName`, or `lastName` is required (`422 lead_identity_required`), a
-non-empty `name` defaults from the person's name or email, and
-`estimatedValue` must be a non-negative finite number. `PATCH /v1/leads/:id`
+`firstName`, or `lastName` is required (`422 lead_identity_required`),
+`estimatedValue` must be a non-negative finite number, and the display label
+derives from `firstName`/`lastName` with `email` as the fallback. `PATCH /v1/leads/:id`
 updates one lead; `email`, `firstName`, and `lastName` accept `null` to clear.
 Unknown or soft-deleted ids return `404 not_found`.
 

@@ -8,7 +8,7 @@
  *   </form>
  *   <script src="https://crm.example.com/sdk/v1.js" defer></script>
  *
- * Named fields email/firstName/lastName/name are mapped to lead fields
+ * Named fields email/firstName/lastName are mapped to lead fields
  * (first_name and first-name spellings work too); every other named field is
  * sent as a custom field. The origin is taken from this script's own src, so
  * the form can live on any site. No cookies are sent.
@@ -40,9 +40,7 @@
     'last-name': 'lastName',
     last_name: 'lastName',
     lastname: 'lastName',
-    name: 'name',
     source: 'source',
-    title: 'name',
   };
 
   // Never collect values a public form has no business sending upstream.
