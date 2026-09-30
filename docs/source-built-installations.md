@@ -10,10 +10,10 @@ workspace.
 
 ## Pinned build
 
-`lead-desk.json` records the public upstream `owner/repository` and a full
+`leadscroll.json` records the public upstream `owner/repository` and a full
 40-character commit. `pnpm run build`:
 
-1. Invalidates deploy readiness and acquires the owned `.lead-desk/.lock`.
+1. Invalidates deploy readiness and acquires the owned `.leadscroll/.lock`.
 2. Initializes an isolated temporary Git checkout, fetches exactly the recorded
    commit, checks it out detached, and verifies `HEAD` equals the pin.
 3. Installs the fetched source's dependencies from its `pnpm-lock.yaml` with
@@ -29,9 +29,12 @@ secrets. Installation files and `.dev.vars` are never copied into source. Failed
 fetches, installs, builds, runtime checks, and migration checks leave D1 and tracked
 configuration untouched and keep deployment blocked until a successful rebuild.
 
-The template's initial pin is merged upstream commit
-`ad31f24d22aff10c1a80447f1c2549f22e62f0e1`, which exposes the stable
-source-build command. For existing installations only, the installer retains a
+The template's initial pin is commit
+`9dbb5c8bc02dabe3982a138b8d4b51b40602cd1c`, the LeadScroll rename baseline. It
+resets migration history to a single baseline migration, so installations pinned
+to pre-rename revisions cannot be upgraded in place: they must be reinstalled
+against a reset database. The pin advances to the rename's merge commit once it
+lands on `main`. For existing installations only, the installer retains a
 narrow adapter for historical pin `8c8f7cd...`; it consumes that commit's local
 build output and never contacts GitHub Releases.
 
@@ -53,7 +56,7 @@ minutes for exact-SHA upstream push CI to pass; failure or timeout leaves the
 pin unchanged. Then it compiles and checks the candidate on a read-only runner,
 comparing migrations with the old pinned
 source even in a clean checkout. A fresh runner reconstructs only
-`lead-desk.json`, rejects a changed base or extra path, and pushes without
+`leadscroll.json`, rejects a changed base or extra path, and pushes without
 force using the caller repository's `GITHUB_TOKEN`. No GitHub App, central
 Worker, or Cloudflare credential is required. The caller uses `@main`, so its
 manual runs use the current upstream workflow logic. That upstream code has
@@ -68,7 +71,7 @@ still a live verification gate; local tests cannot establish it.
 
 An ordinary rebuild never advances the pin. The installation owner deliberately
 chooses a full upstream commit SHA from `main` after its CI has passed, backs up
-D1, and compares that candidate with the current `lead-desk.json` revision.
+D1, and compares that candidate with the current `leadscroll.json` revision.
 Check that the old revision is an ancestor of the candidate and that every
 published `drizzle/*.sql` file is unchanged. In a separate checkout of the
 upstream source, substitute the two full SHAs in:
@@ -83,7 +86,7 @@ files, with names after the old history; modified, deleted, renamed, or reordere
 migrations are a stop condition. A clean Cloudflare build has no old generated
 receipt to compare against, so this check is required before changing the pin.
 
-Change only `revision` in the installation's `lead-desk.json`. Optionally run
+Change only `revision` in the installation's `leadscroll.json`. Optionally run
 `pnpm install --frozen-lockfile`, `pnpm run build`, and
 `pnpm run deploy:dry-run` in a local installation checkout before committing.
 Commit only that file to the Cloudflare-connected branch. Workers Builds uses
@@ -138,7 +141,7 @@ Before claiming the complete installation experience, run these live gates on an
 approved disposable target:
 
 1. Generate a repository through the Cloudflare folder button and confirm it
-   contains `lead-desk.json`, the README's workflow setup link, and the root
+   contains `leadscroll.json`, the README's workflow setup link, and the root
    fallback YAML. The absence of `.github/workflows` is expected.
 2. Inspect the Cloudflare application already created by the folder button;
    do not import the repository again. Confirm D1 provisioning occurs before

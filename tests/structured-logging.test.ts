@@ -47,7 +47,7 @@ const api = async (
   headers: Record<string, string> = {},
 ): Promise<Record<string, unknown> & { status: number }> => {
   const response = await miniflare.dispatchFetch(
-    'https://lead-desk.test' + path,
+    'https://leadscroll.test' + path,
     {
       headers: { 'Content-Type': 'application/json', ...headers },
       method,

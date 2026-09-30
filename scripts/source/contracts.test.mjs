@@ -28,45 +28,45 @@ const manifest = (overrides = {}) => ({
   commit,
   compatibilityDate: '2026-08-23',
   compatibilityFlags: ['nodejs_compat'],
-  format: 'lead-desk-source-build',
+  format: 'leadscroll-source-build',
   migrations: [{ name: '0001_initial.sql', sha256: migrationDigest }],
   schemaVersion: 1,
   ...overrides,
 });
 
 const installationFixture = async (context) => {
-  const directory = await mkdtemp(join(tmpdir(), 'lead-desk-installation-'));
+  const directory = await mkdtemp(join(tmpdir(), 'leadscroll-installation-'));
   context.after(async () => rm(directory, { force: true, recursive: true }));
-  const generated = join(directory, '.lead-desk');
+  const generated = join(directory, '.leadscroll');
   const current = join(generated, 'current');
   await mkdir(current, { recursive: true });
   await writeFile(
     join(directory, 'wrangler.jsonc'),
     JSON.stringify({
-      assets: { binding: 'ASSETS', directory: '.lead-desk/current/assets' },
+      assets: { binding: 'ASSETS', directory: '.leadscroll/current/assets' },
       compatibility_date: '2026-08-23',
       compatibility_flags: ['nodejs_compat'],
       d1_databases: [
         {
           binding: 'DB',
           database_id: databaseId,
-          database_name: 'my-lead-desk',
-          migrations_dir: '.lead-desk/current/migrations',
+          database_name: 'my-leadscroll',
+          migrations_dir: '.leadscroll/current/migrations',
         },
       ],
     }),
   );
   const configuration = {
-    repository: 'ivanbrykov/cloudflare-lead-desk',
+    repository: 'leadscroll/leadscroll',
     revision: commit,
   };
   await writeFile(
-    join(directory, 'lead-desk.json'),
+    join(directory, 'leadscroll.json'),
     `${JSON.stringify(configuration)}\n`,
   );
   await writeFile(
     join(generated, '.owned'),
-    'Lead Desk generated source installation v1\n',
+    'LeadScroll generated source installation v1\n',
   );
   await writeFile(join(current, 'worker.mjs'), 'export default {};\n');
   const receipt = { ...manifest(), repository: configuration.repository };
@@ -80,7 +80,7 @@ const installationFixture = async (context) => {
 };
 
 const databaseFixture = async (context, database = {}) => {
-  const directory = await mkdtemp(join(tmpdir(), 'lead-desk-database-'));
+  const directory = await mkdtemp(join(tmpdir(), 'leadscroll-database-'));
   context.after(async () => rm(directory, { force: true, recursive: true }));
   const path = join(directory, 'wrangler.jsonc');
   await writeFile(
@@ -90,8 +90,8 @@ const databaseFixture = async (context, database = {}) => {
         d1_databases: [
           {
             binding: 'DB',
-            database_name: 'my-lead-desk',
-            migrations_dir: '.lead-desk/current/migrations',
+            database_name: 'my-leadscroll',
+            migrations_dir: '.leadscroll/current/migrations',
             ...database,
           },
         ],
@@ -106,15 +106,15 @@ const databaseFixture = async (context, database = {}) => {
 test('source configuration requires an exact immutable revision', () => {
   assert.deepEqual(
     validateConfiguration({
-      repository: 'ivanbrykov/cloudflare-lead-desk',
+      repository: 'leadscroll/leadscroll',
       revision: commit,
     }),
-    { repository: 'ivanbrykov/cloudflare-lead-desk', revision: commit },
+    { repository: 'leadscroll/leadscroll', revision: commit },
   );
   assert.throws(
     () =>
       validateConfiguration({
-        repository: 'ivanbrykov/cloudflare-lead-desk',
+        repository: 'leadscroll/leadscroll',
         revision: 'main',
       }),
     /full 40-character source commit/u,
@@ -163,14 +163,14 @@ test('migration history permits append-only changes and rejects rewrites', () =>
 });
 
 test('runtime validation refuses incompatible source requirements', async (context) => {
-  const directory = await mkdtemp(join(tmpdir(), 'lead-desk-runtime-'));
+  const directory = await mkdtemp(join(tmpdir(), 'leadscroll-runtime-'));
   context.after(async () => rm(directory, { force: true, recursive: true }));
   const configuration = {
-    assets: { binding: 'ASSETS', directory: '.lead-desk/current/assets' },
+    assets: { binding: 'ASSETS', directory: '.leadscroll/current/assets' },
     compatibility_date: '2026-08-22',
     compatibility_flags: [],
     d1_databases: [
-      { binding: 'DB', migrations_dir: '.lead-desk/current/migrations' },
+      { binding: 'DB', migrations_dir: '.leadscroll/current/migrations' },
     ],
   };
   await writeFile(
@@ -203,7 +203,7 @@ test('deploy preflight binds prepared output to the tracked source pin', async (
   await context.test('changed pin rejects old output', async (subcontext) => {
     const fixture = await installationFixture(subcontext);
     await writeFile(
-      join(fixture.directory, 'lead-desk.json'),
+      join(fixture.directory, 'leadscroll.json'),
       `${JSON.stringify({
         ...fixture.configuration,
         revision: nextCommit,
@@ -244,7 +244,7 @@ test('deploy preflight binds prepared output to the tracked source pin', async (
     'malformed tracked configuration is rejected',
     async (subcontext) => {
       const fixture = await installationFixture(subcontext);
-      await writeFile(join(fixture.directory, 'lead-desk.json'), '{');
+      await writeFile(join(fixture.directory, 'leadscroll.json'), '{');
       await assert.rejects(checkInstallation(fixture.directory), SyntaxError);
     },
   );
@@ -273,7 +273,7 @@ test('failed configuration validation invalidates deploy readiness', async (cont
 
   await context.test('malformed tracked JSON', async (subcontext) => {
     const fixture = await installationFixture(subcontext);
-    await writeFile(join(fixture.directory, 'lead-desk.json'), '{');
+    await writeFile(join(fixture.directory, 'leadscroll.json'), '{');
     await assert.rejects(
       prepareSource({ root: fixture.directory }),
       SyntaxError,
@@ -313,7 +313,9 @@ test('deployment resolves or creates one durable D1 binding', async (context) =>
           root: fixture.directory,
           runWrangler: (args) => {
             calls.push(args);
-            return JSON.stringify([{ name: 'my-lead-desk', uuid: databaseId }]);
+            return JSON.stringify([
+              { name: 'my-leadscroll', uuid: databaseId },
+            ]);
           },
         }),
         databaseId,
@@ -341,7 +343,7 @@ test('deployment resolves or creates one durable D1 binding', async (context) =>
             if (args[1] === 'list') {
               if (listed) {
                 return JSON.stringify([
-                  { name: 'my-lead-desk', uuid: databaseId },
+                  { name: 'my-leadscroll', uuid: databaseId },
                 ]);
               }
 
@@ -356,7 +358,7 @@ test('deployment resolves or creates one durable D1 binding', async (context) =>
       );
       assert.deepEqual(calls, [
         ['d1', 'list', '--json'],
-        ['d1', 'create', 'my-lead-desk', '--binding', 'DB', '--update-config'],
+        ['d1', 'create', 'my-leadscroll', '--binding', 'DB', '--update-config'],
         ['d1', 'list', '--json'],
       ]);
     },

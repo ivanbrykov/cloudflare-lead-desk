@@ -274,7 +274,7 @@ export const createApiToken = async (
   environment: Env,
   input: { expiresAt?: string; name: string; type: 'api' | 'browser' },
 ) => {
-  const raw = randomToken(input.type === 'browser' ? 'cld_pub_' : 'cld_');
+  const raw = randomToken(input.type === 'browser' ? 'lsc_pub_' : 'lsc_');
   const record = {
     createdAt: now(),
     expiresAt:
@@ -361,7 +361,7 @@ export const createStaffInvite = async (
   name: string,
   expiresAt?: string,
 ): Promise<InviteRecord & { token: string }> => {
-  const raw = `cld_${crypto
+  const raw = `lsc_${crypto
     .getRandomValues(new Uint8Array(32))
     .reduce((text, byte) => text + byte.toString(16).padStart(2, '0'), '')}`;
   const tokenHash = await hashToken(raw);

@@ -122,7 +122,7 @@ export default {
   async fetch(request, env, ctx) {
     const response = await core.fetch(request, env, ctx);
     const stamped = new Response(response.body, response);
-    stamped.headers.set('X-Lead-Desk-Commit', ${JSON.stringify(commit)});
+    stamped.headers.set('X-LeadScroll-Commit', ${JSON.stringify(commit)});
     return stamped;
   }
 };`,
@@ -137,7 +137,7 @@ await copyFile(join(source, 'LICENSE'), join(destination, 'LICENSE'));
 await cp(join(source, 'dist'), join(destination, 'assets'), {
   recursive: true,
 });
-await writeJson(join(destination, 'assets', 'lead-desk-version.json'), {
+await writeJson(join(destination, 'assets', 'leadscroll-version.json'), {
   commit,
 });
 
@@ -154,4 +154,4 @@ const manifest = validateSourceManifest({
 });
 await writeJson(join(destination, 'source.json'), manifest);
 
-log(`Built Lead Desk source ${commit} in ${destination}`);
+log(`Built LeadScroll source ${commit} in ${destination}`);

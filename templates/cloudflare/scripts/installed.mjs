@@ -50,8 +50,8 @@ export const assertRuntimeConfig = async (root, manifest) => {
   );
   assert.equal(
     resolve(root, database.migrations_dir ?? ''),
-    join(root, '.lead-desk/current/migrations'),
-    'DB.migrations_dir must be .lead-desk/current/migrations',
+    join(root, '.leadscroll/current/migrations'),
+    'DB.migrations_dir must be .leadscroll/current/migrations',
   );
   assert.equal(
     config.assets?.binding,
@@ -60,20 +60,20 @@ export const assertRuntimeConfig = async (root, manifest) => {
   );
   assert.equal(
     resolve(root, config.assets?.directory ?? ''),
-    join(root, '.lead-desk/current/assets'),
-    'assets.directory must be .lead-desk/current/assets',
+    join(root, '.leadscroll/current/assets'),
+    'assets.directory must be .leadscroll/current/assets',
   );
 };
 
 export const checkInstallation = async (root) => {
   assert(
-    !(await inspect(join(root, '.lead-desk/.lock'))),
+    !(await inspect(join(root, '.leadscroll/.lock'))),
     'An update is incomplete or still running; do not deploy until it finishes.',
   );
   const configuration = validateConfiguration(
-    JSON.parse(await readFile(join(root, 'lead-desk.json'), 'utf8')),
+    JSON.parse(await readFile(join(root, 'leadscroll.json'), 'utf8')),
   );
-  const current = join(root, '.lead-desk/current');
+  const current = join(root, '.leadscroll/current');
   const receiptBytes = await readFile(join(current, 'installation.json'));
   const manifest = validateInstallationReceipt(
     JSON.parse(receiptBytes.toString()),
@@ -81,15 +81,15 @@ export const checkInstallation = async (root) => {
   assert.equal(
     manifest.repository,
     configuration.repository,
-    'Prepared source repository does not match lead-desk.json. Run pnpm run build successfully before deploying.',
+    'Prepared source repository does not match leadscroll.json. Run pnpm run build successfully before deploying.',
   );
   assert.equal(
     manifest.commit,
     configuration.revision,
-    'Prepared source revision does not match lead-desk.json. Run pnpm run build successfully before deploying.',
+    'Prepared source revision does not match leadscroll.json. Run pnpm run build successfully before deploying.',
   );
   const ready = JSON.parse(
-    await readFile(join(root, '.lead-desk/ready.json'), 'utf8'),
+    await readFile(join(root, '.leadscroll/ready.json'), 'utf8'),
   );
   assert.equal(
     ready.receiptSha256,

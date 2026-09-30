@@ -1,4 +1,4 @@
-name: Validate and pin a Lead Desk upgrade
+name: Validate and pin a LeadScroll upgrade
 
 on:
   workflow_call:
@@ -7,7 +7,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: lead-desk-upgrade-${{ github.event.repository.default_branch }}
+  group: leadscroll-upgrade-${{ github.event.repository.default_branch }}
   cancel-in-progress: false
 
 jobs:
@@ -63,16 +63,16 @@ jobs:
           });
 
           const configuration = JSON.parse(
-            await readFile("lead-desk.json", "utf8"),
+            await readFile("leadscroll.json", "utf8"),
           );
           assert.deepEqual(
             Object.keys(configuration).toSorted(),
             ["repository", "revision"],
-            "lead-desk.json has unexpected fields",
+            "leadscroll.json has unexpected fields",
           );
           assert.equal(
             configuration.repository,
-            "ivanbrykov/cloudflare-lead-desk",
+            "leadscroll/leadscroll",
             "Unexpected upstream repository",
           );
           assert(
@@ -178,7 +178,7 @@ jobs:
           await appendFile(
             process.env.GITHUB_STEP_SUMMARY,
             [
-              "## Lead Desk upgrade",
+              "## LeadScroll upgrade",
               "",
               `- Previous source: \`${configuration.revision}\``,
               `- Candidate source: \`${match[1]}\``,
@@ -218,10 +218,10 @@ jobs:
 
       - name: Compile and validate the resolved candidate
         env:
-          LEAD_DESK_BASE_SHA: ${{ needs.resolve.outputs.base_sha }}
-          LEAD_DESK_OLD_REPOSITORY: ${{ needs.resolve.outputs.repository }}
-          LEAD_DESK_OLD_REVISION: ${{ needs.resolve.outputs.old_revision }}
-          LEAD_DESK_TARGET_REVISION: ${{ needs.resolve.outputs.target_revision }}
+          LEADSCROLL_BASE_SHA: ${{ needs.resolve.outputs.base_sha }}
+          LEADSCROLL_OLD_REPOSITORY: ${{ needs.resolve.outputs.repository }}
+          LEADSCROLL_OLD_REVISION: ${{ needs.resolve.outputs.old_revision }}
+          LEADSCROLL_TARGET_REVISION: ${{ needs.resolve.outputs.target_revision }}
         run: |
           node --input-type=module <<'NODE'
           import assert from 'node:assert/strict';
@@ -231,26 +231,26 @@ jobs:
           import { validateConfiguration } from './scripts/source.mjs';
 
           const configuration = validateConfiguration(
-            JSON.parse(await readFile('lead-desk.json', 'utf8')),
+            JSON.parse(await readFile('leadscroll.json', 'utf8')),
           );
           assert.deepEqual(Object.keys(configuration).toSorted(), ['repository', 'revision']);
-          assert.equal(configuration.repository, process.env.LEAD_DESK_OLD_REPOSITORY);
-          assert.equal(configuration.revision, process.env.LEAD_DESK_OLD_REVISION);
+          assert.equal(configuration.repository, process.env.LEADSCROLL_OLD_REPOSITORY);
+          assert.equal(configuration.revision, process.env.LEADSCROLL_OLD_REVISION);
           assert.equal(
             execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
-            process.env.LEAD_DESK_BASE_SHA,
+            process.env.LEADSCROLL_BASE_SHA,
           );
-          assert.match(process.env.LEAD_DESK_TARGET_REVISION, /^[a-f0-9]{40}$/u);
-          if (configuration.revision !== process.env.LEAD_DESK_TARGET_REVISION) {
+          assert.match(process.env.LEADSCROLL_TARGET_REVISION, /^[a-f0-9]{40}$/u);
+          if (configuration.revision !== process.env.LEADSCROLL_TARGET_REVISION) {
             const receipt = await prepareSource({
               baselineConfiguration: configuration,
               configuration: {
                 ...configuration,
-                revision: process.env.LEAD_DESK_TARGET_REVISION,
+                revision: process.env.LEADSCROLL_TARGET_REVISION,
               },
               root: process.cwd(),
             });
-            assert.equal(receipt.commit, process.env.LEAD_DESK_TARGET_REVISION);
+            assert.equal(receipt.commit, process.env.LEADSCROLL_TARGET_REVISION);
           }
           NODE
 
@@ -323,9 +323,9 @@ jobs:
           fetched_base="$(git rev-parse "refs/remotes/origin/${DEFAULT_BRANCH}")"
           [[ "$fetched_base" == "$BASE_SHA" ]]
 
-          git show "${BASE_SHA}:lead-desk.json" > "$work_directory/original.json"
-          original_entry="$(git ls-tree "$BASE_SHA" -- lead-desk.json)"
-          [[ "$original_entry" =~ ^100644[[:space:]]blob[[:space:]][a-f0-9]{40}[[:space:]]lead-desk\.json$ ]]
+          git show "${BASE_SHA}:leadscroll.json" > "$work_directory/original.json"
+          original_entry="$(git ls-tree "$BASE_SHA" -- leadscroll.json)"
+          [[ "$original_entry" =~ ^100644[[:space:]]blob[[:space:]][a-f0-9]{40}[[:space:]]leadscroll\.json$ ]]
 
           export ORIGINAL_CONFIG_PATH="$work_directory/original.json"
           export NEXT_CONFIG_PATH="$work_directory/next.json"
@@ -347,7 +347,7 @@ jobs:
           assert.deepEqual(
             Object.keys(configuration).toSorted(),
             ["repository", "revision"],
-            "lead-desk.json has unexpected fields",
+            "leadscroll.json has unexpected fields",
           );
           assert.equal(configuration.repository, process.env.OLD_REPOSITORY);
           assert.equal(configuration.revision, process.env.OLD_REVISION);
@@ -362,7 +362,7 @@ jobs:
 
           git read-tree "${BASE_SHA}^{tree}"
           next_blob="$(git hash-object -w "$work_directory/next.json")"
-          git update-index --add --cacheinfo "100644,${next_blob},lead-desk.json"
+          git update-index --add --cacheinfo "100644,${next_blob},leadscroll.json"
           next_tree="$(git write-tree)"
           base_tree="$(git rev-parse "${BASE_SHA}^{tree}")"
           [[ "$next_tree" != "$base_tree" ]]
@@ -372,11 +372,11 @@ jobs:
           export GIT_COMMITTER_NAME="$GIT_AUTHOR_NAME"
           export GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EMAIL"
           next_commit="$(
-            printf '%s\n' 'chore: upgrade Lead Desk source' |
+            printf '%s\n' 'chore: upgrade LeadScroll source' |
               git commit-tree "$next_tree" -p "$BASE_SHA"
           )"
           changed_paths="$(git diff-tree --no-commit-id --name-only -r "$next_commit")"
-          [[ "$changed_paths" == 'lead-desk.json' ]]
+          [[ "$changed_paths" == 'leadscroll.json' ]]
 
           remote_line="$(git ls-remote --exit-code origin "refs/heads/${DEFAULT_BRANCH}")"
           remote_head="${remote_line%%$'\t'*}"

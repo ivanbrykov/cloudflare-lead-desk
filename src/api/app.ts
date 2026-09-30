@@ -325,7 +325,7 @@ const createAppWithAuth = (environment: Env, getAuth: AuthForRequest) => {
   return (
     new Elysia({
       adapter: CloudflareAdapter,
-      name: 'cloudflare-lead-desk-api',
+      name: 'leadscroll-api',
     })
       // Elysia's mount() strips the mount prefix before forwarding. Better Auth
       // expects its full basePath, so re-add the prefix to the cloned request.

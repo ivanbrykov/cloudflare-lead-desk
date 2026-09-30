@@ -63,7 +63,7 @@ jobs:
       - name: Preserve source-build receipt
         uses: actions/upload-artifact@v4
         with:
-          name: lead-desk-source-build
+          name: leadscroll-source-build
           include-hidden-files: true
           path: |
             .source-build/source.json

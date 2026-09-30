@@ -1,8 +1,8 @@
-/* Lead Desk public intake SDK — v1
+/* LeadScroll public intake SDK — v1
  *
  * Embeds a browser token in a plain HTML form:
  *
- *   <form data-lead-desk="cld_pub_…">
+ *   <form data-leadscroll="lsc_pub_…">
  *     <input name="email" type="email" required>
  *     <button type="submit">Send</button>
  *   </form>
@@ -77,7 +77,7 @@
 
     if (!payload.source) {
       payload.source =
-        form.getAttribute('data-lead-desk-source') || 'website_form';
+        form.getAttribute('data-leadscroll-source') || 'website_form';
     }
 
     if (Object.keys(payload.customFields).length === 0) {
@@ -88,7 +88,7 @@
   };
 
   const setStatus = (form, message) => {
-    const element = form.querySelector('[data-lead-desk-status]');
+    const element = form.querySelector('[data-leadscroll-status]');
     if (element) {
       element.textContent = message;
     }
@@ -99,7 +99,7 @@
       button.disabled = pending;
     }
 
-    form.setAttribute('data-lead-desk-pending', pending ? 'true' : 'false');
+    form.setAttribute('data-leadscroll-pending', pending ? 'true' : 'false');
   };
 
   const send = async (token, payload) => {
@@ -133,7 +133,7 @@
   };
 
   const bind = (form) => {
-    const token = form.getAttribute('data-lead-desk');
+    const token = form.getAttribute('data-leadscroll');
     if (!token) {
       return;
     }
@@ -150,25 +150,28 @@
         setPending(form, false, button);
         setStatus(
           form,
-          form.getAttribute('data-lead-desk-success') ||
+          form.getAttribute('data-leadscroll-success') ||
             'Thanks — we will be in touch.',
         );
-        if (form.getAttribute('data-lead-desk-reset') !== 'false') {
+        if (form.getAttribute('data-leadscroll-reset') !== 'false') {
           form.reset();
         }
 
         form.dispatchEvent(
-          new CustomEvent('lead-desk:success', { bubbles: true, detail: body }),
+          new CustomEvent('leadscroll:success', {
+            bubbles: true,
+            detail: body,
+          }),
         );
       } catch (error) {
         setPending(form, false, button);
         setStatus(
           form,
-          form.getAttribute('data-lead-desk-error') ||
+          form.getAttribute('data-leadscroll-error') ||
             'Something went wrong. Please try again.',
         );
         form.dispatchEvent(
-          new CustomEvent('lead-desk:error', {
+          new CustomEvent('leadscroll:error', {
             bubbles: true,
             detail: { body: error.body, error },
           }),
@@ -176,20 +179,20 @@
       }
     });
 
-    form.setAttribute('data-lead-desk-bound', 'true');
+    form.setAttribute('data-leadscroll-bound', 'true');
   };
 
   const init = (root) => {
     const scope = root || document;
     const forms = scope.querySelectorAll(
-      'form[data-lead-desk]:not([data-lead-desk-bound])',
+      'form[data-leadscroll]:not([data-leadscroll-bound])',
     );
     for (const form of forms) {
       bind(form);
     }
   };
 
-  window.LeadDesk = {
+  window.LeadScroll = {
     init,
     submit: (token, data) => send(token, data || {}),
     version: 'v1',

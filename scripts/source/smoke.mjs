@@ -24,7 +24,7 @@ const here = import.meta.dirname;
 const source = resolvePath(here, '../..');
 const output = resolvePath(
   process.argv[2] ??
-    join(await mkdtemp(join(tmpdir(), 'lead-desk-source-')), 'run'),
+    join(await mkdtemp(join(tmpdir(), 'leadscroll-source-')), 'run'),
 );
 const consumer = join(output, 'consumer');
 await mkdir(output, { recursive: false });
@@ -32,7 +32,7 @@ await mkdir(join(output, 'logs'));
 const templateSource = join(source, 'templates/cloudflare');
 const copyTemplateFile = (path) => {
   const [topLevel] = relative(templateSource, path).split(sep);
-  return !['.dev.vars', '.lead-desk', '.wrangler', 'node_modules'].includes(
+  return !['.dev.vars', '.leadscroll', '.wrangler', 'node_modules'].includes(
     topLevel,
   );
 };
@@ -278,7 +278,7 @@ const start = async (context, revision) => {
         timeout: 1_000,
       });
       if (response.ok()) {
-        assert.equal(response.headers()['x-lead-desk-commit'], revision);
+        assert.equal(response.headers()['x-leadscroll-commit'], revision);
         return;
       }
     } catch (error) {
@@ -353,10 +353,10 @@ try {
     ['clone', '--quiet', '--no-local', source, upstream],
     output,
   );
-  await command('git', ['config', 'user.name', 'Lead Desk test'], upstream);
+  await command('git', ['config', 'user.name', 'LeadScroll test'], upstream);
   await command(
     'git',
-    ['config', 'user.email', 'lead-desk-test@example.invalid'],
+    ['config', 'user.email', 'leadscroll-test@example.invalid'],
     upstream,
   );
   const firstRevision = (
@@ -386,7 +386,7 @@ try {
   const initialReceipt = await checkInstallation(consumer);
   assert.equal(
     initialReceipt.commit,
-    'ad31f24d22aff10c1a80447f1c2549f22e62f0e1',
+    '9dbb5c8bc02dabe3982a138b8d4b51b40602cd1c',
   );
   pass(
     'fresh consumer fetched and compiled the real reachable initial source pin',
@@ -398,7 +398,7 @@ try {
     targetRevision: firstRevision,
   });
   assert.equal(firstUpgrade.changed, true);
-  const pinnedFirst = await readFile(join(consumer, 'lead-desk.json'), 'utf8');
+  const pinnedFirst = await readFile(join(consumer, 'leadscroll.json'), 'utf8');
   assert.equal(JSON.parse(pinnedFirst).revision, firstRevision);
   const stableFingerprints = await fingerprints();
   const unchangedReceipt = await prepareSource({
@@ -408,7 +408,7 @@ try {
   });
   assert.equal(unchangedReceipt.commit, firstRevision);
   assert.equal(
-    await readFile(join(consumer, 'lead-desk.json'), 'utf8'),
+    await readFile(join(consumer, 'leadscroll.json'), 'utf8'),
     pinnedFirst,
   );
   assert.deepEqual(await fingerprints(), stableFingerprints);
@@ -424,7 +424,7 @@ try {
   const context = await browser.newContext({ ignoreHTTPSErrors: true });
   await start(context, firstRevision);
   assert.equal(
-    (await api(context, '/lead-desk-version.json')).commit,
+    (await api(context, '/leadscroll-version.json')).commit,
     firstRevision,
   );
   await api(context, '/api/auth/sign-up/email', {
@@ -486,7 +486,7 @@ try {
     oldRevision: firstRevision,
   });
   const pinnedSecond = JSON.parse(
-    await readFile(join(consumer, 'lead-desk.json'), 'utf8'),
+    await readFile(join(consumer, 'leadscroll.json'), 'utf8'),
   );
   assert.equal(pinnedSecond.revision, secondRevision);
   assert.deepEqual(await fingerprints(), originalFingerprints);
@@ -517,7 +517,7 @@ try {
 
   await start(context, secondRevision);
   assert.equal(
-    (await api(context, '/lead-desk-version.json')).commit,
+    (await api(context, '/leadscroll-version.json')).commit,
     secondRevision,
   );
   assert.equal(
@@ -562,7 +562,7 @@ try {
   await command('pnpm', ['run', 'deploy:dry-run']);
   pass('both controlled revisions pass consumer Wrangler deploy --dry-run');
 
-  const installedWorker = join(consumer, '.lead-desk/current/worker.mjs');
+  const installedWorker = join(consumer, '.leadscroll/current/worker.mjs');
   const workerSource = await readFile(installedWorker, 'utf8');
   assert.doesNotMatch(
     workerSource,
@@ -595,17 +595,17 @@ try {
       '--quiet',
       secondRevision,
       '--',
-      'drizzle/0000_reflective_whiplash.sql',
+      'drizzle/0000_leadscroll_baseline.sql',
     ],
     upstream,
   );
   await writeFile(
-    join(upstream, 'drizzle', '0000_reflective_whiplash.sql'),
-    `${await readFile(join(upstream, 'drizzle', '0000_reflective_whiplash.sql'), 'utf8')}\n-- forbidden rewrite\n`,
+    join(upstream, 'drizzle', '0000_leadscroll_baseline.sql'),
+    `${await readFile(join(upstream, 'drizzle', '0000_leadscroll_baseline.sql'), 'utf8')}\n-- forbidden rewrite\n`,
   );
   await command(
     'git',
-    ['add', '--', 'drizzle/0000_reflective_whiplash.sql'],
+    ['add', '--', 'drizzle/0000_leadscroll_baseline.sql'],
     upstream,
   );
   await command(
@@ -622,7 +622,7 @@ try {
     recursive: true,
   });
   await writeFile(
-    join(cleanConsumer, 'lead-desk.json'),
+    join(cleanConsumer, 'leadscroll.json'),
     `${JSON.stringify(pinnedSecond, undefined, 2)}\n`,
   );
   await writeFile(
@@ -633,14 +633,14 @@ try {
   const cleanProtectedPaths = [
     ...protectedPaths,
     'README.md',
-    'lead-desk.json',
+    'leadscroll.json',
   ];
   const cleanFingerprints = await fingerprintsAt(
     cleanConsumer,
     cleanProtectedPaths,
   );
   assert.equal(
-    await inspect(join(cleanConsumer, '.lead-desk/current')),
+    await inspect(join(cleanConsumer, '.leadscroll/current')),
     null,
     'Clean upgrade fixture unexpectedly has generated output',
   );
@@ -656,9 +656,9 @@ try {
     await fingerprintsAt(cleanConsumer, cleanProtectedPaths),
     cleanFingerprints,
   );
-  assert.equal(await inspect(join(cleanConsumer, '.lead-desk/current')), null);
+  assert.equal(await inspect(join(cleanConsumer, '.leadscroll/current')), null);
   assert.equal(
-    JSON.parse(await readFile(join(cleanConsumer, 'lead-desk.json'), 'utf8'))
+    JSON.parse(await readFile(join(cleanConsumer, 'leadscroll.json'), 'utf8'))
       .revision,
     secondRevision,
   );
@@ -708,7 +708,7 @@ try {
   });
   assert.equal(alreadyCurrent.changed, false);
   assert.equal(
-    JSON.parse(await readFile(join(consumer, 'lead-desk.json'), 'utf8'))
+    JSON.parse(await readFile(join(consumer, 'leadscroll.json'), 'utf8'))
       .revision,
     secondRevision,
   );

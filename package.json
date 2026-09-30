@@ -5,7 +5,7 @@
         "description": "Secret used to sign Better Auth session cookies. Generate once per installation with `openssl rand -base64 32`; keep it across redeployments."
       },
       "DB": {
-        "description": "D1 database that stores all Lead Desk data. Name it whatever you like during install - migrations run against the `DB` binding, so renaming the database is safe."
+        "description": "D1 database that stores all LeadScroll data. Name it whatever you like during install - migrations run against the `DB` binding, so renaming the database is safe."
       },
       "SETUP_TOKEN": {
         "description": "Invite token required to create a staff account (at least 32 characters in production). Generate with `openssl rand -hex 32`. Rotate it in the dashboard if it leaks."
@@ -61,7 +61,7 @@
     "node": ">=24.20.0 <25"
   },
   "license": "Apache-2.0",
-  "name": "cloudflare-lead-desk",
+  "name": "leadscroll",
   "packageManager": "pnpm@10.34.5",
   "private": false,
   "scripts": {

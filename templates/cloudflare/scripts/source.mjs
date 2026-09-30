@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 
 export const bootstrapRevision = '8c8f7cdede319c7ab1785a2917c8d0f73fa565ac';
-export const sourceBuildFormat = 'lead-desk-source-build';
+export const sourceBuildFormat = 'leadscroll-source-build';
 export const checksum = (contents) =>
   createHash('sha256').update(contents).digest('hex');
 

@@ -1,4 +1,4 @@
-# Agent Instructions — cloudflare-lead-desk
+# Agent Instructions — leadscroll
 
 Read this before opening a pull request. It is the project-level policy for
 coding agents; the machine-wide `/mnt/data/AGENTS.md` still applies on top.
@@ -32,13 +32,13 @@ The URL is a static string with no way to discover the branch, so substitute the
 branch name by hand — this is the one step that must not be skipped:
 
 ```md
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/ivanbrykov/cloudflare-lead-desk/tree/<BRANCH>/templates/cloudflare)
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/leadscroll/leadscroll/tree/<BRANCH>/templates/cloudflare)
 ```
 
 Replace `<BRANCH>` with the head branch of the PR, for example:
 
 ```md
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/ivanbrykov/cloudflare-lead-desk/tree/feature/single-use-invitations/templates/cloudflare)
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/leadscroll/leadscroll/tree/feature/single-use-invitations/templates/cloudflare)
 ```
 
 Why the PR body and not the repo: the button clones the repo into the
@@ -51,7 +51,7 @@ leaves a stale link behind after every merge.
 The permanent `README.md` installation link points at
 `tree/main/templates/cloudflare`. Cloudflare copies that folder but omits
 `.github/workflows`; source-pin upgrades are manual edits to the copied
-repository's `lead-desk.json`, as documented in its README. PR source previews
+repository's `leadscroll.json`, as documented in its README. PR source previews
 still use the feature-branch folder as shown above. Do not rely on the copied
 repository containing a workflow until its owner installs the small caller from
 the copied README. The reusable implementation lives upstream.
@@ -69,7 +69,7 @@ secrets out of it.
   copied alone to a new repository. Do not use parent workspace imports there.
 - Published SQL migration names and contents are immutable; add new migrations.
 - Ordinary template builds fetch and compile only the full SHA recorded in
-  `lead-desk.json`; only an explicit owner edit may advance that pin.
+  `leadscroll.json`; only an explicit owner edit may advance that pin.
 - Keep Worker/UI/migration build details in the upstream `source:build` command.
   Failed fetches, installs, builds, or validation must block deployment.
 - The installation owner may run the opt-in Upgrade workflow or manually change

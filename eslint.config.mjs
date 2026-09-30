@@ -16,7 +16,7 @@ export default defineConfig(
     '.wrangler',
     '**/pnpm-lock.yaml',
     '.release',
-    '**/.lead-desk',
+    '**/.leadscroll',
   ]),
   ...auto,
   {

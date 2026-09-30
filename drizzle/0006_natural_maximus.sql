@@ -1,1 +1,0 @@
-ALTER TABLE `opportunities` ADD `deleted_at` text;
