@@ -342,9 +342,9 @@ by `id DESC`:
   definition registry, so any key the sender supplies is stored as-is.
 
 `POST /v1/leads` creates a lead manually. At least one of `email`,
-`firstName`, or `lastName` is required (`422 lead_identity_required`), a
-non-empty `name` defaults from the person's name or email, and
-`estimatedValue` must be a non-negative finite number. `PATCH /v1/leads/:id`
+`firstName`, or `lastName` is required (`422 lead_identity_required`),
+`estimatedValue` must be a non-negative finite number, and the display label
+derives from `firstName`/`lastName` with `email` as the fallback. `PATCH /v1/leads/:id`
 updates one lead; `email`, `firstName`, and `lastName` accept `null` to clear.
 Unknown or soft-deleted ids return `404 not_found`.
 

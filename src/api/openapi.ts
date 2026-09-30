@@ -195,7 +195,6 @@ export const openApiSpecification = {
                   estimatedValue: { type: ['number', 'null'] },
                   firstName: { type: ['string', 'null'] },
                   lastName: { type: ['string', 'null'] },
-                  name: { type: 'string' },
                   source: { type: 'string' },
                 },
                 type: 'object',
