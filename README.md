@@ -334,8 +334,8 @@ by `id DESC`:
   ordering above. Omit it for the first page; the final page returns
   `nextCursor: null`. A missing, malformed, or tampered cursor returns
   `422 invalid_cursor`.
-- `query` is a literal substring match on name or email (`%` and `_` match
-  literally) and composes with pagination.
+- `query` is a literal substring match on first name, last name, or email
+  (`%` and `_` match literally) and composes with pagination.
 - Items carry a `duplicateCount` hint: how many other live leads share the
   normalized email, computed for the whole page in one grouped query.
 - Custom fields live in each lead's `customFields` JSON document; there is no
