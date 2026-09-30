@@ -274,6 +274,9 @@ The CRM serves a small, dependency-free SDK at `/sdk/v1.js`. Give a form a
   naming the fields, and the form dispatches a bubbling `leadscroll:skipped`
   event whose `detail.fields` is a list of `{ name, reason }` (names only, never
   values) — useful for surfacing a forgotten marker in monitoring.
+- Skipped fields are also recorded on the lead: the submission carries
+  `skippedFields` (names and reasons only), and the lead detail shows a notice,
+  so the form owner sees a forgotten marker without wiring up a listener.
 - A failed submission keeps its idempotency key: resubmitting an unchanged form
   retries the same submission instead of creating a duplicate, and overlapping
   submits are ignored while one is pending.
@@ -283,6 +286,11 @@ The CRM serves a small, dependency-free SDK at `/sdk/v1.js`. Give a form a
 Send `Content-Type: application/json`. Every intake body is byte-limited before
 decoding; unsupported or missing media types return `415 unsupported_media_type`
 when within the limit, and oversized bodies return 413 regardless of media type.
+
+`skippedFields` is optional browser-SDK diagnostics: a bounded array of
+`{ name, reason }` entries (`reason` is `sensitive` or `unmarked`) naming fields
+the SDK refused to send. Values are never included; the lead detail surfaces the
+list.
 
 
 `POST /v1/intakes` and `POST /v1/public/intakes/:token` share the size limit:

@@ -15,6 +15,7 @@ import {
   type CreateLeadInput,
   type IntakeInput,
   normalizeEmail,
+  type SkippedField,
   type UpdateLeadInput,
 } from '@/domain/schemas';
 import {
@@ -97,6 +98,7 @@ export type LeadRecord = {
   lastName: null | string;
   origin: null | string;
   rawPayload?: null | Record<string, unknown>;
+  skippedFields: null | SkippedField[];
   source: string;
   tokenId: null | string;
   tokenName?: null | string;
@@ -177,6 +179,7 @@ const toLead = (
   id: row.id,
   lastName: row.lastName,
   origin: row.origin,
+  skippedFields: row.skippedFields ?? null,
   source: row.source,
   tokenId: row.tokenId,
   updatedAt: row.updatedAt,
@@ -220,6 +223,7 @@ export const listLeads = async (
       id: leads.id,
       lastName: leads.lastName,
       origin: leads.origin,
+      skippedFields: leads.skippedFields,
       source: leads.source,
       tokenId: leads.tokenId,
       updatedAt: leads.updatedAt,
@@ -854,9 +858,9 @@ export const createLeadAtomically = async (
     environment.DB.prepare(
       `INSERT INTO leads (
           id, workspace_id, email, first_name, last_name,
-          source, estimated_value, custom_fields, raw_payload,
+          source, estimated_value, custom_fields, raw_payload, skipped_fields,
           origin, token_id, created_at, updated_at, deleted_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
     ).bind(
       leadId,
       DEFAULT_WORKSPACE_ID,
@@ -867,6 +871,7 @@ export const createLeadAtomically = async (
       input.estimatedValue ?? null,
       JSON.stringify(input.customFields ?? {}),
       rawPayload === undefined ? null : JSON.stringify(rawPayload),
+      input.skippedFields ? JSON.stringify(input.skippedFields) : null,
       provenance?.origin ?? null,
       provenance?.tokenId ?? null,
       timestamp,
@@ -933,6 +938,7 @@ export const createLead = async (
     lastName,
     origin: null,
     rawPayload: null,
+    skippedFields: null,
     source: input.source ?? 'Manual entry',
     tokenId: null,
     updatedAt: timestamp,

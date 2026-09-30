@@ -1,0 +1,1 @@
+ALTER TABLE `leads` ADD `skipped_fields` text;

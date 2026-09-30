@@ -164,6 +164,10 @@ test('a public token creates a lead with provenance and no session', async () =>
         email: 'browser@example.test',
         firstName: 'Browser',
         name: 'Pricing form',
+        skippedFields: [
+          { name: 'company', reason: 'unmarked' },
+          { name: 'password', reason: 'sensitive' },
+        ],
         source: 'website_form',
       },
       headers: {
@@ -176,7 +180,7 @@ test('a public token creates a lead with provenance and no session', async () =>
 
     const row = await fx.db
       .prepare(
-        'SELECT custom_fields, id, origin, raw_payload, token_id FROM leads WHERE email = ?',
+        'SELECT custom_fields, id, origin, raw_payload, skipped_fields, token_id FROM leads WHERE email = ?',
       )
       .bind('browser@example.test')
       .first<{
@@ -184,6 +188,7 @@ test('a public token creates a lead with provenance and no session', async () =>
         id: string;
         origin: string;
         raw_payload: string;
+        skipped_fields: string;
         token_id: string;
       }>();
     expect(row).toMatchObject({
@@ -199,6 +204,10 @@ test('a public token creates a lead with provenance and no session', async () =>
       name: 'Pricing form',
       source: 'website_form',
     });
+    expect(JSON.parse(String(row?.skipped_fields))).toEqual([
+      { name: 'company', reason: 'unmarked' },
+      { name: 'password', reason: 'sensitive' },
+    ]);
 
     const detail = await fx.request(`/v1/leads/${String(row?.id)}`, {
       method: 'GET',
@@ -213,6 +222,10 @@ test('a public token creates a lead with provenance and no session', async () =>
     expect(detailJson.data['rawPayload']).toMatchObject({
       name: 'Pricing form',
     });
+    expect(detailJson.data['skippedFields']).toEqual([
+      { name: 'company', reason: 'unmarked' },
+      { name: 'password', reason: 'sensitive' },
+    ]);
 
     // The public token cannot call the private intake route.
     const privateRoute = await fx.request('/v1/intakes', {

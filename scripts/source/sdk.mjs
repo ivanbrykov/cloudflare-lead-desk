@@ -90,6 +90,7 @@ try {
       customFields: { company: 'Acme' },
       email: 'alex@example.test',
       firstName: 'Alex',
+      skippedFields: [{ name: 'unmarked', reason: 'unmarked' }],
       source: 'test_form',
     });
     assert.ok(!JSON.stringify(requests[0].body).includes('secret-value'));
@@ -137,6 +138,13 @@ try {
     assert.deepEqual(requests[0].body, {
       customFields: { phone: '+1 555 0100', street: '1 Main St' },
       email: 'alex@example.test',
+      skippedFields: [
+        { name: 'password', reason: 'sensitive' },
+        { name: 'card', reason: 'sensitive' },
+        { name: 'cardExpiry', reason: 'sensitive' },
+        { name: 'newPassword', reason: 'sensitive' },
+        { name: 'outside', reason: 'unmarked' },
+      ],
       source: 'website_form',
     });
     const skippedFields = Object.fromEntries(

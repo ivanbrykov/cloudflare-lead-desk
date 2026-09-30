@@ -223,6 +223,10 @@
       }
     }
 
+    if (skipped.size > 0) {
+      payload.skippedFields = [...skipped.values()];
+    }
+
     reportSkipped(form, [...skipped.values()]);
 
     if (!payload.source) {

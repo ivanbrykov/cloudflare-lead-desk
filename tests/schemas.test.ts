@@ -13,6 +13,36 @@ describe('intake contract', () => {
     expect(input.firstName).toBe('Alex');
   });
 
+  test('accepts bounded skipped-field diagnostics and rejects bad ones', async () => {
+    const input = await Schema.decodeUnknownPromise(IntakeRequest)({
+      email: 'alex@example.com',
+      skippedFields: [{ name: 'company', reason: 'unmarked' }],
+      source: 'website_form',
+    });
+    expect(input.skippedFields).toEqual([
+      { name: 'company', reason: 'unmarked' },
+    ]);
+
+    await expect(
+      Schema.decodeUnknownPromise(IntakeRequest)({
+        email: 'alex@example.com',
+        skippedFields: [{ name: 'company', reason: 'guessed' }],
+        source: 'website_form',
+      }),
+    ).rejects.toThrow();
+
+    await expect(
+      Schema.decodeUnknownPromise(IntakeRequest)({
+        email: 'alex@example.com',
+        skippedFields: Array.from({ length: 51 }, (_, index) => ({
+          name: `field${String(index)}`,
+          reason: 'unmarked',
+        })),
+        source: 'website_form',
+      }),
+    ).rejects.toThrow();
+  });
+
   test('rejects a missing source and invalid email', async () => {
     await expect(
       Schema.decodeUnknownPromise(IntakeRequest)({
