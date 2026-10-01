@@ -176,6 +176,40 @@ try {
   }
 
   {
+    // Diagnostics must not break the intake contract: cap the transmitted list
+    // while keeping the complete set in the local event.
+    const longName = 'l'.repeat(130);
+    const extraUnmarked = Array.from(
+      { length: 50 },
+      (_, index) => `<input name="u${String(index)}" value="x">`,
+    ).join('');
+    const { page, requests } = await start(
+      browser,
+      form(
+        `<input name="${longName}" value="x">${extraUnmarked}<input name="email" value="bounds@example.test" data-leadscroll-collect>`,
+      ),
+    );
+    await page.evaluate(() => {
+      window.skippedEvents = [];
+      document.addEventListener('leadscroll:skipped', (event) => {
+        window.skippedEvents.push(event.detail);
+      });
+    });
+    await submit(page);
+    assert.equal(requests.length, 1);
+    const transmitted = requests[0].body.skippedFields;
+    assert.equal(transmitted.length, 50);
+    assert.equal(transmitted[0].name.length, 120);
+    assert.equal(transmitted[0].name, longName.slice(0, 120));
+    const localFields = (await page.evaluate(() => window.skippedEvents)).at(
+      -1,
+    ).fields;
+    assert.equal(localFields.length, 51);
+    await page.close();
+    pass('skipped diagnostics are capped for the request but complete locally');
+  }
+
+  {
     const { page, requests } = await start(
       browser,
       form(

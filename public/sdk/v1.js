@@ -75,6 +75,11 @@
 
   const BUTTON_INPUTS = new Set(['button', 'file', 'image', 'reset', 'submit']);
 
+  // Intake contract bounds for transmitted diagnostics. The console and the
+  // skipped event keep the complete list; only the request is capped.
+  const MAX_SKIPPED_FIELDS = 50;
+  const MAX_SKIPPED_NAME_LENGTH = 120;
+
   const newIdempotencyKey = () =>
     window.crypto && typeof window.crypto.randomUUID === 'function'
       ? `sdk-${window.crypto.randomUUID()}`
@@ -224,7 +229,12 @@
     }
 
     if (skipped.size > 0) {
-      payload.skippedFields = [...skipped.values()];
+      payload.skippedFields = [...skipped.values()]
+        .slice(0, MAX_SKIPPED_FIELDS)
+        .map((entry) => ({
+          name: entry.name.slice(0, MAX_SKIPPED_NAME_LENGTH),
+          reason: entry.reason,
+        }));
     }
 
     reportSkipped(form, [...skipped.values()]);

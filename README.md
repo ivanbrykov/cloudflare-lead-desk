@@ -277,6 +277,8 @@ The CRM serves a small, dependency-free SDK at `/sdk/v1.js`. Give a form a
 - Skipped fields are also recorded on the lead: the submission carries
   `skippedFields` (names and reasons only), and the lead detail shows a notice,
   so the form owner sees a forgotten marker without wiring up a listener.
+  Transmitted diagnostics are capped at 50 names of 120 characters (the intake
+  contract); the console warning and the event keep the complete list.
 - A failed submission keeps its idempotency key: resubmitting an unchanged form
   retries the same submission instead of creating a duplicate, and overlapping
   submits are ignored while one is pending.

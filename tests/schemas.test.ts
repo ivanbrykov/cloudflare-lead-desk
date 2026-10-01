@@ -41,6 +41,14 @@ describe('intake contract', () => {
         source: 'website_form',
       }),
     ).rejects.toThrow();
+
+    await expect(
+      Schema.decodeUnknownPromise(IntakeRequest)({
+        email: 'alex@example.com',
+        skippedFields: [{ name: 'x'.repeat(121), reason: 'unmarked' }],
+        source: 'website_form',
+      }),
+    ).rejects.toThrow();
   });
 
   test('rejects a missing source and invalid email', async () => {
