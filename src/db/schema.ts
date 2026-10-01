@@ -39,6 +39,9 @@ export const leads = sqliteTable(
     rawPayload: text('raw_payload', { mode: 'json' }).$type<
       Record<string, unknown>
     >(),
+    skippedFields: text('skipped_fields', { mode: 'json' }).$type<
+      Array<{ name: string; reason: 'sensitive' | 'unmarked' }>
+    >(),
     source: text('source').notNull(),
     tokenId: text('token_id'),
     updatedAt: timestampMs('updated_at').notNull(),

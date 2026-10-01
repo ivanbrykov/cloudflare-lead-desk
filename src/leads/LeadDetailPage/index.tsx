@@ -220,6 +220,20 @@ export const LeadDetailPage = ({ id }: { readonly id: string }) => {
               </Button>
             </div>
           </form>
+          {record.skippedFields && record.skippedFields.length > 0 && (
+            <p className="mt-5 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-200">
+              Received with {record.skippedFields.length} field
+              {record.skippedFields.length === 1 ? '' : 's'} skipped by the
+              browser SDK:{' '}
+              {record.skippedFields
+                .map(
+                  (field) =>
+                    `${field.name} (${field.reason === 'sensitive' ? 'sensitive' : 'not marked'})`,
+                )
+                .join(', ')}
+              . Their values were never sent.
+            </p>
+          )}
           <dl className="mt-5 grid gap-2 text-sm">
             {record.tokenId !== null && (
               <div className="flex justify-between gap-4">

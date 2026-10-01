@@ -24,6 +24,17 @@ export type CustomFieldValues = Schema.Schema.Type<
   typeof CustomFieldValuesSchema
 >;
 
+// SDK diagnostics: names of fields the browser SDK refused to send, and why.
+// Values are never included. Bounded because the sender controls the list.
+export const SkippedFieldSchema = Schema.Struct({
+  name: NonEmptyString.pipe(Schema.maxLength(120)),
+  reason: Schema.Literal('sensitive', 'unmarked'),
+});
+export const SkippedFieldsSchema = Schema.Array(SkippedFieldSchema).pipe(
+  Schema.maxItems(50),
+);
+export type SkippedField = Schema.Schema.Type<typeof SkippedFieldSchema>;
+
 // Intake is the flat lead payload: one submission creates one lead. The old
 // contact + opportunity shape is gone; `customFields` is stored as a JSON
 // document on the lead with no definition registry.
@@ -35,6 +46,7 @@ export const IntakeRequest = Schema.Struct({
   ),
   firstName: Schema.optional(NonEmptyString),
   lastName: Schema.optional(NonEmptyString),
+  skippedFields: Schema.optional(SkippedFieldsSchema),
   source: NonEmptyString,
 });
 export type IntakeInput = Schema.Schema.Type<typeof IntakeRequest>;
@@ -61,6 +73,7 @@ export const LeadViewResponse = Schema.Struct({
   lastName: Schema.NullOr(Schema.String),
   origin: Schema.NullOr(Schema.String),
   rawPayload: Schema.optional(Schema.NullOr(CustomFieldValuesSchema)),
+  skippedFields: Schema.NullOr(SkippedFieldsSchema),
   source: NonEmptyString,
   tokenId: Schema.NullOr(Schema.String),
   tokenName: Schema.optional(Schema.NullOr(Schema.String)),

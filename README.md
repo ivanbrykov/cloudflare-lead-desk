@@ -241,34 +241,58 @@ The CRM serves a small, dependency-free SDK at `/sdk/v1.js`. Give a form a
 
 ```html
 <form data-leadscroll="lsc_pub_…">
-  <input name="email" type="email" required>
-  <input name="name" placeholder="How can we help?">
-  <input name="plan" value="pro"> <!-- unknown names become custom fields -->
+  <input name="email" type="email" data-leadscroll-collect required>
+  <input name="company" data-leadscroll-collect>
+  <input name="plan" data-leadscroll-collect value="pro">
+  <input name="password" type="password"> <!-- unmarked: never sent -->
   <button type="submit">Send</button>
   <p data-leadscroll-status></p>
 </form>
 <script src="https://crm.example.com/sdk/v1.js" defer></script>
 ```
 
+- **Only marked fields are sent.** Add `data-leadscroll-collect` to each
+  control, or to an ancestor such as a `<fieldset>` to mark everything inside.
+  Unmarked named controls are never transmitted, and the SDK logs a console
+  warning listing them.
 - `email`, `firstName`/`first_name`/`first-name`, `lastName`, and `source`
-  map to lead fields; every other named input — including `name` and `title` —
-  lands in `customFields`.
+  map to lead fields; every other marked input lands in `customFields`, and
+  repeated names (checkbox groups, multi-selects) become arrays.
 - The endpoint origin comes from the script's own `src`, so the form can live
   on any site. No cookies or credentials are sent.
 - Attribute overrides: `data-leadscroll-source`, `data-leadscroll-success`,
   `data-leadscroll-error`, `data-leadscroll-reset="false"`.
 - Status text renders into `[data-leadscroll-status]`; the form also dispatches
   `leadscroll:success` and `leadscroll:error` custom events.
-- `window.LeadScroll.submit(token, data)` posts programmatically, and
-  `window.LeadScroll.init(root)` binds forms added after load (for example after
-  client-side navigation).
-- Password-, card-, and secret-looking fields are never collected.
+- `window.LeadScroll.submit(token, data, { idempotencyKey })` posts
+  programmatically, and `window.LeadScroll.init(root)` binds forms added after
+  load (for example after client-side navigation).
+- Password inputs and credential/payment autocomplete fields (`cc-*`,
+  `current-password`, `new-password`, `one-time-code`) are never sent, even when
+  marked, and names starting with `_` are skipped by convention.
+- Every skipped field is reported: the browser console gets a one-time warning
+  naming the fields, and the form dispatches a bubbling `leadscroll:skipped`
+  event whose `detail.fields` is a list of `{ name, reason }` (names only, never
+  values) — useful for surfacing a forgotten marker in monitoring.
+- Skipped fields are also recorded on the lead: the submission carries
+  `skippedFields` (names and reasons only), and the lead detail shows a notice,
+  so the form owner sees a forgotten marker without wiring up a listener.
+  Transmitted diagnostics are capped at 50 names of 120 characters (the intake
+  contract); the console warning and the event keep the complete list.
+- A failed submission keeps its idempotency key: resubmitting an unchanged form
+  retries the same submission instead of creating a duplicate, and overlapping
+  submits are ignored while one is pending.
 
 ### Intake idempotency contract
 
 Send `Content-Type: application/json`. Every intake body is byte-limited before
 decoding; unsupported or missing media types return `415 unsupported_media_type`
 when within the limit, and oversized bodies return 413 regardless of media type.
+
+`skippedFields` is optional browser-SDK diagnostics: a bounded array of
+`{ name, reason }` entries (`reason` is `sensitive` or `unmarked`) naming fields
+the SDK refused to send. Values are never included; the lead detail surfaces the
+list.
 
 
 `POST /v1/intakes` and `POST /v1/public/intakes/:token` share the size limit:
