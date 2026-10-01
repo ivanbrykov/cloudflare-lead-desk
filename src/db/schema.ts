@@ -157,6 +157,17 @@ export const registrationClaims = sqliteTable('registration_claims', {
 // Better Auth CLI into ./auth-schema.ts; see src/auth/cli.ts.
 export * from './auth-schema';
 
+// Better Auth's database-backed rate limiter (rateLimit.storage: 'database' in
+// src/auth/index.ts) keeps counters in D1, so the limit is shared across
+// Worker isolates instead of per-isolate memory. Columns follow the Better Auth
+// rateLimit model: key, count, lastRequest.
+export const rateLimit = sqliteTable('rate_limit', {
+  count: integer('count').notNull(),
+  id: text('id').primaryKey(),
+  key: text('key').notNull().unique(),
+  lastRequest: integer('last_request').notNull(),
+});
+
 export const idempotencyKeys = sqliteTable(
   'idempotency_keys',
   {
