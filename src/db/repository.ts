@@ -68,13 +68,6 @@ const id = (): string => {
 
 const getDatabase = (environment: Env) => drizzle(environment.DB);
 
-const escapeLike = (value: string) =>
-  value.replaceAll('%', '\\%').replaceAll('_', '\\_');
-
-/**
- * Literal substring match on first name, last name, or email; `%` and `_`
- * in the query are escaped so they never act as LIKE wildcards.
- */
 export type LeadPage = {
   leads: LeadRecord[];
   nextCursor: null | string;
@@ -107,12 +100,15 @@ export type LeadRecord = {
 };
 
 /**
- * Literal substring match on the email or first/last name; `%` and `_` in the
- * query are escaped so they never act as LIKE wildcards.
+ * Literal, case-insensitive substring match on the email or first/last name.
+ * `instr` is used instead of LIKE because D1 caps LIKE/GLOB patterns at 50
+ * bytes — an ordinary search string exceeds that once wrapped — and because
+ * it removes wildcard escaping entirely, so a literal backslash, `%`, or `_`
+ * matches itself.
  */
 const leadSearchPredicate = (query: string) => {
-  const pattern = `%${escapeLike(query)}%`;
-  return sql`(${leads.email} LIKE ${pattern} ESCAPE '\\' OR ${leads.firstName} LIKE ${pattern} ESCAPE '\\' OR ${leads.lastName} LIKE ${pattern} ESCAPE '\\')`;
+  const needle = sql`lower(${query})`;
+  return sql`(instr(lower(${leads.email}), ${needle}) > 0 OR instr(lower(${leads.firstName}), ${needle}) > 0 OR instr(lower(${leads.lastName}), ${needle}) > 0)`;
 };
 
 /**
