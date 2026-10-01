@@ -23,8 +23,8 @@ import {
   asc,
   desc,
   eq,
+  getTableColumns,
   gt,
-  inArray,
   isNotNull,
   isNull,
   or,
@@ -116,42 +116,21 @@ const leadSearchPredicate = (query: string) => {
 };
 
 /**
- * How many live leads share each normalized email on the requested page. One
- * grouped query per page; the duplicate hint is intentionally non-authoritative
- * (no uniqueness constraint, per the leads-only design).
+ * Count of live leads that share the row's normalized email, including the row
+ * itself. Computed in the page/detail query with the leads_email_idx index, so
+ * list responses need no second round trip and bind no variable-length email
+ * list (D1 caps bound parameters per statement). The outer columns are
+ * qualified by hand because Drizzle renders a single-table FROM without a table
+ * prefix in a select projection. `toLead` subtracts the row itself to produce
+ * the duplicate hint.
  */
-const duplicateCountsForEmails = async (
-  environment: Env,
-  pageEmails: Array<null | string>,
-): Promise<Map<string, number>> => {
-  const emails = [
-    ...new Set(
-      pageEmails.filter((email): email is string => typeof email === 'string'),
-    ),
-  ];
-  if (emails.length === 0) {
-    return new Map();
-  }
-
-  const rows = await getDatabase(environment)
-    .select({ count: sql<number>`count(*)`, email: leads.email })
-    .from(leads)
-    .where(
-      and(
-        eq(leads.workspaceId, DEFAULT_WORKSPACE_ID),
-        isNull(leads.deletedAt),
-        inArray(leads.email, emails),
-      ),
-    )
-    .groupBy(leads.email);
-  return new Map(
-    rows
-      .filter(
-        (row): row is { count: number; email: string } => row.email !== null,
-      )
-      .map((row) => [row.email, Number(row.count)]),
-  );
-};
+const duplicateCountExpression = sql<number>`(
+  SELECT count(*) FROM leads AS duplicate
+  WHERE duplicate.workspace_id = leads.workspace_id
+    AND duplicate.deleted_at IS NULL
+    AND duplicate.email IS NOT NULL
+    AND duplicate.email = leads.email
+)`;
 
 type LeadListRow = Omit<
   typeof leads.$inferSelect,
@@ -159,8 +138,7 @@ type LeadListRow = Omit<
 >;
 
 const toLead = (
-  row: LeadListRow,
-  duplicateCounts: Map<string, number>,
+  row: LeadListRow & { duplicateCount: number },
   detail: {
     rawPayload?: null | Record<string, unknown>;
     tokenName?: null | string;
@@ -170,9 +148,7 @@ const toLead = (
   createdAt: row.createdAt,
   customFields: row.customFields,
   deletedAt: row.deletedAt,
-  duplicateCount: row.email
-    ? Math.max(0, (duplicateCounts.get(row.email) ?? 1) - 1)
-    : 0,
+  duplicateCount: row.email ? Math.max(0, Number(row.duplicateCount) - 1) : 0,
   email: row.email,
   estimatedValue: row.estimatedValue,
   firstName: row.firstName,
@@ -217,6 +193,7 @@ export const listLeads = async (
       createdAt: leads.createdAt,
       customFields: leads.customFields,
       deletedAt: leads.deletedAt,
+      duplicateCount: duplicateCountExpression,
       email: leads.email,
       estimatedValue: leads.estimatedValue,
       firstName: leads.firstName,
@@ -234,13 +211,9 @@ export const listLeads = async (
     .limit(limit + 1);
   const hasNextPage = rows.length > limit;
   const pageRows = hasNextPage ? rows.slice(0, limit) : rows;
-  const duplicateCounts = await duplicateCountsForEmails(
-    environment,
-    pageRows.map((row) => row.email),
-  );
   const last = pageRows.at(-1);
   return {
-    leads: pageRows.map((row) => toLead(row, duplicateCounts)),
+    leads: pageRows.map((row) => toLead(row)),
     nextCursor:
       hasNextPage && last
         ? encodeKeysetCursor({
@@ -256,7 +229,10 @@ export const getLead = async (
   leadId: string,
 ): Promise<LeadRecord | null> => {
   const row = await getDatabase(environment)
-    .select()
+    .select({
+      ...getTableColumns(leads),
+      duplicateCount: duplicateCountExpression,
+    })
     .from(leads)
     .where(
       and(eq(leads.workspaceId, DEFAULT_WORKSPACE_ID), eq(leads.id, leadId)),
@@ -266,9 +242,6 @@ export const getLead = async (
     return null;
   }
 
-  const duplicateCounts = await duplicateCountsForEmails(environment, [
-    row.email,
-  ]);
   const token = row.tokenId
     ? await getDatabase(environment)
         .select({ name: apiTokens.name, type: apiTokens.type })
@@ -276,7 +249,7 @@ export const getLead = async (
         .where(eq(apiTokens.id, row.tokenId))
         .get()
     : undefined;
-  return toLead(row, duplicateCounts, {
+  return toLead(row, {
     rawPayload: row.rawPayload,
     tokenName: token?.name ?? null,
     tokenType: token?.type ?? null,
@@ -945,7 +918,7 @@ export const createLead = async (
     workspaceId: DEFAULT_WORKSPACE_ID,
   };
   await getDatabase(environment).insert(leads).values(record);
-  return toLead(record, new Map());
+  return toLead({ ...record, duplicateCount: 0 });
 };
 
 export const updateLead = async (
@@ -1001,6 +974,14 @@ export const softDeleteLeads = async (
   ids: readonly string[],
 ): Promise<number> => {
   const uniqueIds = [...new Set(ids)];
+  if (uniqueIds.length === 0) {
+    return 0;
+  }
+
+  // One statement stays atomic without a batch, and the id list travels as a
+  // single JSON array parameter, so no variable-length binding can hit D1's
+  // 100-parameter cap. json_each is the documented D1 pattern for IN queries:
+  // https://developers.cloudflare.com/d1/sql-api/query-json/#expand-arrays-for-in-queries
   const result = await getDatabase(environment)
     .update(leads)
     .set({ deletedAt: now() })
@@ -1008,7 +989,7 @@ export const softDeleteLeads = async (
       and(
         eq(leads.workspaceId, DEFAULT_WORKSPACE_ID),
         isNull(leads.deletedAt),
-        inArray(leads.id, uniqueIds),
+        sql`${leads.id} IN (SELECT value FROM json_each(${JSON.stringify(uniqueIds)}))`,
       ),
     )
     .run();
