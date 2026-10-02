@@ -186,3 +186,28 @@ test('a blocked client is short-circuited without the database limiter', async (
     await fx.dispose();
   }
 });
+
+test('a blocked IPv6 client covers its /64 subnet', async () => {
+  const fx = await startFixture();
+  try {
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      await fx.signIn('2001:db8:1:2::1');
+    }
+
+    expect((await fx.signIn('2001:db8:1:2::1')).status).toBe(429);
+
+    // With the counter row gone, a negative-cache miss would let the database
+    // limiter allow this address (401). Better Auth groups IPv6 by /64, so the
+    // marker must cover another address in the same subnet while a different
+    // subnet stays free.
+    await fx.db.prepare('DELETE FROM rate_limit').run();
+
+    const sameSubnet = await fx.signIn('2001:db8:1:2::9');
+    expect(sameSubnet.status).toBe(429);
+
+    const otherSubnet = await fx.signIn('2001:db8:1:3::9');
+    expect(otherSubnet.status).toBe(401);
+  } finally {
+    await fx.dispose();
+  }
+});

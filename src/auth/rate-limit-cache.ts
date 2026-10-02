@@ -26,8 +26,18 @@ const FALLBACK_RETRY_SECONDS = 10;
 const blockedUntil = new Map<string, number>();
 let blockCache: null | Promise<Cache> = null;
 
+const openBlockCacheOnce = async (): Promise<Cache> => {
+  try {
+    return await caches.open(CACHE_NAME);
+  } catch (error) {
+    // A failed open must not poison every later request in this isolate.
+    blockCache = null;
+    throw error;
+  }
+};
+
 const openBlockCache = (): Promise<Cache> => {
-  blockCache ??= caches.open(CACHE_NAME);
+  blockCache ??= openBlockCacheOnce();
   return blockCache;
 };
 
@@ -52,10 +62,33 @@ const prune = (now: number): void => {
   }
 };
 
+/**
+ * The first 64 bits of an IPv6 address as a stable group key.
+ */
+const ipv6Subnet = (address: string): string => {
+  const [head = '', tail = ''] = address.split('::');
+  const headGroups = head === '' ? [] : head.split(':');
+  const tailGroups = tail === '' ? [] : tail.split(':');
+  const zeros = Array.from(
+    { length: Math.max(0, 8 - headGroups.length - tailGroups.length) },
+    () => '0',
+  );
+  return [...headGroups, ...zeros, ...tailGroups].slice(0, 4).join(':');
+};
+
+const normalizeClientIp = (address: string): string => {
+  const value = address.split('%')[0]?.toLowerCase() ?? address;
+  return value.includes(':') ? ipv6Subnet(value) : value;
+};
+
 const contactKey = (request: Request, path: string): string => {
   // Mirrors Better Auth's keying: the trusted edge client address, or its
-  // shared fallback for requests that never carried one.
-  const clientIp = request.headers.get('cf-connecting-ip') ?? 'no-trusted-ip';
+  // shared fallback for requests that never carried one. IPv6 clients are
+  // grouped by /64, matching Better Auth's default `ipv6Subnet`, so another
+  // address in a blocked subnet still hits this marker.
+  const header = request.headers.get('cf-connecting-ip');
+  const clientIp =
+    header === null ? 'no-trusted-ip' : normalizeClientIp(header);
   return `${clientIp}:${path}`;
 };
 
