@@ -1,8 +1,10 @@
 import { Button } from './components/ui/Button';
 import { Dialog } from './components/ui/Dialog';
+import { Field } from './components/ui/Field';
 import { LeadDetailPage } from './leads/LeadDetailPage';
 import { LeadsPage } from './leads/LeadsPage';
 import { signIn, signOut, signUp, useSession } from './lib/auth-client';
+import { isFutureLocalDateTime, toLocalInputValue } from './lib/datetime';
 import { request } from './lib/http';
 import { quietFetch } from './lib/quiet-fetch';
 import {
@@ -11,6 +13,11 @@ import {
   type SignUpFailure,
 } from './lib/registration-flow';
 import { cn } from './lib/styles';
+import {
+  emptyTokenFormValues,
+  toCreateTokenInput,
+  type TokenFormValues,
+} from './lib/tokenFormValues';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Copy,
@@ -23,6 +30,7 @@ import {
   Users,
 } from 'lucide-react';
 import { useReducer, useRef, useState } from 'react';
+import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
 import { Link, Route, Switch, useLocation } from 'wouter';
 
@@ -200,13 +208,6 @@ const inviteStatus = (
   return 'active';
 };
 
-// datetime-local inputs only carry local wall-clock time, so shift the
-// instant into local parts before handing it to the input element.
-const toLocalInputValue = (date: Date) =>
-  new Date(date.getTime() - date.getTimezoneOffset() * 60_000)
-    .toISOString()
-    .slice(0, 16);
-
 const copyToClipboard = async (value: string, message = 'Copied') => {
   await navigator.clipboard.writeText(value);
   toast.success(message);
@@ -268,25 +269,27 @@ const CreateTokenDialog = ({
 }) => {
   const queryClient = useQueryClient();
   const [copyFailed, setCopyFailed] = useState(false);
-  const [formError, setFormError] = useState<null | string>(null);
-  const [name, setName] = useState('');
   const [rawToken, setRawToken] = useState<null | string>(null);
-  const [tokenType, setTokenType] = useState<'api' | 'browser'>('api');
-  // The parent remounts this dialog (via its key) on every open, so state is
-  // always fresh: empty form, 90-day default matching the backend, no raw
+  // The parent remounts this dialog (via its key) on every open, so the form
+  // is always fresh: empty name, 90-day default matching the backend, no raw
   // token, and an idle create mutation.
-  const [expiration, setExpiration] = useState(defaultExpiration);
-  const [neverExpires, setNeverExpires] = useState(false);
+  const form = useForm<TokenFormValues>({
+    defaultValues: emptyTokenFormValues(defaultExpiration),
+    mode: 'onTouched',
+  });
+  const errors = form.formState.errors;
+  const name = form.watch('name');
+  const neverExpires = form.watch('neverExpires');
+  const tokenType = form.watch('type');
   const create = useMutation({
-    mutationFn: (input: { expiresAt?: null | string; name: string }) =>
+    mutationFn: (values: TokenFormValues) =>
       request<Token & { token: string }>('/v1/tokens', {
-        body: JSON.stringify({ ...input, type: tokenType }),
+        body: JSON.stringify(toCreateTokenInput(values)),
         method: 'POST',
       }),
     onSuccess: (created) => {
       // Keep the dialog open: the raw token is shown once and must stay
       // visible until the staff member explicitly dismisses it.
-      setFormError(null);
       setRawToken(created.token);
       queryClient.invalidateQueries({ queryKey: ['tokens'] });
     },
@@ -301,33 +304,6 @@ const CreateTokenDialog = ({
     }
 
     onOpenChange(value);
-  };
-
-  const submit = () => {
-    const trimmedName = name.trim();
-    if (!trimmedName) {
-      setFormError('Enter a token name.');
-      return;
-    }
-
-    // The input value is local wall-clock time; new Date parses it as local
-    // time and toISOString converts it to the UTC ISO string the API expects.
-    const parsedExpiration =
-      neverExpires || !expiration ? undefined : new Date(expiration);
-    if (
-      parsedExpiration &&
-      (!Number.isFinite(parsedExpiration.getTime()) ||
-        parsedExpiration.getTime() <= Date.now())
-    ) {
-      setFormError('Expiration must be in the future.');
-      return;
-    }
-
-    setFormError(null);
-    create.mutate({
-      expiresAt: neverExpires ? null : parsedExpiration?.toISOString(),
-      name: trimmedName,
-    });
   };
 
   const copyToken = async () => {
@@ -385,30 +361,24 @@ const CreateTokenDialog = ({
       ) : (
         <form
           className="grid gap-4"
-          onSubmit={(event) => {
-            event.preventDefault();
-            submit();
-          }}
+          onSubmit={form.handleSubmit((values) => {
+            create.mutate(values);
+          })}
         >
-          <label className="grid gap-1 text-sm text-slate-300">
-            Token name
+          <Field
+            error={errors.name?.message}
+            label="Token name"
+          >
             <input
-              onChange={(event) => setName(event.target.value)}
+              aria-invalid={errors.name ? true : undefined}
               placeholder="Website form intake"
-              value={name}
+              {...form.register('name', { required: 'Enter a token name.' })}
             />
-          </label>
+          </Field>
           <div className="grid gap-1">
             <label className="grid gap-1 text-sm text-slate-300">
               Token type
-              <select
-                onChange={(event) =>
-                  setTokenType(
-                    event.target.value === 'browser' ? 'browser' : 'api',
-                  )
-                }
-                value={tokenType}
-              >
+              <select {...form.register('type')}>
                 <option value="api">API — server integrations</option>
                 <option value="browser">Browser — website forms</option>
               </select>
@@ -422,14 +392,22 @@ const CreateTokenDialog = ({
           <div className="grid gap-1">
             {!neverExpires && (
               <>
-                <label className="grid gap-1 text-sm text-slate-300">
-                  Expiration
+                <Field
+                  error={errors.expiration?.message}
+                  label="Expiration"
+                >
                   <input
-                    onChange={(event) => setExpiration(event.target.value)}
+                    aria-invalid={errors.expiration ? true : undefined}
                     type="datetime-local"
-                    value={expiration}
+                    {...form.register('expiration', {
+                      validate: (value) =>
+                        neverExpires ||
+                        value === '' ||
+                        isFutureLocalDateTime(value) ||
+                        'Expiration must be in the future.',
+                    })}
                   />
-                </label>
+                </Field>
                 <p className="text-xs text-slate-500">
                   Local time ({localTimezoneLabel()})
                 </p>
@@ -437,14 +415,12 @@ const CreateTokenDialog = ({
             )}
             <label className="flex items-center gap-2 text-xs text-slate-400">
               <input
-                checked={neverExpires}
-                onChange={(event) => setNeverExpires(event.target.checked)}
                 type="checkbox"
+                {...form.register('neverExpires')}
               />
               Never expires
             </label>
           </div>
-          {formError && <p className="text-sm text-rose-300">{formError}</p>}
           {create.error && <ErrorState error={create.error} />}
           <div className="flex justify-end gap-2">
             <Button
