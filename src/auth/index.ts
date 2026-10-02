@@ -1,10 +1,10 @@
 import { logAuthMessage } from './logging';
+import { createClient } from '@/db/driver';
 import { type Env } from '@/db/repository';
 import * as schema from '@/db/schema';
 import { drizzleAdapter } from '@better-auth/drizzle-adapter';
 import { betterAuth } from 'better-auth';
 import { APIError, createAuthMiddleware } from 'better-auth/api';
-import { drizzle } from 'drizzle-orm/d1';
 
 const encoder = new TextEncoder();
 
@@ -190,7 +190,7 @@ export const createAuth = (environment: Env, request: Request) => {
     // Both Better Auth's base URL and its CSRF allowlist contain one exact
     // origin. Do not use allowedHosts: it resolves Host / forwarded headers.
     baseURL: origin,
-    database: drizzleAdapter(drizzle(environment.DB, { schema }), {
+    database: drizzleAdapter(createClient(environment.DB), {
       provider: 'sqlite',
       schema,
     }),

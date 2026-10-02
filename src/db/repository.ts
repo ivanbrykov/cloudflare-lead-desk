@@ -1,4 +1,11 @@
 import {
+  createClient,
+  type Database,
+  executeAtomically,
+  prepare,
+  type Statement,
+} from './driver';
+import {
   activities,
   apiTokens,
   bootstrapState,
@@ -30,7 +37,6 @@ import {
   or,
   sql,
 } from 'drizzle-orm';
-import { drizzle } from 'drizzle-orm/d1';
 
 export type Env = {
   ASSETS: Fetcher;
@@ -38,7 +44,7 @@ export type Env = {
   // Optional canonical origin override. When absent or blank, authentication
   // uses the incoming request URL's origin; production requires HTTPS.
   BETTER_AUTH_URL?: string;
-  DB: D1Database;
+  DB: Database;
   // Development/test-only identity bypass. Never honored in production.
   DEV_ADMIN_EMAIL?: string;
   ENVIRONMENT: 'development' | 'production' | 'test';
@@ -66,7 +72,7 @@ const id = (): string => {
   );
 };
 
-const getDatabase = (environment: Env) => drizzle(environment.DB);
+const getDatabase = (environment: Env) => createClient(environment.DB);
 
 export type LeadPage = {
   leads: LeadRecord[];
@@ -823,8 +829,9 @@ export const createLeadAtomically = async (
   const activityId = id();
   const email = normalizeEmail(input.email);
   const response: IntakeResponse = { created: true, leadId };
-  const statements: D1PreparedStatement[] = [
-    environment.DB.prepare(
+  const statements: Statement[] = [
+    prepare(
+      environment.DB,
       `INSERT INTO leads (
           id, workspace_id, email, first_name, last_name,
           source, estimated_value, custom_fields, raw_payload, skipped_fields,
@@ -846,7 +853,8 @@ export const createLeadAtomically = async (
       timestamp,
       timestamp,
     ),
-    environment.DB.prepare(
+    prepare(
+      environment.DB,
       `INSERT INTO activities (
           id, workspace_id, lead_id, kind, body, metadata, created_at
         ) VALUES (?, ?, ?, 'intake', ?, ?, ?)`,
@@ -858,7 +866,8 @@ export const createLeadAtomically = async (
       JSON.stringify({ source: input.source }),
       timestamp,
     ),
-    environment.DB.prepare(
+    prepare(
+      environment.DB,
       'INSERT INTO idempotency_keys (workspace_id, key, request_hash, response_json, created_at) VALUES (?, ?, ?, ?, ?)',
     ).bind(
       DEFAULT_WORKSPACE_ID,
@@ -870,7 +879,7 @@ export const createLeadAtomically = async (
   ];
 
   try {
-    await environment.DB.batch(statements);
+    await executeAtomically(environment.DB, statements);
     return { kind: 'created', response };
   } catch (error) {
     // A unique-key collision means a concurrent request already committed
