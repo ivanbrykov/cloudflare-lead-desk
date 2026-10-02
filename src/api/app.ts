@@ -127,15 +127,18 @@ const rejectUntrustedStaffWrite = (
   }
 
   const contentType = request.headers.get('content-type');
-  if (
-    contentType !== null &&
-    !contentType.toLowerCase().startsWith('application/json')
-  ) {
-    return errorResponse(
-      415,
-      'unsupported_media_type',
-      'Staff requests with a body must use application/json.',
-    );
+  if (contentType !== null) {
+    // The media type is everything before any parameters (`; charset=...`).
+    // Only exact `application/json` is accepted: a prefix check would let
+    // `application/jsonp` and similar types through.
+    const mediaType = contentType.split(';')[0]?.trim().toLowerCase();
+    if (mediaType !== 'application/json') {
+      return errorResponse(
+        415,
+        'unsupported_media_type',
+        'Staff requests with a body must use application/json.',
+      );
+    }
   }
 
   return null;

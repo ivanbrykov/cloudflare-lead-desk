@@ -195,6 +195,17 @@ test('rejects hostile form posts even with a trusted origin', async () => {
       code: 'unsupported_media_type',
     });
 
+    // A content type that merely starts with application/json is not JSON.
+    const jsonPrefix = await fx.request('/v1/leads', {
+      body: jsonBody,
+      contentType: 'application/jsonp',
+      method: 'POST',
+    });
+    expect(jsonPrefix.status).toBe(415);
+    expect(jsonPrefix.json).toMatchObject({
+      code: 'unsupported_media_type',
+    });
+
     const list = await fx.request('/v1/leads', { origin: null });
     expect(list.json.data).toEqual([]);
   } finally {
@@ -218,8 +229,16 @@ test('accepts trusted-origin and non-browser JSON writes', async () => {
     });
     expect(nonBrowser.status).toBe(201);
 
+    // Parameters after the media type are fine.
+    const jsonWithCharset = await fx.request('/v1/leads', {
+      body: JSON.stringify({ email: 'charset@example.test', source: 'Test' }),
+      contentType: 'application/json; charset=utf-8',
+      method: 'POST',
+    });
+    expect(jsonWithCharset.status, JSON.stringify(jsonWithCharset)).toBe(201);
+
     const list = await fx.request('/v1/leads', { origin: null });
-    expect(list.json.data).toHaveLength(2);
+    expect(list.json.data).toHaveLength(3);
   } finally {
     await fx.dispose();
   }
