@@ -14,6 +14,7 @@ import {
 import { quietFetch } from './lib/quiet-fetch';
 import {
   initialRegistrationState,
+  isInviteUnavailable,
   registrationReducer,
   type SignUpFailure,
 } from './lib/registration-flow';
@@ -996,6 +997,18 @@ const LoginPage = () => {
   });
   const signInError = signInForm.formState.errors.root?.server?.message;
   const signInPending = signInForm.formState.isSubmitting;
+  const tokenForm = useForm<{ inviteToken: string }>({
+    defaultValues: { inviteToken: '' },
+    mode: 'onTouched',
+  });
+  const detailsForm = useForm<{
+    email: string;
+    name: string;
+    password: string;
+  }>({
+    defaultValues: { email: '', name: '', password: '' },
+    mode: 'onTouched',
+  });
   const [registration, dispatch] = useReducer(
     registrationReducer,
     undefined,
@@ -1009,10 +1022,32 @@ const LoginPage = () => {
     registrationBusy.current = false;
   };
 
-  const { busy: pending, error, fields, step } = registration;
+  // The synchronous guard is claimed by the JSX submit handlers (not by the
+  // handleSubmit callbacks, which the compiler would treat as render-time
+  // calls) so a fast double submit cannot start a second request before the
+  // reducer's busy flag has re-rendered.
+  const claimRegistration = (): boolean => {
+    if (registrationBusy.current) {
+      return false;
+    }
+
+    registrationBusy.current = true;
+    return true;
+  };
+
+  const { busy: pending, error, step } = registration;
+
+  // Clears the form values the reducer cannot reach; every transition that
+  // restarts the flow calls this so the token and the credentials do not
+  // outlive the step that collected them.
+  const resetRegistrationForms = () => {
+    tokenForm.reset();
+    detailsForm.reset();
+  };
 
   const startRegistration = () => {
     setMode('sign-up');
+    resetRegistrationForms();
     dispatch({ type: 'begin-registration' });
   };
 
@@ -1030,17 +1065,11 @@ const LoginPage = () => {
     }
   });
 
-  const submitTokenStep = async (event: React.FormEvent) => {
-    event.preventDefault();
-    if (registrationBusy.current) {
-      return;
-    }
-
-    registrationBusy.current = true;
+  const submitTokenValues = tokenForm.handleSubmit(async ({ inviteToken }) => {
     dispatch({ type: 'token-submit' });
     try {
       const response = await quietFetch('/api/invites/validate', {
-        body: JSON.stringify({ token: fields.inviteToken.trim() }),
+        body: JSON.stringify({ token: inviteToken.trim() }),
         headers: {
           Accept: 'application/json',
           'Content-Type': 'application/json',
@@ -1050,32 +1079,53 @@ const LoginPage = () => {
       dispatch({ ok: response.ok, type: 'token-result' });
     } catch {
       dispatch({ ok: false, type: 'token-result' });
+    }
+  });
+
+  const handleTokenSubmit = async (event: React.FormEvent) => {
+    if (!claimRegistration()) {
+      return;
+    }
+
+    try {
+      await submitTokenValues(event);
     } finally {
       releaseRegistration();
     }
   };
 
-  const submitDetailsStep = async (event: React.FormEvent) => {
-    event.preventDefault();
-    if (registrationBusy.current) {
-      return;
-    }
-
-    registrationBusy.current = true;
+  const submitDetailsValues = detailsForm.handleSubmit(async (values) => {
     dispatch({ type: 'details-submit' });
     const result = await signUp.email({
-      email: fields.email,
+      email: values.email,
       fetchOptions: {
-        headers: { 'X-Setup-Token': fields.inviteToken.trim() },
+        headers: { 'X-Setup-Token': tokenForm.getValues('inviteToken').trim() },
       },
-      name: fields.name,
-      password: fields.password,
+      name: values.name,
+      password: values.password,
     });
+    if (result.error && isInviteUnavailable(result.error)) {
+      // The grant stopped being usable while the details were typed: drop
+      // the token and the credentials together with the step.
+      resetRegistrationForms();
+    }
+
     dispatch({
       error: (result.error ?? null) as null | SignUpFailure,
       type: 'details-result',
     });
-    releaseRegistration();
+  });
+
+  const handleDetailsSubmit = async (event: React.FormEvent) => {
+    if (!claimRegistration()) {
+      return;
+    }
+
+    try {
+      await submitDetailsValues(event);
+    } finally {
+      releaseRegistration();
+    }
   };
 
   return (
@@ -1128,21 +1178,14 @@ const LoginPage = () => {
         ) : step === 1 ? (
           <form
             className="grid gap-4"
-            onSubmit={submitTokenStep}
+            onSubmit={handleTokenSubmit}
           >
             <label className="grid gap-1 text-sm text-slate-300">
               Invite token
               <input
-                onChange={(event) => {
-                  dispatch({
-                    name: 'inviteToken',
-                    type: 'field-change',
-                    value: event.target.value,
-                  });
-                }}
                 placeholder="Shared with you by a staff member"
                 required
-                value={fields.inviteToken}
+                {...tokenForm.register('inviteToken')}
               />
             </label>
             {error && (
@@ -1163,53 +1206,32 @@ const LoginPage = () => {
         ) : (
           <form
             className="grid gap-4"
-            onSubmit={submitDetailsStep}
+            onSubmit={handleDetailsSubmit}
           >
             <label className="grid gap-1 text-sm text-slate-300">
               Name
               <input
-                onChange={(event) => {
-                  dispatch({
-                    name: 'name',
-                    type: 'field-change',
-                    value: event.target.value,
-                  });
-                }}
                 placeholder="Ada Lovelace"
                 required
-                value={fields.name}
+                {...detailsForm.register('name')}
               />
             </label>
             <label className="grid gap-1 text-sm text-slate-300">
               Email
               <input
-                onChange={(event) => {
-                  dispatch({
-                    name: 'email',
-                    type: 'field-change',
-                    value: event.target.value,
-                  });
-                }}
                 placeholder="you@example.com"
                 required
                 type="email"
-                value={fields.email}
+                {...detailsForm.register('email')}
               />
             </label>
             <label className="grid gap-1 text-sm text-slate-300">
               Password
               <input
                 minLength={8}
-                onChange={(event) => {
-                  dispatch({
-                    name: 'password',
-                    type: 'field-change',
-                    value: event.target.value,
-                  });
-                }}
                 required
                 type="password"
-                value={fields.password}
+                {...detailsForm.register('password')}
               />
             </label>
             {error && (
@@ -1222,7 +1244,10 @@ const LoginPage = () => {
             )}
             <Button
               disabled={pending}
-              onClick={() => dispatch({ type: 'back-to-token' })}
+              onClick={() => {
+                resetRegistrationForms();
+                dispatch({ type: 'back-to-token' });
+              }}
               tone="secondary"
               type="button"
             >

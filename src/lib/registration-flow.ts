@@ -1,9 +1,11 @@
 // Pure state machine for the two-step invitation registration UI.
 //
-// The reducer owns the transient registration state (step, fields, error,
-// and in-flight flag). The invite token and the entered credentials only
-// ever live in this state: they are not written to storage, URLs, or any
-// module-level cache, so unmounting the form discards them.
+// The reducer owns the transient registration state (step, error, and
+// in-flight flag). Field values live in react-hook-form inside the
+// component: the invite token and the entered credentials are only ever
+// held in that component-local state (never storage, URLs, or a
+// module-level cache), and the component resets both forms on the
+// back/retry transitions.
 //
 // Kept free of React so the transitions stay testable in the node test
 // environment. The component adds a synchronous ref guard on top of the
@@ -14,26 +16,15 @@ export const AUTHENTICATION_FAILED_MESSAGE = 'Authentication failed.';
 
 export type RegistrationEvent =
   | { error: null | SignUpFailure; type: 'details-result' }
-  | { name: RegistrationFieldName; type: 'field-change'; value: string }
   | { ok: boolean; type: 'token-result' }
   | { type: 'back-to-token' }
   | { type: 'begin-registration' }
   | { type: 'details-submit' }
   | { type: 'token-submit' };
 
-export type RegistrationFieldName = keyof RegistrationFields;
-
-export type RegistrationFields = {
-  email: string;
-  inviteToken: string;
-  name: string;
-  password: string;
-};
-
 export type RegistrationState = {
   busy: boolean;
   error: null | string;
-  fields: RegistrationFields;
   step: RegistrationStep;
 };
 
@@ -49,21 +40,13 @@ export type SignUpFailure = {
   status?: number;
 };
 
-const clearFields = (): RegistrationFields => ({
-  email: '',
-  inviteToken: '',
-  name: '',
-  password: '',
-});
-
 export const initialRegistrationState = (): RegistrationState => ({
   busy: false,
   error: null,
-  fields: clearFields(),
   step: 1,
 });
 
-const isInviteUnavailable = (error: SignUpFailure): boolean =>
+export const isInviteUnavailable = (error: SignUpFailure): boolean =>
   error.code === 'invite_unavailable' && error.status === 403;
 
 export const registrationReducer = (
@@ -72,8 +55,9 @@ export const registrationReducer = (
 ): RegistrationState => {
   switch (event.type) {
     case 'back-to-token':
-      // Going back is a deliberate reset of the sensitive fields.
-      return { ...state, error: null, fields: clearFields(), step: 1 };
+      // Going back resets the flow; the component must also reset the
+      // forms so the token and the credentials are discarded.
+      return initialRegistrationState();
 
     case 'begin-registration':
       // Start a fresh, fully cleared flow: anything the sign-in form held
@@ -91,13 +75,11 @@ export const registrationReducer = (
 
       if (isInviteUnavailable(event.error)) {
         // The grant was used or expired while the details were typed;
-        // restart from the token step without keeping the grant or the
-        // credentials that were entered.
+        // restart from the token step. The component resets the forms so
+        // the grant and the credentials are not kept.
         return {
-          busy: false,
+          ...initialRegistrationState(),
           error: event.error.message ?? INVITE_UNAVAILABLE_MESSAGE,
-          fields: clearFields(),
-          step: 1,
         };
       }
 
@@ -116,20 +98,14 @@ export const registrationReducer = (
 
       return { ...state, busy: true, error: null };
 
-    case 'field-change':
-      return {
-        ...state,
-        fields: { ...state.fields, [event.name]: event.value },
-      };
-
     case 'token-result':
       if (!state.busy || state.step !== 1) {
         return state;
       }
 
       if (event.ok) {
-        // Step 2 is revealed only on success; the token stays in state so
-        // the details submit can send it as the X-Setup-Token header.
+        // Step 2 is revealed only on success; the component reads the
+        // token from its form when the details submit needs it.
         return { ...state, busy: false, error: null, step: 2 };
       }
 
