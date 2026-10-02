@@ -420,15 +420,21 @@ const CreateTokenDialog = ({
             </p>
           </div>
           <div className="grid gap-1">
-            <label className="grid gap-1 text-sm text-slate-300">
-              Expiration
-              <input
-                disabled={neverExpires}
-                onChange={(event) => setExpiration(event.target.value)}
-                type="datetime-local"
-                value={expiration}
-              />
-            </label>
+            {!neverExpires && (
+              <>
+                <label className="grid gap-1 text-sm text-slate-300">
+                  Expiration
+                  <input
+                    onChange={(event) => setExpiration(event.target.value)}
+                    type="datetime-local"
+                    value={expiration}
+                  />
+                </label>
+                <p className="text-xs text-slate-500">
+                  Local time ({localTimezoneLabel()})
+                </p>
+              </>
+            )}
             <label className="flex items-center gap-2 text-xs text-slate-400">
               <input
                 checked={neverExpires}
@@ -437,11 +443,6 @@ const CreateTokenDialog = ({
               />
               Never expires
             </label>
-            {!neverExpires && (
-              <p className="text-xs text-slate-500">
-                Local time ({localTimezoneLabel()})
-              </p>
-            )}
           </div>
           {formError && <p className="text-sm text-rose-300">{formError}</p>}
           {create.error && <ErrorState error={create.error} />}
