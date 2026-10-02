@@ -120,7 +120,7 @@ export default defineConfig(
     // Database port boundary: only src/db/driver.ts may import the engine's
     // Drizzle driver or name the runtime binding types. A second engine means
     // a second adapter module, not edits across the application.
-    files: ['src/**/*.ts'],
+    files: ['src/**/*.{ts,tsx}'],
     ignores: ['src/db/driver.ts'],
     rules: {
       '@typescript-eslint/no-restricted-types': [

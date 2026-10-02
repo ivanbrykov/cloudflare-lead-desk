@@ -4,21 +4,22 @@ import { drizzle } from 'drizzle-orm/d1';
 /**
  * Database port.
  *
- * Application modules import database access from here and never name the
- * runtime binding or its driver. This file is the only place the Cloudflare D1
- * binding type and `drizzle-orm/d1` appear, so plugging in another engine means
- * replacing the adapter below while keeping the same exports:
+ * Application modules import database access from here rather than from the
+ * engine: this file is the only place that imports `drizzle-orm/d1` or names
+ * the Cloudflare D1 binding, and ESLint enforces that boundary for `src/`.
  *
  * - `createClient(binding)` returns a Drizzle client for ./schema
  * - `prepare(binding, sql)` returns a bindable statement
  * - `executeAtomically(binding, statements)` runs one all-or-nothing batch
- * - `Database`, `Client`, and `Statement` are derived from the adapter, so
- *   callers never import an engine type directly
+ * - `Database`, `Client`, and `Statement` are derived from the adapter below
+ *
+ * Scope: this centralizes engine imports and binding access; it does not erase
+ * D1-shaped results (`result.meta.changes`, `binding.batch()`) from callers.
+ * Moving engines still means a new adapter here, an `Env` binding change, and
+ * migrations — but not edits across the repositories.
  *
  * A second adapter would split this into driver/index.ts (chooses) and
  * driver/<engine>.ts (implements); one adapter does not need the directory yet.
- * The ESLint config forbids importing `drizzle-orm/d1` or naming the D1 binding
- * types outside this file.
  */
 const createD1Client = (binding: D1Database) => drizzle(binding, { schema });
 
