@@ -220,6 +220,18 @@ test('a persistence failure is logged at error level with the class, never the c
   }
 });
 
+test('the public intake token in the path is redacted', async () => {
+  const token = 'lsc_pub_logging_secret_value';
+  const result = await api(`/v1/public/intakes/${token}`, 'POST', {});
+  expect(result.status).toBe(401);
+
+  const lines = requestLines(0, 'POST', '/v1/public/intakes/:token');
+  expect(lines).toHaveLength(1);
+  expect(lines[0].parsed.path).toBe('/v1/public/intakes/:token');
+  const raw = logs.map((entry) => entry.message).join('\n');
+  expect(raw).not.toContain(token);
+});
+
 test('the intake 413 path is logged with its final status and no body or token', async () => {
   const created = await api('/v1/tokens', 'POST', {
     name: 'logging-intake-token',

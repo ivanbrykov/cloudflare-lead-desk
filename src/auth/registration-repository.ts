@@ -2,15 +2,16 @@
  * Atomic registration redemption primitive (stage s2).
  *
  * `redeemRegistration` consumes exactly one eligible grant — the one-time
- * bootstrap grant or a staff invite token — and, in a single D1 batch,
+ * bootstrap grant or a staff invite token — and, in a single atomic batch,
  * writes the Better Auth user row, the credential account row, and the
  * durable claim ledger row, then marks the grant consumed.
  *
  * Atomicity strategy (per the stage contract; no mutexes, no
  * check-then-write, no compensating deletes, no adapter transaction):
  *
- * - One `db.batch([...])` is the only commit boundary. D1 batches are
- *   all-or-nothing: any statement failure rolls back every statement.
+ * - One `executeAtomically([...])` is the only commit boundary. The database
+ *   port requires an all-or-nothing batch: any statement failure rolls back
+ *   every statement.
  * - The `registration_claims.claim_key` UNIQUE index is the durable race
  *   guard. Two concurrent redemptions of the same grant cannot both
  *   insert a claim, so the loser's whole batch — including its user and
@@ -38,6 +39,13 @@
  *   rejects — it never resolves with partial state, because the batch
  *   rolls back.
  */
+
+import {
+  type Database,
+  executeAtomically,
+  prepare,
+  type Statement,
+} from '@/db/driver';
 
 export type RedeemRegistrationInput = {
   /**
@@ -96,10 +104,12 @@ const grantUnavailableError = new RegistrationError(
 );
 
 const loadBootstrap = async (
-  database: D1Database,
+  database: Database,
 ): Promise<{ consumedAt: null | number; expiresAt: number }> => {
-  const row = await database
-    .prepare('SELECT consumed_at, expires_at FROM bootstrap_state WHERE id = ?')
+  const row = await prepare(
+    database,
+    'SELECT consumed_at, expires_at FROM bootstrap_state WHERE id = ?',
+  )
     .bind(BOOTSTRAP_STATE_ID)
     .first<{ consumed_at: null | number; expires_at: number }>();
   if (row === null) {
@@ -110,17 +120,17 @@ const loadBootstrap = async (
 };
 
 const loadInvite = async (
-  database: D1Database,
+  database: Database,
   tokenHash: string,
 ): Promise<{
   expiresAt: number;
   revokedAt: null | number;
   usedAt: null | number;
 }> => {
-  const row = await database
-    .prepare(
-      'SELECT used_at, revoked_at, expires_at FROM staff_invites WHERE token_hash = ?',
-    )
+  const row = await prepare(
+    database,
+    'SELECT used_at, revoked_at, expires_at FROM staff_invites WHERE token_hash = ?',
+  )
     .bind(tokenHash)
     .first<{
       expires_at: number;
@@ -176,7 +186,7 @@ const rejectWithContractError = (error: unknown): never => {
  * error contract.
  */
 export const redeemRegistration = async (
-  database: D1Database,
+  database: Database,
   input: RedeemRegistrationInput,
 ): Promise<RedeemRegistrationResult> => {
   const { accountId, email, grant, name, now, passwordHash, userId } = input;
@@ -200,8 +210,10 @@ export const redeemRegistration = async (
     }
   }
 
-  const existingUser = await database
-    .prepare('SELECT id FROM user WHERE email = ?')
+  const existingUser = await prepare(
+    database,
+    'SELECT id FROM user WHERE email = ?',
+  )
     .bind(email)
     .first<{ id: string }>();
   if (existingUser !== null) {
@@ -218,55 +230,50 @@ export const redeemRegistration = async (
   // grant is simultaneously being consumed by another request. The claim
   // insert runs before the consumption mark so the durable guard
   // (trigger + unique claim_key) validates the grant inside this batch.
-  const statements: D1PreparedStatement[] = [
-    database
-      .prepare(
-        'INSERT INTO user (id, name, email, email_verified, created_at, updated_at) ' +
-          'VALUES (?, ?, ?, 0, ?, ?)',
-      )
-      .bind(userId, name, email, timestamp, timestamp),
-    database
-      .prepare(
-        'INSERT INTO account (id, account_id, provider_id, user_id, password, ' +
-          'created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      )
-      .bind(
-        accountId,
-        userId,
-        'credential',
-        userId,
-        passwordHash,
-        timestamp,
-        timestamp,
-      ),
-    database
-      .prepare(
-        'INSERT INTO registration_claims (id, grant_kind, grant_ref, claim_key, ' +
-          'user_id, created_at) VALUES (?, ?, ?, ?, ?, ?)',
-      )
-      .bind(crypto.randomUUID(), grant.kind, claimKey, claimKey, userId, now),
+  const statements: Statement[] = [
+    prepare(
+      database,
+      'INSERT INTO user (id, name, email, email_verified, created_at, updated_at) ' +
+        'VALUES (?, ?, ?, 0, ?, ?)',
+    ).bind(userId, name, email, timestamp, timestamp),
+    prepare(
+      database,
+      'INSERT INTO account (id, account_id, provider_id, user_id, password, ' +
+        'created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    ).bind(
+      accountId,
+      userId,
+      'credential',
+      userId,
+      passwordHash,
+      timestamp,
+      timestamp,
+    ),
+    prepare(
+      database,
+      'INSERT INTO registration_claims (id, grant_kind, grant_ref, claim_key, ' +
+        'user_id, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+    ).bind(crypto.randomUUID(), grant.kind, claimKey, claimKey, userId, now),
   ];
   if (grant.kind === 'bootstrap') {
     statements.push(
-      database
-        .prepare(
-          'UPDATE bootstrap_state SET consumed_at = ? WHERE id = ? AND consumed_at IS NULL',
-        )
-        .bind(now, BOOTSTRAP_STATE_ID),
+      prepare(
+        database,
+        'UPDATE bootstrap_state SET consumed_at = ? WHERE id = ? AND consumed_at IS NULL',
+      ).bind(now, BOOTSTRAP_STATE_ID),
     );
   } else {
     statements.push(
-      database
-        .prepare(
-          'UPDATE staff_invites SET used_at = ?, used_by_user_id = ? ' +
-            'WHERE token_hash = ? AND used_at IS NULL AND revoked_at IS NULL AND expires_at > ?',
-        )
-        .bind(now, userId, claimKey, now),
+      prepare(
+        database,
+        'UPDATE staff_invites SET used_at = ?, used_by_user_id = ? ' +
+          'WHERE token_hash = ? AND used_at IS NULL AND revoked_at IS NULL AND expires_at > ?',
+      ).bind(now, userId, claimKey, now),
     );
   }
 
   try {
-    await database.batch(statements);
+    await executeAtomically(database, statements);
   } catch (error) {
     rejectWithContractError(error);
   }

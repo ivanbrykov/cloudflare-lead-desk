@@ -116,4 +116,39 @@ export default defineConfig(
       'import/no-unassigned-import': 0,
     },
   },
+  {
+    // Database port boundary: only src/db/driver.ts may import the engine's
+    // Drizzle driver or name the runtime binding types. A second engine means
+    // a second adapter module, not edits across the application.
+    files: ['src/**/*.{ts,tsx}'],
+    ignores: ['src/db/driver.ts'],
+    rules: {
+      '@typescript-eslint/no-restricted-types': [
+        'error',
+        {
+          types: {
+            D1Database: {
+              fixWith: 'Database',
+              message: 'Use { type Database } from @/db/driver.',
+            },
+            D1PreparedStatement: {
+              fixWith: 'Statement',
+              message: 'Use { type Statement } from @/db/driver.',
+            },
+          },
+        },
+      ],
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            {
+              message: 'Import the database port from @/db/driver instead.',
+              name: 'drizzle-orm/d1',
+            },
+          ],
+        },
+      ],
+    },
+  },
 );

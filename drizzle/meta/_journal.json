@@ -15,6 +15,13 @@
       "when": 1790808480568,
       "tag": "0001_lead_skipped_fields",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1790826094357,
+      "tag": "0002_noisy_nitro",
+      "breakpoints": true
     }
   ]
 }

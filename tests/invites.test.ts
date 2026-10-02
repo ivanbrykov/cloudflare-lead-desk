@@ -420,3 +420,39 @@ test('the bootstrap grant gates sign-up until the first account exists', async (
     await fx.dispose();
   }
 });
+
+test('registrations from distinct client IPs do not share the sign-in bucket', async () => {
+  const fx = await startFixture();
+  try {
+    const cookie = await signUp(fx);
+
+    for (let index = 0; index < 4; index += 1) {
+      const created = await createInvite(fx, cookie, {
+        name: `IP registrant ${index}`,
+      });
+      expect(created.status, JSON.stringify(created)).toBe(201);
+      const invite = (created.json.data as { token: string }).token;
+
+      // The synthetic sign-in that issues the session must carry the
+      // registrant's address; without it every registration shares Better
+      // Auth's no-IP bucket and the fourth fails session issuance.
+      const result = await fx.raw(
+        '/api/auth/sign-up/email',
+        'POST',
+        {
+          email: `registrant-${index}@example.test`,
+          name: `Registrant ${index}`,
+          password: 'correct-horse-battery',
+        },
+        {
+          'cf-connecting-ip': `203.0.113.${40 + index}`,
+          'X-Setup-Token': invite,
+        },
+      );
+      expect(result.status, JSON.stringify(result)).toBe(200);
+      expect(result.cookie).not.toBe('');
+    }
+  } finally {
+    await fx.dispose();
+  }
+});

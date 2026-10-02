@@ -1,10 +1,10 @@
 import { logAuthMessage } from './logging';
+import { createClient } from '@/db/driver';
 import { type Env } from '@/db/repository';
 import * as schema from '@/db/schema';
 import { drizzleAdapter } from '@better-auth/drizzle-adapter';
 import { betterAuth } from 'better-auth';
 import { APIError, createAuthMiddleware } from 'better-auth/api';
-import { drizzle } from 'drizzle-orm/d1';
 
 const encoder = new TextEncoder();
 
@@ -177,6 +177,12 @@ export const createAuth = (environment: Env, request: Request) => {
 
   return betterAuth({
     advanced: {
+      // Cloudflare overwrites CF-Connecting-IP at the edge, so it is the only
+      // client address that can key rate limits here; x-forwarded-for is not
+      // trusted.
+      ipAddress: {
+        ipAddressHeaders: ['cf-connecting-ip'],
+      },
       // Keep this explicit: the resolved origin above is intentionally the
       // only authority; x-forwarded-host and x-forwarded-proto stay ignored.
       trustedProxyHeaders: false,
@@ -184,7 +190,7 @@ export const createAuth = (environment: Env, request: Request) => {
     // Both Better Auth's base URL and its CSRF allowlist contain one exact
     // origin. Do not use allowedHosts: it resolves Host / forwarded headers.
     baseURL: origin,
-    database: drizzleAdapter(drizzle(environment.DB, { schema }), {
+    database: drizzleAdapter(createClient(environment.DB), {
       provider: 'sqlite',
       schema,
     }),
@@ -209,6 +215,14 @@ export const createAuth = (environment: Env, request: Request) => {
       }),
     },
     logger: { level: 'warn', log: logAuthMessage },
+    rateLimit: {
+      // Better Auth enables its limiter only when NODE_ENV === 'production',
+      // which Workers does not set, so enable it explicitly and keep counters
+      // in D1. The window/max defaults and the stricter sign-in/sign-up rules
+      // stay upstream-owned.
+      enabled: true,
+      storage: 'database',
+    },
     secret: environment.BETTER_AUTH_SECRET,
   });
 };

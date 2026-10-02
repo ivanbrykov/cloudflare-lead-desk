@@ -309,6 +309,11 @@ export const handleInvitationSignUp = async (
   // The account is committed: issue the session through Better Auth's own
   // sign-in handler. Its response (including the session cookie) is
   // returned verbatim, so no custom session cookie crypto is involved.
+  //
+  // Preserve the trusted edge client address: Better Auth's database limiter
+  // keys on it, and dropping it would park every registration in the shared
+  // no-IP bucket, throttling unrelated registrants together.
+  const clientIp = request.headers.get('cf-connecting-ip');
   try {
     const signIn = await auth.handler(
       new Request(`${origin}/api/auth/sign-in/email`, {
@@ -320,6 +325,7 @@ export const handleInvitationSignUp = async (
         headers: {
           'content-type': 'application/json',
           origin,
+          ...(clientIp === null ? {} : { 'cf-connecting-ip': clientIp }),
         },
         method: 'POST',
       }),

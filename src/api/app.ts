@@ -22,6 +22,11 @@ import {
   UnauthorizedError,
 } from '@/auth/access';
 import { handleInvitationSignUp } from '@/auth/invitation-sign-up';
+import {
+  blockedRetryAfter,
+  rateLimitedResponse,
+  rememberBlocked,
+} from '@/auth/rate-limit-cache';
 import { handleDisabledAccountSignIn } from '@/auth/sign-in-guard';
 import {
   checkStaffInviteAvailability,
@@ -72,6 +77,77 @@ const errorResponse = (
       status,
     },
   );
+
+/**
+ * Browser CSRF defence: a request that carries an Origin header must match the
+ * configured auth origin. A missing Origin is allowed for non-browser clients,
+ * consistent with the auth routes. Forwarded headers are never consulted.
+ */
+const rejectUntrustedOrigin = (
+  environment: Env,
+  request: Request,
+): null | Response => {
+  const origin = request.headers.get('Origin');
+  if (origin === null) {
+    return null;
+  }
+
+  let trusted: string;
+  try {
+    trusted = resolveAuthOrigin(environment, request);
+  } catch (error) {
+    if (error instanceof AuthConfigurationError) {
+      return authenticationNotConfiguredResponse();
+    }
+
+    throw error;
+  }
+
+  return origin === trusted
+    ? null
+    : errorResponse(403, 'forbidden', 'The request origin is not trusted.');
+};
+
+const UNSAFE_METHODS = new Set(['DELETE', 'PATCH', 'POST', 'PUT']);
+
+/**
+ * Cookie-authenticated staff routes set no CORS headers, so a hostile page
+ * cannot read their responses; but a same-site sibling origin can still post an
+ * ordinary HTML form and have the browser attach the session cookie under
+ * SameSite=Lax. Unsafe methods therefore require a trusted Origin when one is
+ * present, and any supplied body must be JSON — Elysia would otherwise parse
+ * form-encoded posts on these routes.
+ */
+const rejectUntrustedStaffWrite = (
+  environment: Env,
+  request: Request,
+): null | Response => {
+  if (!UNSAFE_METHODS.has(request.method)) {
+    return null;
+  }
+
+  const rejectedOrigin = rejectUntrustedOrigin(environment, request);
+  if (rejectedOrigin !== null) {
+    return rejectedOrigin;
+  }
+
+  const contentType = request.headers.get('content-type');
+  if (contentType !== null) {
+    // The media type is everything before any parameters (`; charset=...`).
+    // Only exact `application/json` is accepted: a prefix check would let
+    // `application/jsonp` and similar types through.
+    const mediaType = contentType.split(';')[0]?.trim().toLowerCase();
+    if (mediaType !== 'application/json') {
+      return errorResponse(
+        415,
+        'unsupported_media_type',
+        'Staff requests with a body must use application/json.',
+      );
+    }
+  }
+
+  return null;
+};
 
 const run = async <A>(
   request: Request,
@@ -337,19 +413,42 @@ const createAppWithAuth = (environment: Env, getAuth: AuthForRequest) => {
       // POST /sign-up/email is the invitation boundary: it resolves the grant
       // before any account write and re-issues the session through Better
       // Auth's sign-in endpoint.
-      .mount('/api/auth', (request: Request) => {
+      .mount('/api/auth', async (request: Request) => {
         try {
           const url = new URL(request.url);
-          if (request.method === 'POST' && url.pathname === '/sign-up/email') {
-            return handleInvitationSignUp(environment, request, getAuth);
+          const path = url.pathname;
+
+          // A client already over a limit skips Better Auth (and the database
+          // limiter's read/update) until its retry window passes. The database
+          // counter stays authoritative; this only short-circuits known blocks.
+          const retryAfter = await blockedRetryAfter(request, path);
+          if (retryAfter !== null) {
+            return rateLimitedResponse(retryAfter);
           }
 
-          if (request.method === 'POST' && url.pathname === '/sign-in/email') {
-            return handleDisabledAccountSignIn(environment, request, getAuth);
+          const dispatch = async (): Promise<Response> => {
+            if (request.method === 'POST' && path === '/sign-up/email') {
+              return handleInvitationSignUp(environment, request, getAuth);
+            }
+
+            if (request.method === 'POST' && path === '/sign-in/email') {
+              return handleDisabledAccountSignIn(environment, request, getAuth);
+            }
+
+            url.pathname = `/api/auth${path}`;
+            return getAuth(request).handler(new Request(url, request));
+          };
+
+          const response = await dispatch();
+          if (response.status === 429) {
+            await rememberBlocked(
+              request,
+              path,
+              Number(response.headers.get('x-retry-after') ?? ''),
+            );
           }
 
-          url.pathname = `/api/auth${url.pathname}`;
-          return getAuth(request).handler(new Request(url, request));
+          return response;
         } catch (error) {
           if (error instanceof AuthConfigurationError) {
             return authenticationNotConfiguredResponse();
@@ -483,30 +582,9 @@ const createAppWithAuth = (environment: Env, getAuth: AuthForRequest) => {
       )
       .use(publicIntake)
       .post('/api/invites/validate', async ({ body, request }) => {
-        // Trusted-origin check for hostile browser Origin headers: compare
-        // against BETTER_AUTH_URL or, when unset, the incoming request.url
-        // origin. Forwarded headers are never consulted; a missing Origin
-        // (non-browser clients) is allowed, consistent with the auth routes.
-        const origin = request.headers.get('Origin');
-        if (origin !== null) {
-          let trusted: string;
-          try {
-            trusted = resolveAuthOrigin(environment, request);
-          } catch (error) {
-            if (error instanceof AuthConfigurationError) {
-              return authenticationNotConfiguredResponse();
-            }
-
-            throw error;
-          }
-
-          if (origin !== trusted) {
-            return errorResponse(
-              403,
-              'forbidden',
-              'The request origin is not trusted.',
-            );
-          }
+        const rejectedOrigin = rejectUntrustedOrigin(environment, request);
+        if (rejectedOrigin !== null) {
+          return rejectedOrigin;
         }
 
         const parsed = await parse(ValidateInviteRequest, body);
@@ -531,12 +609,19 @@ const createAppWithAuth = (environment: Env, getAuth: AuthForRequest) => {
       // Staff routes: one shared auth gate. Elysia applies lifecycle hooks to
       // routes registered after them, so every route below requires a staff
       // session; handlers read `adminEmail` from context instead of repeating
-      // the guard. Non-staff routes (auth mount, health, intakes,
-      // invite validation) are registered above this hook.
+      // the guard. The gate also rejects untrusted write origins and non-JSON
+      // write bodies before a handler can mutate state. Non-staff routes (auth
+      // mount, health, intakes, invite validation) are registered above this
+      // hook.
       .resolve(async ({ request }) => {
         const admin = await requireAdmin(request, getAuth, environment);
         if ('error' in admin) {
           throw admin.error;
+        }
+
+        const rejectedWrite = rejectUntrustedStaffWrite(environment, request);
+        if (rejectedWrite !== null) {
+          throw rejectedWrite;
         }
 
         return { adminEmail: admin.email };

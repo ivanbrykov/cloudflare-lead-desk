@@ -12,13 +12,24 @@
  * Privacy: lines carry only the method, the URL pathname (never the query
  * string — e.g. `/v1/contacts?query=` search terms are contact data), the
  * final status, the duration, and for failures the error class (plus the
- * error message for command defects). Never headers, bodies, tokens, query
- * strings, stacks, or SQL with bound values: persistence failures log the
- * cause's class only, because a database error message can embed SQL with
- * bound values.
+ * error message for command defects). The browser token segment of
+ * `/v1/public/intakes/:token` is redacted before logging. Never headers,
+ * bodies, tokens, query strings, stacks, or SQL with bound values:
+ * persistence failures log the cause's class only, because a database error
+ * message can embed SQL with bound values.
  */
 
 const requestStarts = new WeakMap<object, number>();
+
+// Browser intake tokens travel in the pathname. They are intentionally public
+// and write-only, but the logger's contract is that no token reaches a line —
+// which also keeps an API token pasted into the wrong URL out of the logs.
+const PUBLIC_INTAKE_TOKEN_PATH = /^\/v1\/public\/intakes\/.+$/u;
+
+const redactPath = (pathname: string): string =>
+  PUBLIC_INTAKE_TOKEN_PATH.test(pathname)
+    ? '/v1/public/intakes/:token'
+    : pathname;
 
 const roundMs = (value: number): number => Math.round(value * 100) / 100;
 
@@ -59,7 +70,7 @@ export const logRequest = (
     durationMs: durationMs(request),
     event: failure ? 'request.failure' : 'request',
     method: request.method,
-    path: new URL(request.url).pathname,
+    path: redactPath(new URL(request.url).pathname),
     status,
     ...failure,
   });
