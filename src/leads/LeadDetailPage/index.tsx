@@ -35,8 +35,11 @@ export const LeadDetailPage = ({ id }: { readonly id: string }) => {
     queryFn: () => request<LeadActivity[]>(`/v1/leads/${id}/activities`),
     queryKey: ['lead-activities', id],
   });
-  const [note, setNote] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const noteForm = useForm<{ body: string }>({
+    defaultValues: { body: '' },
+  });
+  const noteBody = noteForm.watch('body');
 
   const record = lead.data;
   // `values` keeps the form in sync with every server refetch (the query
@@ -63,13 +66,13 @@ export const LeadDetailPage = ({ id }: { readonly id: string }) => {
     },
   });
   const addNote = useMutation({
-    mutationFn: () =>
+    mutationFn: (body: string) =>
       request(`/v1/leads/${id}/activities`, {
-        body: JSON.stringify({ body: note }),
+        body: JSON.stringify({ body }),
         method: 'POST',
       }),
     onSuccess: () => {
-      setNote('');
+      noteForm.reset();
       toast.success('Note added');
       void queryClient.invalidateQueries({
         queryKey: ['lead-activities', id],
@@ -240,24 +243,22 @@ export const LeadDetailPage = ({ id }: { readonly id: string }) => {
           <h2 className="mb-4 font-semibold text-white">Activity</h2>
           <form
             className="mb-4 grid gap-2"
-            onSubmit={(event) => {
-              event.preventDefault();
-              if (note.trim()) {
-                addNote.mutate();
+            onSubmit={noteForm.handleSubmit(({ body }) => {
+              if (body.trim()) {
+                addNote.mutate(body);
               }
-            }}
+            })}
           >
             <textarea
               className={cn(inputClass, 'min-h-20')}
-              onChange={(event) => setNote(event.target.value)}
               placeholder="Add a note…"
               rows={3}
-              value={note}
+              {...noteForm.register('body')}
             />
             {addNote.error && <Notice error={addNote.error} />}
             <div>
               <Button
-                disabled={!note.trim() || addNote.isPending}
+                disabled={!noteBody.trim() || addNote.isPending}
                 type="submit"
               >
                 Add note
