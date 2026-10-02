@@ -5,8 +5,8 @@
  * previous page over the list's deterministic ordering (createdAt DESC,
  * id DESC). The encoding is base64url of a small JSON object so the cursor
  * stays opaque to clients; decoding is strict, so truncated, base64-corrupt,
- * or structurally invalid cursors are rejected with 422 invalid_cursor
- * instead of silently shifting the page window.
+ * structurally invalid, or non-canonical cursors are rejected with 422
+ * invalid_cursor instead of silently shifting the page window.
  */
 
 const URL_BASE64_ALPHABET = /^[\w-]+$/u;
@@ -108,6 +108,19 @@ export const decodeKeysetCursor = (cursor: string): Keyset | null => {
     id.length === 0 ||
     !ISO_INSTANT.test(createdAt)
   ) {
+    return null;
+  }
+
+  // The shape check accepts impossible instants (2026-99-99) and non-canonical
+  // precision. The repository binds Date.parse(createdAt) as a real seek
+  // timestamp, so require a finite value that round-trips through toISOString —
+  // the exact form encodeKeysetCursor emits.
+  const timestamp = Date.parse(createdAt);
+  if (!Number.isFinite(timestamp)) {
+    return null;
+  }
+
+  if (new Date(timestamp).toISOString() !== createdAt) {
     return null;
   }
 
