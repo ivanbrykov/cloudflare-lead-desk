@@ -22,6 +22,11 @@ import {
   UnauthorizedError,
 } from '@/auth/access';
 import { handleInvitationSignUp } from '@/auth/invitation-sign-up';
+import {
+  blockedRetryAfter,
+  rateLimitedResponse,
+  rememberBlocked,
+} from '@/auth/rate-limit-cache';
 import { handleDisabledAccountSignIn } from '@/auth/sign-in-guard';
 import {
   checkStaffInviteAvailability,
@@ -408,19 +413,42 @@ const createAppWithAuth = (environment: Env, getAuth: AuthForRequest) => {
       // POST /sign-up/email is the invitation boundary: it resolves the grant
       // before any account write and re-issues the session through Better
       // Auth's sign-in endpoint.
-      .mount('/api/auth', (request: Request) => {
+      .mount('/api/auth', async (request: Request) => {
         try {
           const url = new URL(request.url);
-          if (request.method === 'POST' && url.pathname === '/sign-up/email') {
-            return handleInvitationSignUp(environment, request, getAuth);
+          const path = url.pathname;
+
+          // A client already over a limit skips Better Auth (and the database
+          // limiter's read/update) until its retry window passes. The database
+          // counter stays authoritative; this only short-circuits known blocks.
+          const retryAfter = await blockedRetryAfter(request, path);
+          if (retryAfter !== null) {
+            return rateLimitedResponse(retryAfter);
           }
 
-          if (request.method === 'POST' && url.pathname === '/sign-in/email') {
-            return handleDisabledAccountSignIn(environment, request, getAuth);
+          const dispatch = async (): Promise<Response> => {
+            if (request.method === 'POST' && path === '/sign-up/email') {
+              return handleInvitationSignUp(environment, request, getAuth);
+            }
+
+            if (request.method === 'POST' && path === '/sign-in/email') {
+              return handleDisabledAccountSignIn(environment, request, getAuth);
+            }
+
+            url.pathname = `/api/auth${path}`;
+            return getAuth(request).handler(new Request(url, request));
+          };
+
+          const response = await dispatch();
+          if (response.status === 429) {
+            await rememberBlocked(
+              request,
+              path,
+              Number(response.headers.get('x-retry-after') ?? ''),
+            );
           }
 
-          url.pathname = `/api/auth${url.pathname}`;
-          return getAuth(request).handler(new Request(url, request));
+          return response;
         } catch (error) {
           if (error instanceof AuthConfigurationError) {
             return authenticationNotConfiguredResponse();

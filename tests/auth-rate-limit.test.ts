@@ -163,3 +163,26 @@ test('separate client IPs have separate buckets', async () => {
     await fx.dispose();
   }
 });
+
+test('a blocked client is short-circuited without the database limiter', async () => {
+  const fx = await startFixture();
+  try {
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      await fx.signIn('203.0.113.30');
+    }
+
+    expect((await fx.signIn('203.0.113.30')).status).toBe(429);
+
+    // With the counter row gone, a database limiter call would allow the next
+    // request (401). A 429 therefore proves the negative cache answered.
+    await fx.db.prepare('DELETE FROM rate_limit').run();
+
+    const cached = await fx.signIn('203.0.113.30');
+    expect(cached.status).toBe(429);
+
+    const otherClient = await fx.signIn('203.0.113.31');
+    expect(otherClient.status).toBe(401);
+  } finally {
+    await fx.dispose();
+  }
+});
