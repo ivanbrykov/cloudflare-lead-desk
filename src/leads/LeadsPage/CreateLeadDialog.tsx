@@ -3,9 +3,14 @@ import { Button } from '@/components/ui/Button';
 import { Dialog } from '@/components/ui/Dialog';
 import { Field } from '@/components/ui/Field';
 import { inputClass } from '@/components/ui/form';
+import {
+  emptyLeadFormValues,
+  type LeadFormValues,
+  toCreateLeadInput,
+} from '@/leads/leadFormValues';
 import { request } from '@/lib/http';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
 
 export const CreateLeadDialog = ({
@@ -14,26 +19,14 @@ export const CreateLeadDialog = ({
   readonly onOpenChange: (open: boolean) => void;
 }) => {
   const queryClient = useQueryClient();
-  const [values, setValues] = useState({
-    email: '',
-    estimatedValue: '',
-    firstName: '',
-    lastName: '',
-    source: 'Website',
+  const form = useForm<LeadFormValues>({
+    defaultValues: emptyLeadFormValues,
+    mode: 'onTouched',
   });
   const create = useMutation({
-    mutationFn: () =>
+    mutationFn: (values: LeadFormValues) =>
       request('/v1/leads', {
-        body: JSON.stringify({
-          email: values.email.trim() || undefined,
-          estimatedValue:
-            values.estimatedValue.trim() === ''
-              ? undefined
-              : Number(values.estimatedValue),
-          firstName: values.firstName.trim() || undefined,
-          lastName: values.lastName.trim() || undefined,
-          source: values.source.trim() || undefined,
-        }),
+        body: JSON.stringify(toCreateLeadInput(values)),
         method: 'POST',
       }),
     onSuccess: () => {
@@ -51,60 +44,44 @@ export const CreateLeadDialog = ({
     >
       <form
         className="grid gap-3"
-        onSubmit={(event) => {
-          event.preventDefault();
-          create.mutate();
-        }}
+        onSubmit={form.handleSubmit((values) => {
+          create.mutate(values);
+        })}
       >
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label="First name">
             <input
               className={inputClass}
-              onChange={(event) =>
-                setValues({ ...values, firstName: event.target.value })
-              }
-              value={values.firstName}
+              {...form.register('firstName')}
             />
           </Field>
           <Field label="Last name">
             <input
               className={inputClass}
-              onChange={(event) =>
-                setValues({ ...values, lastName: event.target.value })
-              }
-              value={values.lastName}
+              {...form.register('lastName')}
             />
           </Field>
         </div>
         <Field label="Email">
           <input
             className={inputClass}
-            onChange={(event) =>
-              setValues({ ...values, email: event.target.value })
-            }
             type="email"
-            value={values.email}
+            {...form.register('email')}
           />
         </Field>
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label="Source">
             <input
               className={inputClass}
-              onChange={(event) =>
-                setValues({ ...values, source: event.target.value })
-              }
-              value={values.source}
+              {...form.register('source')}
             />
           </Field>
           <Field label="Estimated value">
             <input
               className={inputClass}
               min="0"
-              onChange={(event) =>
-                setValues({ ...values, estimatedValue: event.target.value })
-              }
               type="number"
-              value={values.estimatedValue}
+              {...form.register('estimatedValue')}
             />
           </Field>
         </div>
