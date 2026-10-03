@@ -2,6 +2,7 @@ import {
   AUTHENTICATION_FAILED_MESSAGE,
   initialRegistrationState,
   INVITE_UNAVAILABLE_MESSAGE,
+  isInviteUnavailable,
   type RegistrationEvent,
   registrationReducer,
   type RegistrationState,
@@ -11,17 +12,16 @@ import { expect, test } from 'vitest';
 
 /**
  * Regression coverage for the two-step invitation registration state
- * machine (stage s6). The reducer is the single source of truth for the
- * transitions the verifier exercises in the browser:
+ * machine. The reducer owns step/error/in-flight transitions; the field
+ * values live in react-hook-form inside the login page, which resets the
+ * forms whenever the reducer restarts the flow (Back, invite_unavailable).
  *
  *  - step 1 shows only the invite token; a failed validate keeps the user
  *    on step 1 with a generic error;
  *  - step 2 (Name/Email/Password) is revealed only after a successful
  *    validate;
- *  - a 403 `invite_unavailable` sign-up result returns to step 1 and
- *    clears the token and the entered credentials;
+ *  - a 403 `invite_unavailable` sign-up result returns to step 1;
  *  - any other sign-up failure stays on step 2;
- *  - Back clears the sensitive fields;
  */
 
 const reduce = (
@@ -36,44 +36,18 @@ const reduce = (
   return current;
 };
 
-const withFields = (
-  fields: Partial<RegistrationState['fields']>,
-): RegistrationState => {
-  const state = initialRegistrationState();
-  for (const [name, value] of Object.entries(fields)) {
-    state.fields[name as keyof RegistrationState['fields']] = value as string;
-  }
-
-  return state;
-};
-
 const enteredDetails = (): RegistrationState =>
   reduce(
-    withFields({ inviteToken: 'expr1234' }),
+    initialRegistrationState(),
     { type: 'token-submit' },
     { ok: true, type: 'token-result' },
-    { name: 'name', type: 'field-change', value: 'Ada Lovelace' },
-    { name: 'email', type: 'field-change', value: 'ada@example.test' },
-    {
-      name: 'password',
-      type: 'field-change',
-      value: 'correct-horse-battery',
-    },
   );
 
-const clearedFields = (): RegistrationState['fields'] => ({
-  email: '',
-  inviteToken: '',
-  name: '',
-  password: '',
-});
-
-test('the flow starts on the token step with empty fields', () => {
+test('the flow starts on the token step', () => {
   const state = initialRegistrationState();
   expect(state.step).toBe(1);
   expect(state.busy).toBe(false);
   expect(state.error).toBeNull();
-  expect(state.fields).toEqual(clearedFields());
 });
 
 test('begin-registration always restarts from a clean token step', () => {
@@ -87,33 +61,24 @@ test('begin-registration always restarts from a clean token step', () => {
 
 test('a failed validate stays on the token step with a generic error', () => {
   const state = reduce(
-    withFields({ inviteToken: 'used-token' }),
+    initialRegistrationState(),
     { type: 'token-submit' },
     { ok: false, type: 'token-result' },
   );
   expect(state.step).toBe(1);
   expect(state.busy).toBe(false);
   expect(state.error).toBe(INVITE_UNAVAILABLE_MESSAGE);
-  // The entered token is kept so the user can retry with a new one.
-  expect(state.fields.inviteToken).toBe('used-token');
 });
 
-test('a successful validate reveals the details step and keeps the token in state', () => {
-  const state = reduce(
-    withFields({ inviteToken: 'inva1234' }),
-    { type: 'token-submit' },
-    { ok: true, type: 'token-result' },
-  );
+test('a successful validate reveals the details step', () => {
+  const state = enteredDetails();
   expect(state.step).toBe(2);
   expect(state.busy).toBe(false);
   expect(state.error).toBeNull();
-  expect(state.fields.inviteToken).toBe('inva1234');
 });
 
 test('a double token submit is ignored while the first is in flight', () => {
-  const first = reduce(withFields({ inviteToken: 'inva1234' }), {
-    type: 'token-submit',
-  });
+  const first = reduce(initialRegistrationState(), { type: 'token-submit' });
   const doubled = reduce(first, { type: 'token-submit' });
   expect(doubled).toBe(first);
 
@@ -124,14 +89,14 @@ test('a double token submit is ignored while the first is in flight', () => {
 
 test('a late token result is ignored once the flow restarted', () => {
   const stale = reduce(
-    reduce(withFields({ inviteToken: 'a' }), { type: 'token-submit' }),
+    reduce(initialRegistrationState(), { type: 'token-submit' }),
     { type: 'begin-registration' },
   );
   const after = reduce(stale, { ok: true, type: 'token-result' });
   expect(after.step).toBe(1);
 });
 
-test('a 403 invite_unavailable sign-up result returns to the token step and clears every field', () => {
+test('a 403 invite_unavailable sign-up result returns to the token step', () => {
   const state = reduce(
     enteredDetails(),
     { type: 'details-submit' },
@@ -146,7 +111,6 @@ test('a 403 invite_unavailable sign-up result returns to the token step and clea
   expect(state.step).toBe(1);
   expect(state.busy).toBe(false);
   expect(state.error).toBe(INVITE_UNAVAILABLE_MESSAGE);
-  expect(state.fields).toEqual(clearedFields());
 });
 
 test('a 403 invite_unavailable result prefers the server message', () => {
@@ -182,15 +146,6 @@ test('an email_exists sign-up result stays on the details step', () => {
   expect(state.step).toBe(2);
   expect(state.busy).toBe(false);
   expect(state.error).toBe('Email already exists.');
-  // The token and the rest of the form survive so the user can fix only
-  // the offending field.
-  expect(state.fields).toEqual(
-    expect.objectContaining({
-      email: 'ada@example.test',
-      inviteToken: 'expr1234',
-      name: 'Ada Lovelace',
-    }),
-  );
 });
 
 test('an invite_unavailable code without a 403 status stays on the details step', () => {
@@ -255,14 +210,10 @@ test('a double details submit is ignored while the first is in flight', () => {
 });
 
 test('details submits are ignored on the token step and vice versa', () => {
-  const onToken = withFields({ inviteToken: 'inva1234' });
+  const onToken = initialRegistrationState();
   expect(reduce(onToken, { type: 'details-submit' })).toBe(onToken);
 
-  const onDetails = reduce(
-    withFields({ inviteToken: 'inva1234' }),
-    { type: 'token-submit' },
-    { ok: true, type: 'token-result' },
-  );
+  const onDetails = enteredDetails();
   expect(reduce(onDetails, { type: 'token-submit' })).toBe(onDetails);
 });
 
@@ -276,42 +227,19 @@ test('a late details result is ignored once the flow restarted', () => {
   expect(after).toEqual(initialRegistrationState());
 });
 
-test('back to the token step clears the token and the sensitive fields', () => {
+test('back to the token step resets the flow', () => {
   const state = reduce(enteredDetails(), { type: 'back-to-token' });
   expect(state.step).toBe(1);
   expect(state.busy).toBe(false);
   expect(state.error).toBeNull();
-  expect(state.fields).toEqual(clearedFields());
 });
 
-test('a full expiry race: valid validate, then invite_unavailable at sign-up', () => {
-  const state = reduce(
-    withFields({ inviteToken: 'expr1234' }),
-    { type: 'token-submit' },
-    { ok: true, type: 'token-result' },
-    { name: 'name', type: 'field-change', value: 'Ada Lovelace' },
-    { name: 'email', type: 'field-change', value: 'ada@example.test' },
-    { name: 'password', type: 'field-change', value: 'correct-horse-battery' },
-    { type: 'details-submit' },
-    {
-      error: {
-        code: 'invite_unavailable',
-        status: 403,
-      } satisfies SignUpFailure,
-      type: 'details-result',
-    },
+test('isInviteUnavailable is the exact 403 invite_unavailable signal', () => {
+  expect(isInviteUnavailable({ code: 'invite_unavailable', status: 403 })).toBe(
+    true,
   );
-  expect(state.step).toBe(1);
-  expect(state.busy).toBe(false);
-  expect(state.error).toBe(INVITE_UNAVAILABLE_MESSAGE);
-  expect(state.fields).toEqual(clearedFields());
-  // The flow is usable again after the race.
-  const retry = reduce(
-    state,
-    { name: 'inviteToken', type: 'field-change', value: 'inva1234' },
-    { type: 'token-submit' },
-    { ok: true, type: 'token-result' },
+  expect(isInviteUnavailable({ code: 'invite_unavailable', status: 422 })).toBe(
+    false,
   );
-  expect(retry.step).toBe(2);
-  expect(retry.fields.inviteToken).toBe('inva1234');
+  expect(isInviteUnavailable({ status: 403 })).toBe(false);
 });
