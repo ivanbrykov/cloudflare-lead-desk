@@ -1,5 +1,10 @@
-import { CreateLeadRequest } from '@/domain/schemas';
-import { emptyLeadFormValues, toCreateLeadInput } from '@/leads/leadFormValues';
+import { CreateLeadRequest, UpdateLeadRequest } from '@/domain/schemas';
+import {
+  emptyLeadFormValues,
+  leadFormValuesFromView,
+  toCreateLeadInput,
+  toUpdateLeadInput,
+} from '@/leads/leadFormValues';
 import { Schema } from 'effect';
 import { describe, expect, test } from 'vitest';
 
@@ -52,5 +57,51 @@ describe('lead form values', () => {
     expect(
       toCreateLeadInput({ ...emptyLeadFormValues, estimatedValue: '0' }),
     ).toMatchObject({ estimatedValue: 0 });
+  });
+
+  test('maps cleared fields to nulls in the update contract', async () => {
+    const input = toUpdateLeadInput({
+      email: '',
+      estimatedValue: '',
+      firstName: '   ',
+      lastName: ' River ',
+      source: ' ',
+    });
+
+    expect(input).toEqual({
+      email: null,
+      estimatedValue: null,
+      firstName: null,
+      lastName: 'River',
+      source: undefined,
+    });
+    // Clear operations send explicit nulls; an empty source is omitted.
+    expect(JSON.parse(JSON.stringify(input))).toEqual({
+      email: null,
+      estimatedValue: null,
+      firstName: null,
+      lastName: 'River',
+    });
+    await expect(
+      Schema.decodeUnknownPromise(UpdateLeadRequest)(input),
+    ).resolves.toEqual(input);
+  });
+
+  test('round-trips a server record into form values', () => {
+    expect(
+      leadFormValuesFromView({
+        email: null,
+        estimatedValue: 0,
+        firstName: null,
+        lastName: 'River',
+        source: 'Website',
+      }),
+    ).toEqual({
+      email: '',
+      estimatedValue: '0',
+      firstName: '',
+      lastName: 'River',
+      source: 'Website',
+    });
   });
 });
