@@ -15,6 +15,7 @@ import {
 } from '@tanstack/react-query';
 import { Plus, Search } from 'lucide-react';
 import { useState } from 'react';
+import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
 import { Link } from 'wouter';
 
@@ -23,7 +24,9 @@ type LeadPage = { data: LeadView[]; nextCursor: null | string };
 export const LeadsPage = () => {
   const queryClient = useQueryClient();
   const [search, setSearch] = useState('');
-  const [searchDraft, setSearchDraft] = useState('');
+  const searchForm = useForm<{ query: string }>({
+    defaultValues: { query: '' },
+  });
   const [selected, setSelected] = useState<string[]>([]);
   const [showCreate, setShowCreate] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -90,18 +93,16 @@ export const LeadsPage = () => {
         <div className="mb-4 flex flex-wrap items-end gap-3 rounded-lg border border-slate-800 bg-slate-900/40 p-3 text-sm text-slate-400">
           <form
             className="flex items-end gap-2"
-            onSubmit={(event) => {
-              event.preventDefault();
-              setSearch(searchDraft.trim());
+            onSubmit={searchForm.handleSubmit(({ query }) => {
+              setSearch(query.trim());
               setSelected([]);
-            }}
+            })}
           >
             <Field label="Search">
               <input
                 className={inputClass}
-                onChange={(event) => setSearchDraft(event.target.value)}
                 placeholder="Name or email"
-                value={searchDraft}
+                {...searchForm.register('query')}
               />
             </Field>
             <Button
