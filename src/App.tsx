@@ -990,10 +990,12 @@ const StaffPage = () => {
 
 const LoginPage = () => {
   const [mode, setMode] = useState<'sign-in' | 'sign-up'>('sign-in');
-  const [signInEmail, setSignInEmail] = useState('');
-  const [signInError, setSignInError] = useState<null | string>(null);
-  const [signInPassword, setSignInPassword] = useState('');
-  const [signInPending, setSignInPending] = useState(false);
+  const signInForm = useForm<{ email: string; password: string }>({
+    defaultValues: { email: '', password: '' },
+    mode: 'onTouched',
+  });
+  const signInError = signInForm.formState.errors.root?.server?.message;
+  const signInPending = signInForm.formState.isSubmitting;
   const [registration, dispatch] = useReducer(
     registrationReducer,
     undefined,
@@ -1018,19 +1020,15 @@ const LoginPage = () => {
     setMode('sign-in');
   };
 
-  const submitSignIn = async (event: React.FormEvent) => {
-    event.preventDefault();
-    setSignInError(null);
-    setSignInPending(true);
-    const result = await signIn.email({
-      email: signInEmail,
-      password: signInPassword,
-    });
-    setSignInPending(false);
+  const submitSignIn = signInForm.handleSubmit(async (values) => {
+    signInForm.clearErrors('root.server');
+    const result = await signIn.email(values);
     if (result.error) {
-      setSignInError(result.error.message ?? 'Authentication failed.');
+      signInForm.setError('root.server', {
+        message: result.error.message ?? 'Authentication failed.',
+      });
     }
-  };
+  });
 
   const submitTokenStep = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -1097,25 +1095,19 @@ const LoginPage = () => {
             <label className="grid gap-1 text-sm text-slate-300">
               Email
               <input
-                onChange={(event) => {
-                  setSignInEmail(event.target.value);
-                }}
                 placeholder="you@example.com"
                 required
                 type="email"
-                value={signInEmail}
+                {...signInForm.register('email')}
               />
             </label>
             <label className="grid gap-1 text-sm text-slate-300">
               Password
               <input
                 minLength={8}
-                onChange={(event) => {
-                  setSignInPassword(event.target.value);
-                }}
                 required
                 type="password"
-                value={signInPassword}
+                {...signInForm.register('password')}
               />
             </label>
             {signInError && (
