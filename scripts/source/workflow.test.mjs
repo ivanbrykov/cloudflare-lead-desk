@@ -256,7 +256,7 @@ test('reusable upgrade keeps candidate code away from write authority', async ()
   );
 });
 
-test('resolver waits for exact upstream CI and rejects a failed run', async (context) => {
+const runResolver = async (context, { ciOutcome = 'success', revision }) => {
   const workflow = await readFile(reusablePath, 'utf8');
   const [, body] =
     /node --input-type=module <<'NODE'\n([\s\S]*?)\n {10}NODE/u.exec(
@@ -264,13 +264,13 @@ test('resolver waits for exact upstream CI and rejects a failed run', async (con
     ) ?? [];
   assert(body);
   const source = body.replaceAll(/^ {10}/gmu, '');
-  const directory = await mkdtemp(join(tmpdir(), 'leadscroll-ci-gate-'));
+  const directory = await mkdtemp(join(tmpdir(), 'leadscroll-resolver-'));
   context.after(async () => rm(directory, { force: true, recursive: true }));
   await writeFile(
     join(directory, 'leadscroll.json'),
     `${JSON.stringify({
       repository: 'leadscroll/leadscroll',
-      revision: oldRevision,
+      revision,
     })}\n`,
   );
   const binaryDirectory = join(directory, 'bin');
@@ -288,17 +288,21 @@ esac
 `,
   );
   await chmod(fakeGit, 0o755);
+  const tracePath = join(directory, 'fetch.log');
   const preload = join(directory, 'mock-fetch.mjs');
   await writeFile(
     preload,
-    `let checks = 0;
+    `import { appendFileSync } from 'node:fs';
+let checks = 0;
 globalThis.fetch = async (url) => {
   if (url.includes('/compare/')) {
+    appendFileSync(process.env.MOCK_FETCH_TRACE, 'compare\\n');
     return { status: 200, json: async () => ({
       status: 'ahead', merge_base_commit: { sha: process.env.OLD_REVISION },
     }) };
   }
   if (url.includes('/actions/workflows/ci.yml/runs')) {
+    appendFileSync(process.env.MOCK_FETCH_TRACE, 'ci\\n');
     checks += 1;
     const done = process.env.MOCK_CI_OUTCOME === 'failure' || checks > 1;
     return { status: 200, json: async () => ({ workflow_runs: [{
@@ -323,35 +327,95 @@ globalThis.setTimeout = (callback) => { callback(); return 0; };
     GITHUB_READ_TOKEN: 'fake-read-token',
     GITHUB_STEP_SUMMARY: join(directory, 'summary'),
     INSTALLATION_REPOSITORY: 'customer/installation',
-    MOCK_CI_OUTCOME: 'success',
-    OLD_REVISION: oldRevision,
+    MOCK_CI_OUTCOME: ciOutcome,
+    MOCK_FETCH_TRACE: tracePath,
+    OLD_REVISION: revision,
     PATH: `${binaryDirectory}:${process.env.PATH}`,
     RUNNER_TEMP: directory,
     TARGET_REVISION: targetRevision,
   };
-  assert.doesNotThrow(() =>
+  let error;
+  try {
     execFileSync('node', ['--import', preload, '--input-type=module'], {
       cwd: directory,
       env: environment,
       input: source,
       stdio: 'pipe',
       timeout: 10_000,
-    }),
-  );
+    });
+  } catch (error_) {
+    error = error_;
+  }
+
+  return {
+    error,
+    output: await readFile(outputPath, 'utf8').then(
+      (value) => value,
+      () => '',
+    ),
+    summary: await readFile(join(directory, 'summary'), 'utf8').then(
+      (value) => value,
+      () => '',
+    ),
+    trace: await readFile(tracePath, 'utf8').then(
+      (value) => value,
+      () => '',
+    ),
+  };
+};
+
+test('resolver waits for exact upstream CI and rejects a failed run', async (context) => {
+  const success = await runResolver(context, { revision: oldRevision });
+  assert.ifError(success.error);
   assert.match(
-    await readFile(outputPath, 'utf8'),
+    success.output,
     new RegExp(`target_revision=${targetRevision}`, 'u'),
   );
-  assert.throws(
-    () =>
-      execFileSync('node', ['--import', preload, '--input-type=module'], {
-        cwd: directory,
-        env: { ...environment, MOCK_CI_OUTCOME: 'failure' },
-        input: source,
-        stdio: 'pipe',
-        timeout: 10_000,
-      }),
+  assert.match(success.output, /pin_change_required=true/u);
+  assert.equal(success.trace, 'compare\nci\nci\n');
+  const failure = await runResolver(context, {
+    ciOutcome: 'failure',
+    revision: oldRevision,
+  });
+  assert.match(
+    String(failure.error),
     /Upstream main CI failed or was cancelled/u,
+  );
+});
+
+test('resolver queues a pin commit for the main channel', async (context) => {
+  const result = await runResolver(context, { revision: 'main' });
+  assert.ifError(result.error);
+  assert.match(
+    result.output,
+    new RegExp(`old_revision=${targetRevision}`, 'u'),
+  );
+  assert.match(
+    result.output,
+    new RegExp(`target_revision=${targetRevision}`, 'u'),
+  );
+  assert.match(result.output, /pin_change_required=true/u);
+  assert.match(result.summary, /Pin change required: yes/u);
+  assert.equal(result.trace, 'ci\nci\n');
+});
+
+test('resolver requests no pin change when the pinned sha is upstream main', async (context) => {
+  const result = await runResolver(context, { revision: targetRevision });
+  assert.ifError(result.error);
+  assert.match(result.output, /pin_change_required=false/u);
+  assert.equal(result.trace, '');
+});
+
+test('reusable upgrade gates the pin commit on a required pin change', async () => {
+  const workflow = await readFile(reusablePath, 'utf8');
+  assert.match(
+    workflow,
+    /pin_change_required: \$\{\{ steps\.resolve\.outputs\.pin_change_required \}\}/u,
+  );
+  const commitJob = workflow.slice(workflow.indexOf('\n  commit:\n'));
+  assert.match(
+    commitJob,
+    /if: needs\.resolve\.outputs\.pin_change_required == 'true'/u,
   );
 });
 
