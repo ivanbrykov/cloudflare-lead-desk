@@ -361,10 +361,13 @@ try {
   );
   // main points at the initial install target; each upgrade needs a distinct
   // descendant so the pin actually advances. The clone checks out the caller's
-  // branch, so create the local main ref the consumer resolves.
+  // branch, which is main itself on a push to main, so detach HEAD before
+  // resetting the local main ref: git refuses to update a checked-out branch,
+  // and the synthetic upgrade commits must not advance the channel.
   const initialRevision = (
     await command('git', ['rev-parse', 'HEAD'], upstream)
   ).trim();
+  await command('git', ['checkout', '--quiet', '--detach'], upstream);
   await command(
     'git',
     ['branch', '--force', 'main', initialRevision],
