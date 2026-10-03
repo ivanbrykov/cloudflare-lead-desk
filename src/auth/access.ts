@@ -1,11 +1,6 @@
 import { type Auth } from '@/auth';
 import { type Env, getStaffAccountByEmail } from '@/db/repository';
 
-export type SessionIdentity = {
-  email: string;
-  session: { id: string; token: string; userId: string };
-};
-
 export class UnauthorizedError extends Error {
   constructor(message = 'Authentication is required.') {
     super(message);
@@ -16,14 +11,11 @@ export const requireSessionIdentity = async (
   request: Request,
   auth: Auth,
   environment: Env,
-): Promise<SessionIdentity> => {
+): Promise<string> => {
   // Development/test-only bypass so local runs and the Miniflare D1 suites do
   // not need a real session. Production always requires a Better Auth session.
   if (environment.ENVIRONMENT !== 'production' && environment.DEV_ADMIN_EMAIL) {
-    return {
-      email: environment.DEV_ADMIN_EMAIL,
-      session: { id: '', token: '', userId: '' },
-    };
+    return environment.DEV_ADMIN_EMAIL;
   }
 
   // Protected API reads only need to validate the session. Better Auth's
@@ -52,14 +44,7 @@ export const requireSessionIdentity = async (
     throw new UnauthorizedError();
   }
 
-  return {
-    email: session.user.email,
-    session: {
-      id: session.session.id,
-      token: session.session.token,
-      userId: session.session.userId,
-    },
-  };
+  return session.user.email;
 };
 
 export const bearerToken = (request: Request): null | string => {

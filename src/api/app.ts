@@ -21,7 +21,6 @@ import {
   requireSessionIdentity,
   UnauthorizedError,
 } from '@/auth/access';
-import { createAccountAuthEndpoints } from '@/auth/account-management';
 import { handleInvitationSignUp } from '@/auth/invitation-sign-up';
 import {
   blockedRetryAfter,
@@ -38,15 +37,12 @@ import {
   isBootstrapGrantAvailable,
   isBrowserIntakeToken,
   isIntakeToken,
-  listAccountSessions,
   listApiTokens,
   listLeadActivities,
   listLeads,
   listStaffAccounts,
   listStaffInvites,
-  revokeAccountSession,
   revokeApiToken,
-  revokeOtherAccountSessions,
   revokeStaffInvite,
   setStaffAccountDisabled,
 } from '@/db/repository';
@@ -236,7 +232,7 @@ const requireAdmin = async (
 ) => {
   try {
     return {
-      identity: await requireSessionIdentity(
+      email: await requireSessionIdentity(
         request,
         getAuth(request),
         environment,
@@ -305,7 +301,6 @@ const withPublicCors = (
 };
 
 const createAppWithAuth = (environment: Env, getAuth: AuthForRequest) => {
-  const accountEndpoints = createAccountAuthEndpoints(getAuth);
   const publicIntake = new Elysia({ name: 'public-intake' })
     .options(
       '/v1/public/intakes/:token',
@@ -438,18 +433,6 @@ const createAppWithAuth = (environment: Env, getAuth: AuthForRequest) => {
 
             if (request.method === 'POST' && path === '/sign-in/email') {
               return handleDisabledAccountSignIn(environment, request, getAuth);
-            }
-
-            // Self-service account management: the interceptors validate and
-            // re-attach the body before Better Auth runs.
-            if (request.method === 'POST' && path === '/change-password') {
-              const raw = await request.text();
-              return accountEndpoints.changePassword(request, raw);
-            }
-
-            if (request.method === 'POST' && path === '/update-user') {
-              const raw = await request.text();
-              return accountEndpoints.updateUser(request, raw);
             }
 
             url.pathname = `/api/auth${path}`;
@@ -641,12 +624,7 @@ const createAppWithAuth = (environment: Env, getAuth: AuthForRequest) => {
           throw rejectedWrite;
         }
 
-        return {
-          adminEmail: admin.identity.email,
-          // The account-sessions routes need the caller's own session row;
-          // the token is used server-side only and never leaves the API.
-          adminSession: admin.identity.session,
-        };
+        return { adminEmail: admin.email };
       })
       .get(
         '/v1/leads',
@@ -842,46 +820,6 @@ const createAppWithAuth = (environment: Env, getAuth: AuthForRequest) => {
         }
 
         return { data: outcome.record };
-      })
-      // Self-service session management. The list never includes token
-      // material; the current session is flagged so the UI can distinguish
-      // "this device" from revocable rows.
-      .get('/v1/account/sessions', async ({ adminSession }) => {
-        const rows = await listAccountSessions(
-          environment,
-          adminSession.userId,
-        );
-        return {
-          data: rows.map((row) => ({
-            ...row,
-            current: row.id === adminSession.id,
-          })),
-        };
-      })
-      .delete('/v1/account/sessions/:id', async ({ adminSession, params }) => {
-        if (params.id === adminSession.id) {
-          return errorResponse(
-            409,
-            'conflict',
-            'The current session cannot revoke itself; use sign out instead.',
-          );
-        }
-
-        return (await revokeAccountSession(
-          environment,
-          adminSession.userId,
-          params.id,
-        ))
-          ? new Response(null, { status: 204 })
-          : errorResponse(404, 'not_found', 'Session not found.');
-      })
-      .post('/v1/account/sessions/revoke-others', async ({ adminSession }) => {
-        const revoked = await revokeOtherAccountSessions(
-          environment,
-          adminSession.userId,
-          adminSession.token,
-        );
-        return { data: { revoked } };
       })
   );
 };
