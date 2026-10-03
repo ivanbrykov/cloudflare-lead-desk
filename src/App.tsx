@@ -1,3 +1,4 @@
+import { AccountPage } from './account/AccountPage';
 import { Button } from './components/ui/Button';
 import { Dialog } from './components/ui/Dialog';
 import { LeadDetailPage } from './leads/LeadDetailPage';
@@ -20,6 +21,7 @@ import {
   Mail,
   PanelsTopLeft,
   Plus,
+  UserRound,
   Users,
 } from 'lucide-react';
 import { useReducer, useRef, useState } from 'react';
@@ -56,6 +58,7 @@ type Token = {
 
 const navigation = [
   { href: '/leads', icon: LayoutList, label: 'Leads' },
+  { href: '/settings/account', icon: UserRound, label: 'Account' },
   { href: '/settings/invites', icon: Mail, label: 'Invitations' },
   { href: '/settings/staff', icon: Users, label: 'Staff' },
   { href: '/settings/tokens', icon: KeyRound, label: 'Tokens' },
@@ -1325,6 +1328,9 @@ export const App = () => {
         </Route>
         <Route path="/leads">
           <LeadsPage />
+        </Route>
+        <Route path="/settings/account">
+          <AccountPage />
         </Route>
         <Route path="/settings/tokens">
           <TokensPage />

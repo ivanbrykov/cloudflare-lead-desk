@@ -9,3 +9,7 @@ export const authClient = createAuthClient({
 });
 
 export const { signIn, signOut, signUp, useSession } = authClient;
+
+// Account management: name updates and password rotation go through Better
+// Auth's own endpoints (validated server-side by the /api/auth boundary).
+export const { changePassword, updateUser } = authClient;
