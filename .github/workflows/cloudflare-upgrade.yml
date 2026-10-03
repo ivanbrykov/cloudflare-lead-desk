@@ -22,6 +22,7 @@ jobs:
       default_branch: ${{ steps.resolve.outputs.default_branch }}
       repository: ${{ steps.resolve.outputs.repository }}
       old_revision: ${{ steps.resolve.outputs.old_revision }}
+      pin_change_required: ${{ steps.resolve.outputs.pin_change_required }}
       target_revision: ${{ steps.resolve.outputs.target_revision }}
     steps:
       - name: Checkout the installation default branch without credentials
@@ -118,30 +119,34 @@ jobs:
           const match = /^([a-f0-9]{40})\trefs\/heads\/main$/u.exec(remote);
           assert(match, "Upstream main did not resolve to exactly one commit");
 
-          const oldRevision = shaPattern.test(configuration.revision)
+          const pinnedRevision = shaPattern.test(configuration.revision)
             ? configuration.revision
-            : match[1];
-          if (oldRevision !== match[1]) {
-            const upstreamApi = async (path) => {
-              const response = await fetch(
-                `https://api.github.com/repos/${configuration.repository}${path}`,
-                {
-                  headers: {
-                    Accept: "application/vnd.github+json",
-                    Authorization: `Bearer ${process.env.GITHUB_READ_TOKEN}`,
-                    "X-GitHub-Api-Version": "2022-11-28",
-                  },
-                  signal: AbortSignal.timeout(30_000),
+            : undefined;
+          const oldRevision = pinnedRevision ?? match[1];
+          const pinChangeRequired = configuration.revision !== match[1];
+          const upstreamApi = async (path) => {
+            const response = await fetch(
+              `https://api.github.com/repos/${configuration.repository}${path}`,
+              {
+                headers: {
+                  Accept: "application/vnd.github+json",
+                  Authorization: `Bearer ${process.env.GITHUB_READ_TOKEN}`,
+                  "X-GitHub-Api-Version": "2022-11-28",
                 },
-              );
-              assert.equal(response.status, 200, "Could not verify upstream history or CI");
-              return response.json();
-            };
+                signal: AbortSignal.timeout(30_000),
+              },
+            );
+            assert.equal(response.status, 200, "Could not verify upstream history or CI");
+            return response.json();
+          };
+          if (pinnedRevision !== undefined && pinnedRevision !== match[1]) {
             const comparison = await upstreamApi(
-              `/compare/${oldRevision}...${match[1]}`,
+              `/compare/${pinnedRevision}...${match[1]}`,
             );
             assert.equal(comparison.status, "ahead", "Candidate must descend from the current pin");
-            assert.equal(comparison.merge_base_commit?.sha, oldRevision);
+            assert.equal(comparison.merge_base_commit?.sha, pinnedRevision);
+          }
+          if (pinChangeRequired) {
             const ciDeadline = Date.now() + 9 * 60_000;
             for (;;) {
               const runs = await upstreamApi(
@@ -175,6 +180,7 @@ jobs:
               `default_branch=${defaultBranch}`,
               `repository=${configuration.repository}`,
               `old_revision=${oldRevision}`,
+              `pin_change_required=${pinChangeRequired}`,
               `target_revision=${match[1]}`,
               "",
             ].join("\n"),
@@ -186,7 +192,7 @@ jobs:
               "",
               `- Previous source: \`${configuration.revision}\``,
               `- Candidate source: \`${match[1]}\``,
-              `- Pin change required: ${configuration.revision === match[1] ? "no" : "yes"}`,
+              `- Pin change required: ${pinChangeRequired ? "yes" : "no"}`,
               "",
             ].join("\n"),
           );
@@ -267,7 +273,7 @@ jobs:
     needs:
       - resolve
       - validate
-    if: needs.resolve.outputs.old_revision != needs.resolve.outputs.target_revision
+    if: needs.resolve.outputs.pin_change_required == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
