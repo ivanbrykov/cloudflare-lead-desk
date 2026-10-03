@@ -6,6 +6,11 @@ import { LeadsPage } from './leads/LeadsPage';
 import { signIn, signOut, signUp, useSession } from './lib/auth-client';
 import { isFutureLocalDateTime, toLocalInputValue } from './lib/datetime';
 import { request } from './lib/http';
+import {
+  emptyInviteFormValues,
+  type InviteFormValues,
+  toCreateInviteInput,
+} from './lib/inviteFormValues';
 import { quietFetch } from './lib/quiet-fetch';
 import {
   initialRegistrationState,
@@ -620,23 +625,25 @@ const CreateInviteDialog = ({
 }) => {
   const queryClient = useQueryClient();
   const [copyFailed, setCopyFailed] = useState(false);
-  const [formError, setFormError] = useState<null | string>(null);
-  const [name, setName] = useState('');
   const [rawToken, setRawToken] = useState<null | string>(null);
-  // The parent remounts this dialog (via its key) on every open, so state is
-  // always fresh: empty form, 7-day default matching the backend, no raw
+  // The parent remounts this dialog (via its key) on every open, so the form
+  // is always fresh: empty name, 7-day default matching the backend, no raw
   // token, and an idle create mutation.
-  const [expiration, setExpiration] = useState(defaultExpiration);
+  const form = useForm<InviteFormValues>({
+    defaultValues: emptyInviteFormValues(defaultExpiration),
+    mode: 'onTouched',
+  });
+  const errors = form.formState.errors;
+  const name = form.watch('name');
   const create = useMutation({
-    mutationFn: (input: { expiresAt?: string; name: string }) =>
+    mutationFn: (values: InviteFormValues) =>
       request<Invite & { token: string }>('/v1/invites', {
-        body: JSON.stringify(input),
+        body: JSON.stringify(toCreateInviteInput(values)),
         method: 'POST',
       }),
     onSuccess: (created) => {
       // Keep the dialog open: the raw invite token is shown once and must
       // stay visible until the staff member explicitly dismisses it.
-      setFormError(null);
       setRawToken(created.token);
       queryClient.invalidateQueries({ queryKey: ['invites'] });
     },
@@ -651,32 +658,6 @@ const CreateInviteDialog = ({
     }
 
     onOpenChange(value);
-  };
-
-  const submit = () => {
-    const trimmedName = name.trim();
-    if (!trimmedName) {
-      setFormError('Enter an invite name.');
-      return;
-    }
-
-    // The input value is local wall-clock time; new Date parses it as local
-    // time and toISOString converts it to the UTC ISO string the API expects.
-    const parsedExpiration = expiration ? new Date(expiration) : undefined;
-    if (
-      parsedExpiration &&
-      (!Number.isFinite(parsedExpiration.getTime()) ||
-        parsedExpiration.getTime() <= Date.now())
-    ) {
-      setFormError('Expiration must be in the future.');
-      return;
-    }
-
-    setFormError(null);
-    create.mutate({
-      expiresAt: parsedExpiration?.toISOString(),
-      name: trimmedName,
-    });
   };
 
   const copyToken = async () => {
@@ -732,33 +713,40 @@ const CreateInviteDialog = ({
       ) : (
         <form
           className="grid gap-4"
-          onSubmit={(event) => {
-            event.preventDefault();
-            submit();
-          }}
+          onSubmit={form.handleSubmit((values) => {
+            create.mutate(values);
+          })}
         >
-          <label className="grid gap-1 text-sm text-slate-300">
-            Invite name
+          <Field
+            error={errors.name?.message}
+            label="Invite name"
+          >
             <input
-              onChange={(event) => setName(event.target.value)}
+              aria-invalid={errors.name ? true : undefined}
               placeholder="Weekend onboarding"
-              value={name}
+              {...form.register('name', { required: 'Enter an invite name.' })}
             />
-          </label>
+          </Field>
           <div className="grid gap-1">
-            <label className="grid gap-1 text-sm text-slate-300">
-              Expiration
+            <Field
+              error={errors.expiration?.message}
+              label="Expiration"
+            >
               <input
-                onChange={(event) => setExpiration(event.target.value)}
+                aria-invalid={errors.expiration ? true : undefined}
                 type="datetime-local"
-                value={expiration}
+                {...form.register('expiration', {
+                  validate: (value) =>
+                    value === '' ||
+                    isFutureLocalDateTime(value) ||
+                    'Expiration must be in the future.',
+                })}
               />
-            </label>
+            </Field>
             <p className="text-xs text-slate-500">
               Local time ({localTimezoneLabel()})
             </p>
           </div>
-          {formError && <p className="text-sm text-rose-300">{formError}</p>}
           {create.error && <ErrorState error={create.error} />}
           <div className="flex justify-end gap-2">
             <Button
