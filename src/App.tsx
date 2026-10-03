@@ -1,4 +1,3 @@
-import { AccountPage } from './account/AccountPage';
 import { Button } from './components/ui/Button';
 import { Dialog } from './components/ui/Dialog';
 import { LeadDetailPage } from './leads/LeadDetailPage';
@@ -21,7 +20,6 @@ import {
   Mail,
   PanelsTopLeft,
   Plus,
-  UserRound,
   Users,
 } from 'lucide-react';
 import { useReducer, useRef, useState } from 'react';
@@ -136,18 +134,6 @@ const Shell = ({ children }: { readonly children: React.ReactNode }) => {
           })}
         </nav>
         <div className="mt-6 border-t border-slate-800 pt-4">
-          <Link
-            className={cn(
-              'flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition',
-              location === '/settings/account'
-                ? 'bg-slate-800 text-cyan-300'
-                : 'text-slate-400 hover:bg-slate-800/70 hover:text-slate-100',
-            )}
-            href="/settings/account"
-          >
-            <UserRound size={16} />
-            Account
-          </Link>
           <button
             className="flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium text-slate-400 transition hover:bg-slate-800/70 hover:text-slate-100"
             onClick={() => {
@@ -1339,9 +1325,6 @@ export const App = () => {
         </Route>
         <Route path="/leads">
           <LeadsPage />
-        </Route>
-        <Route path="/settings/account">
-          <AccountPage />
         </Route>
         <Route path="/settings/tokens">
           <TokensPage />
